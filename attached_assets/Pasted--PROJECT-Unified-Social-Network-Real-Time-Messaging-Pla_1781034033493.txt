@@ -1,0 +1,412 @@
+# PROJECT: Unified Social Network + Real-Time Messaging Platform MVP
+
+## Objective
+
+Build a full-stack social media platform that combines the core functionality of Facebook and Telegram into a single application.
+
+This must be a REAL working MVP using a production-grade backend, database, authentication, storage, and real-time communication.
+
+DO NOT use dummy data, mock APIs, placeholder users, fake messages, or sample feeds.
+
+All features must connect to real backend services and persist data in the database.
+
+---
+
+# Tech Stack
+
+## Frontend
+
+* React Native
+* Expo SDK latest stable version
+* TypeScript
+* Expo Router
+* Zustand for state management
+* React Query (TanStack Query)
+* NativeWind/TailwindCSS
+* Expo Notifications
+* Expo Image
+* Expo AV
+
+## Backend
+
+* Node.js
+* NestJS
+* TypeScript
+* PostgreSQL
+* Redis
+* Socket.IO
+* Prisma ORM
+
+## Storage
+
+* Supabase Storage or AWS S3 compatible storage
+
+## Authentication
+
+* JWT Authentication
+* Refresh Tokens
+* Google OAuth
+* Email & Password Authentication
+
+---
+
+# Core MVP Features
+
+## Authentication
+
+Users can:
+
+* Register account
+* Login
+* Logout
+* Reset password
+* Verify email
+* Login with Google
+
+Store:
+
+* id
+* username
+* email
+* avatar
+* bio
+* createdAt
+* updatedAt
+
+---
+
+# User Profiles
+
+Each user has:
+
+* Profile picture
+* Cover photo
+* Username
+* Display name
+* Bio
+* Followers count
+* Following count
+* Post count
+
+Users can:
+
+* Edit profile
+* Upload avatar
+* Upload cover image
+* View other profiles
+
+---
+
+# Social Feed
+
+Users can create:
+
+* Text posts
+* Image posts
+* Multiple image posts
+* Video posts
+
+Feed should:
+
+* Load newest posts
+* Infinite scrolling
+* Pull to refresh
+* Real-time updates
+
+Each post supports:
+
+* Likes
+* Comments
+* Shares
+* Saves
+
+---
+
+# Comments
+
+Users can:
+
+* Comment
+* Reply to comments
+* Edit comments
+* Delete comments
+
+Support nested replies.
+
+---
+
+# Followers System
+
+Users can:
+
+* Follow users
+* Unfollow users
+* Block users
+
+Show:
+
+* Followers list
+* Following list
+
+---
+
+# Stories
+
+Users can:
+
+* Upload image stories
+* Upload video stories
+
+Story expires after:
+
+* 24 hours
+
+Features:
+
+* View count
+* Story viewers list
+
+---
+
+# Real-Time Chat
+
+One-on-one messaging.
+
+Features:
+
+* Send messages
+* Receive messages instantly
+* Read receipts
+* Typing indicators
+* Delivered status
+* Image sharing
+* Video sharing
+* File sharing
+* Voice notes
+
+Messages must update instantly via Socket.IO.
+
+---
+
+# Group Chats
+
+Create groups.
+
+Features:
+
+* Group avatar
+* Group description
+* Add members
+* Remove members
+* Group messages
+* Media sharing
+
+---
+
+# Channels
+
+Telegram-like channels.
+
+Features:
+
+* Create channel
+* Subscribe
+* Broadcast messages
+* Media posts
+
+Only admins can post.
+
+---
+
+# Notifications
+
+Real-time notifications for:
+
+* New followers
+* Likes
+* Comments
+* Messages
+* Mentions
+
+Use:
+
+* Socket.IO
+* Push notifications
+
+---
+
+# Search
+
+Search:
+
+* Users
+* Posts
+* Groups
+* Channels
+
+Support:
+
+* Pagination
+* Relevance ranking
+
+---
+
+# Media Uploads
+
+Support:
+
+* Images
+* Videos
+* Documents
+* Audio files
+
+Requirements:
+
+* Compression
+* Validation
+* Secure URLs
+
+---
+
+# Admin Panel
+
+Admin can:
+
+* View users
+* Ban users
+* Delete posts
+* Review reports
+
+---
+
+# Reporting System
+
+Users can report:
+
+* Posts
+* Comments
+* Accounts
+
+Store reports in moderation queue.
+
+---
+
+# Security Requirements
+
+Implement:
+
+* JWT authentication
+* Refresh tokens
+* Password hashing with bcrypt
+* Rate limiting
+* Input validation
+* SQL injection protection
+* XSS protection
+
+---
+
+# Database Schema
+
+Tables required:
+
+users
+profiles
+posts
+comments
+replies
+likes
+follows
+stories
+story_views
+chats
+chat_members
+messages
+message_reads
+groups
+group_members
+channels
+channel_members
+notifications
+media
+reports
+sessions
+
+---
+
+# API Architecture
+
+Create REST APIs for:
+
+Authentication
+Users
+Posts
+Comments
+Stories
+Followers
+Chats
+Groups
+Channels
+Notifications
+Reports
+
+Use Socket.IO for:
+
+Messages
+Typing indicators
+Read receipts
+Notifications
+Live feed updates
+
+---
+
+# UI Requirements
+
+Modern design similar to:
+
+* Facebook feed
+* Telegram messaging
+* Instagram stories
+
+Tabs:
+
+1. Home
+2. Search
+3. Create Post
+4. Messages
+5. Profile
+
+---
+
+# Performance Requirements
+
+* Lazy loading
+* Pagination
+* Optimized image loading
+* Background caching
+* Offline message queue
+* Fast startup time
+
+---
+
+# Deliverables
+
+Generate:
+
+1. Complete project structure
+2. Prisma schema
+3. PostgreSQL migrations
+4. NestJS backend
+5. Expo frontend
+6. Authentication flow
+7. Socket.IO implementation
+8. Storage integration
+9. Push notification integration
+10. Environment variable configuration
+11. Docker setup
+12. Seed script ONLY for admin account creation
+
+Do not generate dummy social data.
+
+All application data must come from real user interactions.
+
+Build features in production-ready modular architecture and ensure the application can be deployed immediately after environment variables are configured.

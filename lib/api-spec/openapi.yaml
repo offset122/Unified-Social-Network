@@ -1,22 +1,47 @@
 openapi: 3.1.0
 info:
-  # Do not change the title, if the title changes, the import paths will be broken
   title: Api
   version: 0.1.0
-  description: API specification
+  description: SocialApp — unified social network + messaging platform
 servers:
   - url: /api
     description: Base API path
 tags:
   - name: health
     description: Health operations
+  - name: Auth
+    description: Browser and mobile authentication endpoints.
+  - name: Storage
+    description: Object storage upload and serving endpoints.
+  - name: Users
+    description: User profiles and relationships
+  - name: Posts
+    description: Social feed posts
+  - name: Comments
+    description: Post comments and replies
+  - name: Stories
+    description: 24-hour stories
+  - name: Follows
+    description: Follow / unfollow users
+  - name: Chats
+    description: Direct messages
+  - name: Messages
+    description: Chat messages
+  - name: Groups
+    description: Group chats
+  - name: Channels
+    description: Broadcast channels
+  - name: Notifications
+    description: In-app notifications
+  - name: Search
+    description: Search across users, posts, groups, channels
+
 paths:
   /healthz:
     get:
       operationId: healthCheck
       tags: [health]
       summary: Health check
-      description: Returns server health status
       responses:
         "200":
           description: Healthy
@@ -24,13 +49,1657 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+
+  # ── Auth ──────────────────────────────────────────────────────────────────
+  /auth/user:
+    get:
+      tags: [Auth]
+      operationId: getCurrentAuthUser
+      summary: Get the currently authenticated user
+      parameters:
+        - $ref: '#/components/parameters/AuthorizationSessionHeader'
+        - $ref: '#/components/parameters/SessionCookie'
+      responses:
+        '200':
+          description: Auth status resolved successfully.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthUserEnvelope'
+  /login:
+    get:
+      tags: [Auth]
+      operationId: beginBrowserLogin
+      summary: Start the browser OIDC login flow
+      parameters:
+        - name: returnTo
+          in: query
+          required: false
+          schema: { type: string }
+      responses:
+        '302':
+          description: Redirect to OIDC authorization endpoint.
+  /callback:
+    get:
+      tags: [Auth]
+      operationId: handleBrowserLoginCallback
+      summary: Complete the browser OIDC login flow
+      parameters:
+        - name: code
+          in: query
+          required: false
+          schema: { type: string }
+        - name: state
+          in: query
+          required: false
+          schema: { type: string }
+        - name: iss
+          in: query
+          required: false
+          schema: { type: string, format: uri }
+      responses:
+        '302':
+          description: Redirect on success or failure.
+  /logout:
+    get:
+      tags: [Auth]
+      operationId: logoutBrowserSession
+      summary: Clear the session and begin OIDC logout
+      parameters:
+        - $ref: '#/components/parameters/AuthorizationSessionHeader'
+        - $ref: '#/components/parameters/SessionCookie'
+      responses:
+        '302':
+          description: Redirect to OIDC provider logout URL.
+  /mobile-auth/token-exchange:
+    post:
+      tags: [Auth]
+      operationId: exchangeMobileAuthorizationCode
+      summary: Exchange a mobile OIDC code for a session token
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MobileTokenExchangeRequest'
+      responses:
+        '200':
+          description: Session created successfully.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MobileTokenExchangeSuccess'
+        '400':
+          description: Missing or invalid fields.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '401':
+          description: Token did not contain usable claims.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '500':
+          description: Token exchange failed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+  /mobile-auth/logout:
+    post:
+      tags: [Auth]
+      operationId: logoutMobileSession
+      summary: Delete a mobile session token
+      parameters:
+        - $ref: '#/components/parameters/AuthorizationSessionHeader'
+      responses:
+        '200':
+          description: Logout processed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LogoutSuccess'
+
+  # ── Storage ───────────────────────────────────────────────────────────────
+  /storage/uploads/request-url:
+    post:
+      tags: [Storage]
+      operationId: requestUploadUrl
+      summary: Request a presigned URL for file upload
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UploadUrlRequest'
+      responses:
+        '200':
+          description: Presigned upload URL generated.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UploadUrlResponse'
+        '400':
+          description: Missing or invalid fields.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '500':
+          description: Failed to generate upload URL.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+  /storage/public-objects/{filePath}:
+    get:
+      tags: [Storage]
+      operationId: getPublicObject
+      summary: Serve a public asset
+      parameters:
+        - name: filePath
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Object content.
+          content:
+            '*/*':
+              schema: { type: string, format: binary }
+        '404':
+          description: Not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+  /storage/objects/{objectPath}:
+    get:
+      tags: [Storage]
+      operationId: getStorageObject
+      summary: Serve an uploaded object
+      parameters:
+        - name: objectPath
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Object content.
+          content:
+            '*/*':
+              schema: { type: string, format: binary }
+        '404':
+          description: Not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+
+  # ── Users / Profiles ──────────────────────────────────────────────────────
+  /users/me:
+    get:
+      tags: [Users]
+      operationId: getMyProfile
+      summary: Get my profile
+      responses:
+        '200':
+          description: My full profile
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserProfile'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+    patch:
+      tags: [Users]
+      operationId: updateMyProfile
+      summary: Update my profile
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProfileUpdate'
+      responses:
+        '200':
+          description: Updated profile
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserProfile'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+  /users/{userId}:
+    get:
+      tags: [Users]
+      operationId: getUserProfile
+      summary: Get a user profile by ID
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: User profile
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserProfile'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+  /users/{userId}/followers:
+    get:
+      tags: [Users]
+      operationId: getUserFollowers
+      summary: List followers of a user
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          schema: { type: string }
+        - name: cursor
+          in: query
+          required: false
+          schema: { type: string }
+      responses:
+        '200':
+          description: Paginated followers list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserListPage'
+  /users/{userId}/following:
+    get:
+      tags: [Users]
+      operationId: getUserFollowing
+      summary: List users followed by a user
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          schema: { type: string }
+        - name: cursor
+          in: query
+          required: false
+          schema: { type: string }
+      responses:
+        '200':
+          description: Paginated following list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserListPage'
+  /users/{userId}/posts:
+    get:
+      tags: [Users]
+      operationId: getUserPosts
+      summary: List posts by a specific user
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          schema: { type: string }
+        - name: cursor
+          in: query
+          required: false
+          schema: { type: string }
+      responses:
+        '200':
+          description: Paginated post list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PostListPage'
+
+  # ── Follow / Unfollow ─────────────────────────────────────────────────────
+  /follows/{userId}:
+    post:
+      tags: [Follows]
+      operationId: followUser
+      summary: Follow a user
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Followed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FollowResult'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+    delete:
+      tags: [Follows]
+      operationId: unfollowUser
+      summary: Unfollow a user
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Unfollowed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FollowResult'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+
+  # ── Posts ─────────────────────────────────────────────────────────────────
+  /posts:
+    get:
+      tags: [Posts]
+      operationId: getFeed
+      summary: Get social feed (following + own posts)
+      parameters:
+        - name: cursor
+          in: query
+          required: false
+          schema: { type: string }
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, default: 20 }
+      responses:
+        '200':
+          description: Paginated feed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PostListPage'
+    post:
+      tags: [Posts]
+      operationId: createPost
+      summary: Create a new post
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PostInput'
+      responses:
+        '201':
+          description: Post created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Post'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+  /posts/explore:
+    get:
+      tags: [Posts]
+      operationId: getExplorePosts
+      summary: Explore trending/recent public posts
+      parameters:
+        - name: cursor
+          in: query
+          required: false
+          schema: { type: string }
+      responses:
+        '200':
+          description: Paginated explore posts
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PostListPage'
+  /posts/{postId}:
+    get:
+      tags: [Posts]
+      operationId: getPost
+      summary: Get a single post
+      parameters:
+        - name: postId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Post
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Post'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+    patch:
+      tags: [Posts]
+      operationId: updatePost
+      summary: Update a post
+      parameters:
+        - name: postId
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PostUpdate'
+      responses:
+        '200':
+          description: Updated post
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Post'
+    delete:
+      tags: [Posts]
+      operationId: deletePost
+      summary: Delete a post
+      parameters:
+        - name: postId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '204':
+          description: Deleted
+  /posts/{postId}/like:
+    post:
+      tags: [Posts]
+      operationId: likePost
+      summary: Like a post
+      parameters:
+        - name: postId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Liked
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LikeResult'
+    delete:
+      tags: [Posts]
+      operationId: unlikePost
+      summary: Unlike a post
+      parameters:
+        - name: postId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Unliked
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LikeResult'
+  /posts/{postId}/save:
+    post:
+      tags: [Posts]
+      operationId: savePost
+      summary: Save a post
+      parameters:
+        - name: postId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Saved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SaveResult'
+    delete:
+      tags: [Posts]
+      operationId: unsavePost
+      summary: Unsave a post
+      parameters:
+        - name: postId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Unsaved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SaveResult'
+  /posts/saved:
+    get:
+      tags: [Posts]
+      operationId: getSavedPosts
+      summary: Get my saved posts
+      parameters:
+        - name: cursor
+          in: query
+          required: false
+          schema: { type: string }
+      responses:
+        '200':
+          description: Saved posts
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PostListPage'
+
+  # ── Comments ──────────────────────────────────────────────────────────────
+  /posts/{postId}/comments:
+    get:
+      tags: [Comments]
+      operationId: getComments
+      summary: Get comments on a post
+      parameters:
+        - name: postId
+          in: path
+          required: true
+          schema: { type: string }
+        - name: cursor
+          in: query
+          required: false
+          schema: { type: string }
+      responses:
+        '200':
+          description: Comments
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommentListPage'
+    post:
+      tags: [Comments]
+      operationId: createComment
+      summary: Comment on a post
+      parameters:
+        - name: postId
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CommentInput'
+      responses:
+        '201':
+          description: Comment created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Comment'
+  /comments/{commentId}:
+    patch:
+      tags: [Comments]
+      operationId: updateComment
+      summary: Edit a comment
+      parameters:
+        - name: commentId
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CommentUpdate'
+      responses:
+        '200':
+          description: Updated comment
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Comment'
+    delete:
+      tags: [Comments]
+      operationId: deleteComment
+      summary: Delete a comment
+      parameters:
+        - name: commentId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '204':
+          description: Deleted
+  /comments/{commentId}/replies:
+    get:
+      tags: [Comments]
+      operationId: getReplies
+      summary: Get replies to a comment
+      parameters:
+        - name: commentId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Replies
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommentListPage'
+    post:
+      tags: [Comments]
+      operationId: createReply
+      summary: Reply to a comment
+      parameters:
+        - name: commentId
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CommentInput'
+      responses:
+        '201':
+          description: Reply created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Comment'
+
+  # ── Stories ───────────────────────────────────────────────────────────────
+  /stories:
+    get:
+      tags: [Stories]
+      operationId: getStories
+      summary: Get active stories from following
+      responses:
+        '200':
+          description: Story groups
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/StoryGroup'
+    post:
+      tags: [Stories]
+      operationId: createStory
+      summary: Create a story
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StoryInput'
+      responses:
+        '201':
+          description: Story created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Story'
+  /stories/{storyId}/view:
+    post:
+      tags: [Stories]
+      operationId: viewStory
+      summary: Mark a story as viewed
+      parameters:
+        - name: storyId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Viewed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LogoutSuccess'
+  /stories/{storyId}/viewers:
+    get:
+      tags: [Stories]
+      operationId: getStoryViewers
+      summary: Get viewers of a story
+      parameters:
+        - name: storyId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Viewers
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserListPage'
+
+  # ── Chats ─────────────────────────────────────────────────────────────────
+  /chats:
+    get:
+      tags: [Chats]
+      operationId: getChats
+      summary: Get my direct message conversations
+      responses:
+        '200':
+          description: Chats
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Chat'
+    post:
+      tags: [Chats]
+      operationId: createChat
+      summary: Start or get a DM with another user
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChatInput'
+      responses:
+        '200':
+          description: Chat
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Chat'
+  /chats/{chatId}/messages:
+    get:
+      tags: [Messages]
+      operationId: getChatMessages
+      summary: Get messages in a chat
+      parameters:
+        - name: chatId
+          in: path
+          required: true
+          schema: { type: string }
+        - name: cursor
+          in: query
+          required: false
+          schema: { type: string }
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, default: 50 }
+      responses:
+        '200':
+          description: Messages
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageListPage'
+    post:
+      tags: [Messages]
+      operationId: sendMessage
+      summary: Send a message in a chat
+      parameters:
+        - name: chatId
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MessageInput'
+      responses:
+        '201':
+          description: Message sent
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Message'
+  /chats/{chatId}/read:
+    post:
+      tags: [Messages]
+      operationId: markChatRead
+      summary: Mark all messages in a chat as read
+      parameters:
+        - name: chatId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Marked read
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LogoutSuccess'
+
+  # ── Groups ────────────────────────────────────────────────────────────────
+  /groups:
+    get:
+      tags: [Groups]
+      operationId: getMyGroups
+      summary: Get groups I belong to
+      responses:
+        '200':
+          description: Groups
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Group'
+    post:
+      tags: [Groups]
+      operationId: createGroup
+      summary: Create a group
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GroupInput'
+      responses:
+        '201':
+          description: Group created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Group'
+  /groups/{groupId}:
+    get:
+      tags: [Groups]
+      operationId: getGroup
+      summary: Get group details
+      parameters:
+        - name: groupId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Group
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Group'
+    patch:
+      tags: [Groups]
+      operationId: updateGroup
+      summary: Update group details
+      parameters:
+        - name: groupId
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GroupUpdate'
+      responses:
+        '200':
+          description: Updated group
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Group'
+  /groups/{groupId}/members:
+    post:
+      tags: [Groups]
+      operationId: addGroupMember
+      summary: Add a member to a group
+      parameters:
+        - name: groupId
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MemberInput'
+      responses:
+        '200':
+          description: Member added
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Group'
+  /groups/{groupId}/members/{userId}:
+    delete:
+      tags: [Groups]
+      operationId: removeGroupMember
+      summary: Remove a member from a group
+      parameters:
+        - name: groupId
+          in: path
+          required: true
+          schema: { type: string }
+        - name: userId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Member removed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Group'
+  /groups/{groupId}/messages:
+    get:
+      tags: [Groups]
+      operationId: getGroupMessages
+      summary: Get messages in a group
+      parameters:
+        - name: groupId
+          in: path
+          required: true
+          schema: { type: string }
+        - name: cursor
+          in: query
+          required: false
+          schema: { type: string }
+      responses:
+        '200':
+          description: Messages
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageListPage'
+    post:
+      tags: [Groups]
+      operationId: sendGroupMessage
+      summary: Send a message to a group
+      parameters:
+        - name: groupId
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MessageInput'
+      responses:
+        '201':
+          description: Message sent
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Message'
+
+  # ── Channels ──────────────────────────────────────────────────────────────
+  /channels:
+    get:
+      tags: [Channels]
+      operationId: getDiscoverChannels
+      summary: Discover public channels
+      responses:
+        '200':
+          description: Channels
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Channel'
+    post:
+      tags: [Channels]
+      operationId: createChannel
+      summary: Create a channel
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChannelInput'
+      responses:
+        '201':
+          description: Channel created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Channel'
+  /channels/subscribed:
+    get:
+      tags: [Channels]
+      operationId: getMyChannels
+      summary: Get channels I'm subscribed to
+      responses:
+        '200':
+          description: Subscribed channels
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Channel'
+  /channels/{channelId}:
+    get:
+      tags: [Channels]
+      operationId: getChannel
+      summary: Get channel details
+      parameters:
+        - name: channelId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Channel
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Channel'
+  /channels/{channelId}/subscribe:
+    post:
+      tags: [Channels]
+      operationId: subscribeChannel
+      summary: Subscribe to a channel
+      parameters:
+        - name: channelId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Subscribed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LogoutSuccess'
+    delete:
+      tags: [Channels]
+      operationId: unsubscribeChannel
+      summary: Unsubscribe from a channel
+      parameters:
+        - name: channelId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Unsubscribed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LogoutSuccess'
+  /channels/{channelId}/posts:
+    get:
+      tags: [Channels]
+      operationId: getChannelPosts
+      summary: Get posts in a channel
+      parameters:
+        - name: channelId
+          in: path
+          required: true
+          schema: { type: string }
+        - name: cursor
+          in: query
+          required: false
+          schema: { type: string }
+      responses:
+        '200':
+          description: Posts
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PostListPage'
+    post:
+      tags: [Channels]
+      operationId: broadcastToChannel
+      summary: Broadcast a post to a channel (admin only)
+      parameters:
+        - name: channelId
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PostInput'
+      responses:
+        '201':
+          description: Broadcasted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Post'
+
+  # ── Notifications ─────────────────────────────────────────────────────────
+  /notifications:
+    get:
+      tags: [Notifications]
+      operationId: getNotifications
+      summary: Get my notifications
+      parameters:
+        - name: cursor
+          in: query
+          required: false
+          schema: { type: string }
+      responses:
+        '200':
+          description: Notifications
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NotificationListPage'
+  /notifications/unread-count:
+    get:
+      tags: [Notifications]
+      operationId: getUnreadNotificationCount
+      summary: Get count of unread notifications
+      responses:
+        '200':
+          description: Count
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UnreadCount'
+  /notifications/read-all:
+    post:
+      tags: [Notifications]
+      operationId: markAllNotificationsRead
+      summary: Mark all notifications as read
+      responses:
+        '200':
+          description: Done
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LogoutSuccess'
+
+  # ── Search ────────────────────────────────────────────────────────────────
+  /search:
+    get:
+      tags: [Search]
+      operationId: search
+      summary: Search users, posts, groups, and channels
+      parameters:
+        - name: q
+          in: query
+          required: true
+          schema: { type: string, minLength: 1 }
+        - name: type
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [all, users, posts, groups, channels]
+            default: all
+        - name: cursor
+          in: query
+          required: false
+          schema: { type: string }
+      responses:
+        '200':
+          description: Search results
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SearchResults'
+
 components:
+  parameters:
+    AuthorizationSessionHeader:
+      name: Authorization
+      in: header
+      required: false
+      description: Opaque session token — `Bearer <sid>`.
+      schema: { type: string }
+    SessionCookie:
+      name: sid
+      in: cookie
+      required: false
+      description: Browser session cookie.
+      schema: { type: string }
+
   schemas:
     HealthStatus:
       type: object
       properties:
         status:
           type: string
-      required:
-        - status
+      required: [status]
 
+    ErrorEnvelope:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+
+    LogoutSuccess:
+      type: object
+      required: [success]
+      properties:
+        success:
+          type: boolean
+          const: true
+
+    # ── Auth ────────────────────────────────────────────────────────────────
+    AuthUser:
+      type: object
+      required: [id, email, firstName, lastName, profileImageUrl]
+      properties:
+        id: { type: string }
+        email: { type: ["string", "null"], format: email }
+        firstName: { type: ["string", "null"] }
+        lastName: { type: ["string", "null"] }
+        profileImageUrl: { type: ["string", "null"] }
+    AuthUserEnvelope:
+      type: object
+      required: [user]
+      properties:
+        user:
+          oneOf:
+            - $ref: '#/components/schemas/AuthUser'
+            - type: 'null'
+    MobileTokenExchangeRequest:
+      type: object
+      required: [code, code_verifier, redirect_uri, state]
+      properties:
+        code: { type: string, minLength: 1 }
+        code_verifier: { type: string, minLength: 1 }
+        redirect_uri: { type: string, minLength: 1, format: uri }
+        state: { type: string, minLength: 1 }
+        nonce: { type: string, minLength: 1 }
+    MobileTokenExchangeSuccess:
+      type: object
+      required: [token]
+      properties:
+        token: { type: string }
+
+    # ── Storage ─────────────────────────────────────────────────────────────
+    UploadUrlRequest:
+      type: object
+      required: [name, size, contentType]
+      properties:
+        name: { type: string, minLength: 1 }
+        size: { type: integer, minimum: 1 }
+        contentType: { type: string, minLength: 1 }
+    UploadUrlResponse:
+      type: object
+      required: [uploadURL, objectPath]
+      properties:
+        uploadURL: { type: string, format: uri }
+        objectPath: { type: string }
+        metadata:
+          $ref: '#/components/schemas/UploadUrlRequest'
+
+    # ── Users ────────────────────────────────────────────────────────────────
+    UserProfile:
+      type: object
+      required: [id, username, displayName, followersCount, followingCount, postsCount, isFollowing, createdAt]
+      properties:
+        id: { type: string }
+        username: { type: string }
+        displayName: { type: string }
+        bio: { type: ["string", "null"] }
+        avatarUrl: { type: ["string", "null"] }
+        coverUrl: { type: ["string", "null"] }
+        followersCount: { type: integer }
+        followingCount: { type: integer }
+        postsCount: { type: integer }
+        isFollowing: { type: boolean }
+        isMe: { type: boolean }
+        createdAt: { type: string, format: date-time }
+    ProfileUpdate:
+      type: object
+      properties:
+        username: { type: string, minLength: 1 }
+        displayName: { type: string, minLength: 1 }
+        bio: { type: string }
+        avatarUrl: { type: string }
+        coverUrl: { type: string }
+    UserSummary:
+      type: object
+      required: [id, username, displayName]
+      properties:
+        id: { type: string }
+        username: { type: string }
+        displayName: { type: string }
+        avatarUrl: { type: ["string", "null"] }
+        isFollowing: { type: boolean }
+    UserListPage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/UserSummary'
+        nextCursor: { type: ["string", "null"] }
+    FollowResult:
+      type: object
+      required: [following, followersCount]
+      properties:
+        following: { type: boolean }
+        followersCount: { type: integer }
+
+    # ── Posts ────────────────────────────────────────────────────────────────
+    Post:
+      type: object
+      required: [id, author, content, mediaUrls, likesCount, commentsCount, isLiked, isSaved, createdAt]
+      properties:
+        id: { type: string }
+        author:
+          $ref: '#/components/schemas/UserSummary'
+        content: { type: string }
+        mediaUrls:
+          type: array
+          items: { type: string }
+        mediaType: { type: ["string", "null"], enum: [image, video, "null"] }
+        likesCount: { type: integer }
+        commentsCount: { type: integer }
+        sharesCount: { type: integer }
+        isLiked: { type: boolean }
+        isSaved: { type: boolean }
+        channelId: { type: ["string", "null"] }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    PostInput:
+      type: object
+      required: [content]
+      properties:
+        content: { type: string, minLength: 1 }
+        mediaUrls:
+          type: array
+          items: { type: string }
+        mediaType: { type: string, enum: [image, video] }
+    PostUpdate:
+      type: object
+      properties:
+        content: { type: string, minLength: 1 }
+    PostListPage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Post'
+        nextCursor: { type: ["string", "null"] }
+    LikeResult:
+      type: object
+      required: [liked, likesCount]
+      properties:
+        liked: { type: boolean }
+        likesCount: { type: integer }
+    SaveResult:
+      type: object
+      required: [saved]
+      properties:
+        saved: { type: boolean }
+
+    # ── Comments ─────────────────────────────────────────────────────────────
+    Comment:
+      type: object
+      required: [id, author, content, repliesCount, createdAt]
+      properties:
+        id: { type: string }
+        author:
+          $ref: '#/components/schemas/UserSummary'
+        content: { type: string }
+        postId: { type: ["string", "null"] }
+        parentId: { type: ["string", "null"] }
+        repliesCount: { type: integer }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    CommentInput:
+      type: object
+      required: [content]
+      properties:
+        content: { type: string, minLength: 1 }
+    CommentUpdate:
+      type: object
+      required: [content]
+      properties:
+        content: { type: string, minLength: 1 }
+    CommentListPage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Comment'
+        nextCursor: { type: ["string", "null"] }
+
+    # ── Stories ──────────────────────────────────────────────────────────────
+    Story:
+      type: object
+      required: [id, author, mediaUrl, mediaType, viewsCount, expiresAt, createdAt]
+      properties:
+        id: { type: string }
+        author:
+          $ref: '#/components/schemas/UserSummary'
+        mediaUrl: { type: string }
+        mediaType: { type: string, enum: [image, video] }
+        viewsCount: { type: integer }
+        isViewed: { type: boolean }
+        expiresAt: { type: string, format: date-time }
+        createdAt: { type: string, format: date-time }
+    StoryGroup:
+      type: object
+      required: [user, stories, hasUnviewed]
+      properties:
+        user:
+          $ref: '#/components/schemas/UserSummary'
+        stories:
+          type: array
+          items:
+            $ref: '#/components/schemas/Story'
+        hasUnviewed: { type: boolean }
+    StoryInput:
+      type: object
+      required: [mediaUrl, mediaType]
+      properties:
+        mediaUrl: { type: string, minLength: 1 }
+        mediaType: { type: string, enum: [image, video] }
+
+    # ── Chats ─────────────────────────────────────────────────────────────────
+    Chat:
+      type: object
+      required: [id, participant, unreadCount, createdAt]
+      properties:
+        id: { type: string }
+        participant:
+          $ref: '#/components/schemas/UserSummary'
+        lastMessage:
+          oneOf:
+            - $ref: '#/components/schemas/Message'
+            - type: 'null'
+        unreadCount: { type: integer }
+        createdAt: { type: string, format: date-time }
+    ChatInput:
+      type: object
+      required: [participantId]
+      properties:
+        participantId: { type: string, minLength: 1 }
+
+    # ── Messages ──────────────────────────────────────────────────────────────
+    Message:
+      type: object
+      required: [id, senderId, content, isRead, createdAt]
+      properties:
+        id: { type: string }
+        senderId: { type: string }
+        sender:
+          oneOf:
+            - $ref: '#/components/schemas/UserSummary'
+            - type: 'null'
+        content: { type: string }
+        mediaUrl: { type: ["string", "null"] }
+        mediaType: { type: ["string", "null"], enum: [image, video, audio, file, "null"] }
+        isRead: { type: boolean }
+        createdAt: { type: string, format: date-time }
+    MessageInput:
+      type: object
+      required: [content]
+      properties:
+        content: { type: string, minLength: 1 }
+        mediaUrl: { type: string }
+        mediaType: { type: string, enum: [image, video, audio, file] }
+    MessageListPage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Message'
+        nextCursor: { type: ["string", "null"] }
+
+    # ── Groups ────────────────────────────────────────────────────────────────
+    Group:
+      type: object
+      required: [id, name, membersCount, isAdmin, createdAt]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        description: { type: ["string", "null"] }
+        avatarUrl: { type: ["string", "null"] }
+        membersCount: { type: integer }
+        members:
+          type: array
+          items:
+            $ref: '#/components/schemas/UserSummary'
+        isAdmin: { type: boolean }
+        lastMessage:
+          oneOf:
+            - $ref: '#/components/schemas/Message'
+            - type: 'null'
+        unreadCount: { type: integer }
+        createdAt: { type: string, format: date-time }
+    GroupInput:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string, minLength: 1 }
+        description: { type: string }
+        avatarUrl: { type: string }
+        memberIds:
+          type: array
+          items: { type: string }
+    GroupUpdate:
+      type: object
+      properties:
+        name: { type: string, minLength: 1 }
+        description: { type: string }
+        avatarUrl: { type: string }
+    MemberInput:
+      type: object
+      required: [userId]
+      properties:
+        userId: { type: string, minLength: 1 }
+
+    # ── Channels ──────────────────────────────────────────────────────────────
+    Channel:
+      type: object
+      required: [id, name, subscribersCount, isSubscribed, isAdmin, createdAt]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        description: { type: ["string", "null"] }
+        avatarUrl: { type: ["string", "null"] }
+        subscribersCount: { type: integer }
+        isSubscribed: { type: boolean }
+        isAdmin: { type: boolean }
+        createdAt: { type: string, format: date-time }
+    ChannelInput:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string, minLength: 1 }
+        description: { type: string }
+        avatarUrl: { type: string }
+
+    # ── Notifications ─────────────────────────────────────────────────────────
+    Notification:
+      type: object
+      required: [id, type, isRead, createdAt]
+      properties:
+        id: { type: string }
+        type:
+          type: string
+          enum: [follow, like, comment, reply, message, mention, channel_post]
+        actor:
+          oneOf:
+            - $ref: '#/components/schemas/UserSummary'
+            - type: 'null'
+        postId: { type: ["string", "null"] }
+        commentId: { type: ["string", "null"] }
+        channelId: { type: ["string", "null"] }
+        isRead: { type: boolean }
+        createdAt: { type: string, format: date-time }
+    NotificationListPage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Notification'
+        nextCursor: { type: ["string", "null"] }
+    UnreadCount:
+      type: object
+      required: [count]
+      properties:
+        count: { type: integer }
+
+    # ── Search ────────────────────────────────────────────────────────────────
+    SearchResults:
+      type: object
+      required: [users, posts, groups, channels]
+      properties:
+        users:
+          type: array
+          items:
+            $ref: '#/components/schemas/UserSummary'
+        posts:
+          type: array
+          items:
+            $ref: '#/components/schemas/Post'
+        groups:
+          type: array
+          items:
+            $ref: '#/components/schemas/Group'
+        channels:
+          type: array
+          items:
+            $ref: '#/components/schemas/Channel'
+        nextCursor: { type: ["string", "null"] }
