@@ -84,6 +84,57 @@ export const ExchangeMobileAuthorizationCodeResponse = zod.object({
 
 
 /**
+ * @summary Create a new account with email and password
+ */
+
+export const emailRegisterBodyPasswordMin = 8;
+
+
+
+export const EmailRegisterBody = zod.object({
+  "email": zod.string().email().min(1),
+  "password": zod.string().min(emailRegisterBodyPasswordMin),
+  "firstName": zod.string().optional(),
+  "lastName": zod.string().optional()
+})
+
+export const EmailRegisterResponse = zod.object({
+  "token": zod.string(),
+  "user": zod.object({
+  "id": zod.string(),
+  "email": zod.string().email().nullable(),
+  "firstName": zod.string().nullable(),
+  "lastName": zod.string().nullable(),
+  "profileImageUrl": zod.string().nullable()
+})
+})
+
+
+/**
+ * @summary Sign in with email and password
+ */
+
+
+
+
+export const EmailLoginBody = zod.object({
+  "email": zod.string().email().min(1),
+  "password": zod.string().min(1)
+})
+
+export const EmailLoginResponse = zod.object({
+  "token": zod.string(),
+  "user": zod.object({
+  "id": zod.string(),
+  "email": zod.string().email().nullable(),
+  "firstName": zod.string().nullable(),
+  "lastName": zod.string().nullable(),
+  "profileImageUrl": zod.string().nullable()
+})
+})
+
+
+/**
  * @summary Delete a mobile session token
  */
 export const LogoutMobileSessionHeader = zod.object({

@@ -51,6 +51,27 @@ export interface MobileTokenExchangeSuccess {
   token: string;
 }
 
+export interface EmailRegisterRequest {
+  /** @minLength 1 */
+  email: string;
+  /** @minLength 8 */
+  password: string;
+  firstName?: string;
+  lastName?: string;
+}
+
+export interface EmailLoginRequest {
+  /** @minLength 1 */
+  email: string;
+  /** @minLength 1 */
+  password: string;
+}
+
+export interface EmailAuthSuccess {
+  token: string;
+  user: AuthUser;
+}
+
 export interface UploadUrlRequest {
   /** @minLength 1 */
   name: string;

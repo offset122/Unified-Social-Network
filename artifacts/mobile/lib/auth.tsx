@@ -2,6 +2,7 @@ import React, { createContext, useContext, useState, useEffect, useCallback, typ
 import * as AuthSession from "expo-auth-session";
 import * as WebBrowser from "expo-web-browser";
 import * as SecureStore from "expo-secure-store";
+import { emailRegister, emailLogin } from "@workspace/api-client-react";
 
 WebBrowser.maybeCompleteAuthSession();
 
@@ -22,6 +23,8 @@ interface AuthContextValue {
   isAuthenticated: boolean;
   login: () => Promise<void>;
   logout: () => Promise<void>;
+  loginWithEmail: (email: string, password: string) => Promise<void>;
+  registerWithEmail: (email: string, password: string, firstName?: string, lastName?: string) => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextValue>({
@@ -30,6 +33,8 @@ const AuthContext = createContext<AuthContextValue>({
   isAuthenticated: false,
   login: async () => {},
   logout: async () => {},
+  loginWithEmail: async () => {},
+  registerWithEmail: async () => {},
 });
 
 function getApiBaseUrl(): string {
@@ -48,7 +53,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [isLoading, setIsLoading] = useState(true);
 
   const discovery = AuthSession.useAutoDiscovery(ISSUER_URL);
-
   const redirectUri = AuthSession.makeRedirectUri();
 
   const [request, response, promptAsync] = AuthSession.useAuthRequest(
@@ -74,7 +78,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const res = await fetch(`${apiBase}/api/auth/user`, {
         headers: { Authorization: `Bearer ${token}` },
       });
-      const data = await res.json();
+      const data = await res.json() as { user?: User };
 
       if (data.user) {
         setUser(data.user);
@@ -101,10 +105,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     (async () => {
       try {
         const apiBase = getApiBaseUrl();
-        if (!apiBase) {
-          console.error("API base URL is not configured.");
-          return;
-        }
+        if (!apiBase) return;
 
         const exchangeRes = await fetch(`${apiBase}/api/mobile-auth/token-exchange`, {
           method: "POST",
@@ -118,20 +119,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           }),
         });
 
-        if (!exchangeRes.ok) {
-          console.error("Token exchange failed:", exchangeRes.status);
-          setIsLoading(false);
-          return;
-        }
+        if (!exchangeRes.ok) return;
 
-        const data = await exchangeRes.json();
+        const data = await exchangeRes.json() as { token?: string };
         if (data.token) {
           await SecureStore.setItemAsync(AUTH_TOKEN_KEY, data.token);
           setIsLoading(true);
           await fetchUser();
         }
-      } catch (err) {
-        console.error("Token exchange error:", err);
+      } catch {
         setIsLoading(false);
       }
     })();
@@ -140,8 +136,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const login = useCallback(async () => {
     try {
       await promptAsync();
-    } catch (err) {
-      console.error("Login error:", err);
+    } catch {
+      // ignore
     }
   }, [promptAsync]);
 
@@ -156,11 +152,27 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         });
       }
     } catch {
+      // ignore
     } finally {
       await SecureStore.deleteItemAsync(AUTH_TOKEN_KEY);
       setUser(null);
     }
   }, []);
+
+  const loginWithEmail = useCallback(async (em: string, pw: string) => {
+    const result = await emailLogin({ email: em, password: pw });
+    await SecureStore.setItemAsync(AUTH_TOKEN_KEY, result.token);
+    setUser(result.user);
+  }, []);
+
+  const registerWithEmail = useCallback(
+    async (em: string, pw: string, firstName?: string, lastName?: string) => {
+      const result = await emailRegister({ email: em, password: pw, firstName, lastName });
+      await SecureStore.setItemAsync(AUTH_TOKEN_KEY, result.token);
+      setUser(result.user);
+    },
+    [],
+  );
 
   return (
     <AuthContext.Provider
@@ -170,6 +182,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         isAuthenticated: !!user,
         login,
         logout,
+        loginWithEmail,
+        registerWithEmail,
       }}
     >
       {children}

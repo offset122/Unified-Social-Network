@@ -30,6 +30,9 @@ import type {
   CommentInput,
   CommentListPage,
   CommentUpdate,
+  EmailAuthSuccess,
+  EmailLoginRequest,
+  EmailRegisterRequest,
   ErrorEnvelope,
   FollowResult,
   GetChannelPostsParams,
@@ -555,6 +558,148 @@ export const useExchangeMobileAuthorizationCode = <TError = ErrorType<ErrorEnvel
         TContext
       > => {
       return useMutation(getExchangeMobileAuthorizationCodeMutationOptions(options));
+    }
+
+export const getEmailRegisterUrl = () => {
+
+
+
+
+  return `/api/auth/email-register`
+}
+
+/**
+ * @summary Create a new account with email and password
+ */
+export const emailRegister = async (emailRegisterRequest: EmailRegisterRequest, options?: RequestInit): Promise<EmailAuthSuccess> => {
+
+  return customFetch<EmailAuthSuccess>(getEmailRegisterUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      emailRegisterRequest,)
+  }
+);}
+
+
+
+
+export const getEmailRegisterMutationOptions = <TError = ErrorType<ErrorEnvelope>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof emailRegister>>, TError,{data: BodyType<EmailRegisterRequest>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof emailRegister>>, TError,{data: BodyType<EmailRegisterRequest>}, TContext> => {
+
+const mutationKey = ['emailRegister'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof emailRegister>>, {data: BodyType<EmailRegisterRequest>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  emailRegister(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type EmailRegisterMutationResult = NonNullable<Awaited<ReturnType<typeof emailRegister>>>
+    export type EmailRegisterMutationBody = BodyType<EmailRegisterRequest>
+    export type EmailRegisterMutationError = ErrorType<ErrorEnvelope>
+
+    /**
+ * @summary Create a new account with email and password
+ */
+export const useEmailRegister = <TError = ErrorType<ErrorEnvelope>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof emailRegister>>, TError,{data: BodyType<EmailRegisterRequest>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof emailRegister>>,
+        TError,
+        {data: BodyType<EmailRegisterRequest>},
+        TContext
+      > => {
+      return useMutation(getEmailRegisterMutationOptions(options));
+    }
+
+export const getEmailLoginUrl = () => {
+
+
+
+
+  return `/api/auth/email-login`
+}
+
+/**
+ * @summary Sign in with email and password
+ */
+export const emailLogin = async (emailLoginRequest: EmailLoginRequest, options?: RequestInit): Promise<EmailAuthSuccess> => {
+
+  return customFetch<EmailAuthSuccess>(getEmailLoginUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      emailLoginRequest,)
+  }
+);}
+
+
+
+
+export const getEmailLoginMutationOptions = <TError = ErrorType<ErrorEnvelope>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof emailLogin>>, TError,{data: BodyType<EmailLoginRequest>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof emailLogin>>, TError,{data: BodyType<EmailLoginRequest>}, TContext> => {
+
+const mutationKey = ['emailLogin'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof emailLogin>>, {data: BodyType<EmailLoginRequest>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  emailLogin(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type EmailLoginMutationResult = NonNullable<Awaited<ReturnType<typeof emailLogin>>>
+    export type EmailLoginMutationBody = BodyType<EmailLoginRequest>
+    export type EmailLoginMutationError = ErrorType<ErrorEnvelope>
+
+    /**
+ * @summary Sign in with email and password
+ */
+export const useEmailLogin = <TError = ErrorType<ErrorEnvelope>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof emailLogin>>, TError,{data: BodyType<EmailLoginRequest>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof emailLogin>>,
+        TError,
+        {data: BodyType<EmailLoginRequest>},
+        TContext
+      > => {
+      return useMutation(getEmailLoginMutationOptions(options));
     }
 
 export const getLogoutMobileSessionUrl = () => {

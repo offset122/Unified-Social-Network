@@ -147,6 +147,66 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorEnvelope'
+  /auth/email-register:
+    post:
+      tags: [Auth]
+      operationId: emailRegister
+      summary: Create a new account with email and password
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EmailRegisterRequest'
+      responses:
+        '200':
+          description: Account created and session token returned.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EmailAuthSuccess'
+        '400':
+          description: Validation error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '409':
+          description: Email already registered.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+  /auth/email-login:
+    post:
+      tags: [Auth]
+      operationId: emailLogin
+      summary: Sign in with email and password
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EmailLoginRequest'
+      responses:
+        '200':
+          description: Login successful.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EmailAuthSuccess'
+        '400':
+          description: Validation error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '401':
+          description: Invalid credentials.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
   /mobile-auth/logout:
     post:
       tags: [Auth]
@@ -1342,6 +1402,27 @@ components:
       required: [token]
       properties:
         token: { type: string }
+    EmailRegisterRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email: { type: string, format: email, minLength: 1 }
+        password: { type: string, minLength: 8 }
+        firstName: { type: string }
+        lastName: { type: string }
+    EmailLoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email: { type: string, format: email, minLength: 1 }
+        password: { type: string, minLength: 1 }
+    EmailAuthSuccess:
+      type: object
+      required: [token, user]
+      properties:
+        token: { type: string }
+        user:
+          $ref: '#/components/schemas/AuthUser'
 
     # ── Storage ─────────────────────────────────────────────────────────────
     UploadUrlRequest:
