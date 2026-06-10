@@ -21,10 +21,16 @@ async function buildPost(
 ) {
   let profile = authorProfile;
   if (!profile) {
-    const [p] = await db.select().from(profilesTable).where(eq(profilesTable.userId, post.authorId));
+    const [p] = await db
+      .select()
+      .from(profilesTable)
+      .where(eq(profilesTable.userId, post.authorId));
     profile = p;
   }
-  const [authorUser] = await db.select().from(usersTable).where(eq(usersTable.id, post.authorId));
+  const [authorUser] = await db
+    .select()
+    .from(usersTable)
+    .where(eq(usersTable.id, post.authorId));
 
   const author = {
     id: post.authorId,
@@ -37,12 +43,18 @@ async function buildPost(
   let isLiked = false;
   let isSaved = false;
   if (viewerId) {
-    const [like] = await db.select().from(likesTable).where(
-      sql`${likesTable.userId} = ${viewerId} AND ${likesTable.postId} = ${post.id}`
-    );
-    const [save] = await db.select().from(savesTable).where(
-      sql`${savesTable.userId} = ${viewerId} AND ${savesTable.postId} = ${post.id}`
-    );
+    const [like] = await db
+      .select()
+      .from(likesTable)
+      .where(
+        sql`${likesTable.userId} = ${viewerId} AND ${likesTable.postId} = ${post.id}`,
+      );
+    const [save] = await db
+      .select()
+      .from(savesTable)
+      .where(
+        sql`${savesTable.userId} = ${viewerId} AND ${savesTable.postId} = ${post.id}`,
+      );
     isLiked = !!like;
     isSaved = !!save;
   }
@@ -73,27 +85,13 @@ router.get("/posts", async (req, res): Promise<void> => {
   const limit = Math.min(Number(req.query.limit ?? 20), 50);
   const cursor = req.query.cursor as string | undefined;
 
-  const following = await db
-    .select({ id: followsTable.followingId })
-    .from(followsTable)
-    .where(eq(followsTable.followerId, req.user.id));
-
-  const feedUserIds = [req.user.id, ...following.map((f) => f.id)];
-
   const rows = await db
     .select()
     .from(postsTable)
     .where(
       cursor
-        ? and(
-            inArray(postsTable.authorId, feedUserIds),
-            isNull(postsTable.channelId),
-            lt(postsTable.id, cursor),
-          )
-        : and(
-            inArray(postsTable.authorId, feedUserIds),
-            isNull(postsTable.channelId),
-          )
+        ? and(isNull(postsTable.channelId), lt(postsTable.id, cursor))
+        : isNull(postsTable.channelId),
     )
     .orderBy(sql`${postsTable.createdAt} DESC`)
     .limit(limit);
@@ -122,7 +120,10 @@ router.get("/posts/saved", async (req, res): Promise<void> => {
   }
 
   const postIds = saves.map((s) => s.postId);
-  const rows = await db.select().from(postsTable).where(inArray(postsTable.id, postIds));
+  const rows = await db
+    .select()
+    .from(postsTable)
+    .where(inArray(postsTable.id, postIds));
   const items = await Promise.all(rows.map((p) => buildPost(p, req.user.id)));
   res.json({ items, nextCursor: null });
 });
@@ -139,7 +140,7 @@ router.get("/posts/reels", async (req, res): Promise<void> => {
     .where(
       cursor
         ? sql`${postsTable.mediaType} = 'video' AND ${postsTable.id} < ${cursor}`
-        : sql`${postsTable.mediaType} = 'video'`
+        : sql`${postsTable.mediaType} = 'video'`,
     )
     .orderBy(sql`${postsTable.createdAt} DESC`)
     .limit(limit);
@@ -179,7 +180,12 @@ router.post("/posts", async (req, res): Promise<void> => {
   }
   const [post] = await db
     .insert(postsTable)
-    .values({ authorId: req.user.id, content, mediaUrls: mediaUrls ?? [], mediaType })
+    .values({
+      authorId: req.user.id,
+      content,
+      mediaUrls: mediaUrls ?? [],
+      mediaType,
+    })
     .returning();
 
   await db
@@ -202,8 +208,13 @@ router.post("/posts", async (req, res): Promise<void> => {
 
 // GET /posts/:postId
 router.get("/posts/:postId", async (req, res): Promise<void> => {
-  const raw = Array.isArray(req.params.postId) ? req.params.postId[0] : req.params.postId;
-  const [post] = await db.select().from(postsTable).where(eq(postsTable.id, raw));
+  const raw = Array.isArray(req.params.postId)
+    ? req.params.postId[0]
+    : req.params.postId;
+  const [post] = await db
+    .select()
+    .from(postsTable)
+    .where(eq(postsTable.id, raw));
   if (!post) {
     res.status(404).json({ error: "Post not found" });
     return;
@@ -218,12 +229,16 @@ router.patch("/posts/:postId", async (req, res): Promise<void> => {
     res.status(401).json({ error: "Unauthorized" });
     return;
   }
-  const raw = Array.isArray(req.params.postId) ? req.params.postId[0] : req.params.postId;
+  const raw = Array.isArray(req.params.postId)
+    ? req.params.postId[0]
+    : req.params.postId;
   const { content } = req.body as { content: string };
   const [post] = await db
     .update(postsTable)
     .set({ content, updatedAt: new Date() })
-    .where(sql`${postsTable.id} = ${raw} AND ${postsTable.authorId} = ${req.user.id}`)
+    .where(
+      sql`${postsTable.id} = ${raw} AND ${postsTable.authorId} = ${req.user.id}`,
+    )
     .returning();
   if (!post) {
     res.status(404).json({ error: "Post not found" });
@@ -238,10 +253,14 @@ router.delete("/posts/:postId", async (req, res): Promise<void> => {
     res.status(401).json({ error: "Unauthorized" });
     return;
   }
-  const raw = Array.isArray(req.params.postId) ? req.params.postId[0] : req.params.postId;
+  const raw = Array.isArray(req.params.postId)
+    ? req.params.postId[0]
+    : req.params.postId;
   const [post] = await db
     .delete(postsTable)
-    .where(sql`${postsTable.id} = ${raw} AND ${postsTable.authorId} = ${req.user.id}`)
+    .where(
+      sql`${postsTable.id} = ${raw} AND ${postsTable.authorId} = ${req.user.id}`,
+    )
     .returning();
   if (!post) {
     res.status(404).json({ error: "Post not found" });
@@ -260,8 +279,13 @@ router.post("/posts/:postId/like", async (req, res): Promise<void> => {
     res.status(401).json({ error: "Unauthorized" });
     return;
   }
-  const raw = Array.isArray(req.params.postId) ? req.params.postId[0] : req.params.postId;
-  await db.insert(likesTable).values({ userId: req.user.id, postId: raw }).onConflictDoNothing();
+  const raw = Array.isArray(req.params.postId)
+    ? req.params.postId[0]
+    : req.params.postId;
+  await db
+    .insert(likesTable)
+    .values({ userId: req.user.id, postId: raw })
+    .onConflictDoNothing();
   const [post] = await db
     .update(postsTable)
     .set({ likesCount: sql`${postsTable.likesCount} + 1` })
@@ -287,10 +311,14 @@ router.delete("/posts/:postId/like", async (req, res): Promise<void> => {
     res.status(401).json({ error: "Unauthorized" });
     return;
   }
-  const raw = Array.isArray(req.params.postId) ? req.params.postId[0] : req.params.postId;
-  await db.delete(likesTable).where(
-    sql`${likesTable.userId} = ${req.user.id} AND ${likesTable.postId} = ${raw}`
-  );
+  const raw = Array.isArray(req.params.postId)
+    ? req.params.postId[0]
+    : req.params.postId;
+  await db
+    .delete(likesTable)
+    .where(
+      sql`${likesTable.userId} = ${req.user.id} AND ${likesTable.postId} = ${raw}`,
+    );
   const [post] = await db
     .update(postsTable)
     .set({ likesCount: sql`GREATEST(${postsTable.likesCount} - 1, 0)` })
@@ -305,8 +333,13 @@ router.post("/posts/:postId/save", async (req, res): Promise<void> => {
     res.status(401).json({ error: "Unauthorized" });
     return;
   }
-  const raw = Array.isArray(req.params.postId) ? req.params.postId[0] : req.params.postId;
-  await db.insert(savesTable).values({ userId: req.user.id, postId: raw }).onConflictDoNothing();
+  const raw = Array.isArray(req.params.postId)
+    ? req.params.postId[0]
+    : req.params.postId;
+  await db
+    .insert(savesTable)
+    .values({ userId: req.user.id, postId: raw })
+    .onConflictDoNothing();
   res.json({ saved: true });
 });
 
@@ -316,10 +349,14 @@ router.delete("/posts/:postId/save", async (req, res): Promise<void> => {
     res.status(401).json({ error: "Unauthorized" });
     return;
   }
-  const raw = Array.isArray(req.params.postId) ? req.params.postId[0] : req.params.postId;
-  await db.delete(savesTable).where(
-    sql`${savesTable.userId} = ${req.user.id} AND ${savesTable.postId} = ${raw}`
-  );
+  const raw = Array.isArray(req.params.postId)
+    ? req.params.postId[0]
+    : req.params.postId;
+  await db
+    .delete(savesTable)
+    .where(
+      sql`${savesTable.userId} = ${req.user.id} AND ${savesTable.postId} = ${raw}`,
+    );
   res.json({ saved: false });
 });
 
