@@ -1,5 +1,5 @@
 import { Router, type IRouter } from "express";
-import { eq, sql, gt } from "drizzle-orm";
+import { eq, sql, gt, inArray, and } from "drizzle-orm";
 import { db } from "@workspace/db";
 import {
   usersTable,
@@ -39,7 +39,6 @@ function buildStory(
 router.get("/stories", async (req, res): Promise<void> => {
   const now = new Date();
 
-  // Get all active stories from users we follow (plus our own)
   let authorIds: string[] = [];
   if (req.isAuthenticated()) {
     const following = await db
@@ -54,7 +53,12 @@ router.get("/stories", async (req, res): Promise<void> => {
       ? await db
           .select()
           .from(storiesTable)
-          .where(sql`${storiesTable.authorId} = ANY(${authorIds}) AND ${storiesTable.expiresAt} > ${now}`)
+          .where(
+            and(
+              inArray(storiesTable.authorId, authorIds),
+              gt(storiesTable.expiresAt, now),
+            ),
+          )
           .orderBy(sql`${storiesTable.createdAt} DESC`)
       : await db
           .select()
@@ -70,15 +74,17 @@ router.get("/stories", async (req, res): Promise<void> => {
     const views = await db
       .select({ storyId: storyViewsTable.storyId })
       .from(storyViewsTable)
-      .where(sql`${storyViewsTable.viewerId} = ${req.user.id} AND ${storyViewsTable.storyId} = ANY(${storyIds})`);
+      .where(
+        and(
+          eq(storyViewsTable.viewerId, req.user.id),
+          inArray(storyViewsTable.storyId, storyIds),
+        ),
+      );
     views.forEach((v) => viewedIds.add(v.storyId));
   }
 
-  // Group stories by author
-  const groups: Map<
-    string,
-    { profile?: typeof profilesTable.$inferSelect; user?: typeof usersTable.$inferSelect; stories: typeof storiesTable.$inferSelect[] }
-  > = new Map();
+  // REPLACE with this one line:
+  const groups = new Map<string, { profile: any; user: any; stories: any[] }>();
   for (const story of stories) {
     if (!groups.has(story.authorId)) {
       const [profile] = await db
@@ -94,17 +100,21 @@ router.get("/stories", async (req, res): Promise<void> => {
     groups.get(story.authorId)!.stories.push(story);
   }
 
-  const result = Array.from(groups.entries()).map(([authorId, { profile, user, stories: authorStories }]) => ({
-    user: {
-      id: authorId,
-      username: profile?.username ?? "unknown",
-      displayName: profile?.displayName ?? "Unknown",
-      avatarUrl: profile?.avatarUrl ?? user?.profileImageUrl ?? null,
-      isFollowing: false,
-    },
-    stories: authorStories.map((s) => buildStory(s, profile, user, viewedIds.has(s.id))),
-    hasUnviewed: authorStories.some((s) => !viewedIds.has(s.id)),
-  }));
+  const result = Array.from(groups.entries()).map(
+    ([authorId, { profile, user, stories: authorStories }]) => ({
+      author: {
+        id: authorId,
+        username: profile?.username ?? "unknown",
+        displayName: profile?.displayName ?? "Unknown",
+        avatarUrl: profile?.avatarUrl ?? user?.profileImageUrl ?? null,
+        isFollowing: false,
+      },
+      stories: authorStories.map((s) =>
+        buildStory(s, profile, user, viewedIds.has(s.id)),
+      ),
+      hasUnviewed: authorStories.some((s) => !viewedIds.has(s.id)),
+    }),
+  );
 
   res.json(result);
 });
@@ -115,7 +125,10 @@ router.post("/stories", async (req, res): Promise<void> => {
     res.status(401).json({ error: "Unauthorized" });
     return;
   }
-  const { mediaUrl, mediaType } = req.body as { mediaUrl: string; mediaType: "image" | "video" };
+  const { mediaUrl, mediaType } = req.body as {
+    mediaUrl: string;
+    mediaType: "image" | "video";
+  };
   if (!mediaUrl || !mediaType) {
     res.status(400).json({ error: "mediaUrl and mediaType are required" });
     return;
@@ -144,7 +157,9 @@ router.post("/stories/:storyId/view", async (req, res): Promise<void> => {
     res.status(401).json({ error: "Unauthorized" });
     return;
   }
-  const raw = Array.isArray(req.params.storyId) ? req.params.storyId[0] : req.params.storyId;
+  const raw = Array.isArray(req.params.storyId)
+    ? req.params.storyId[0]
+    : req.params.storyId;
   const inserted = await db
     .insert(storyViewsTable)
     .values({ storyId: raw, viewerId: req.user.id })
@@ -161,12 +176,17 @@ router.post("/stories/:storyId/view", async (req, res): Promise<void> => {
 
 // GET /stories/:storyId/viewers
 router.get("/stories/:storyId/viewers", async (req, res): Promise<void> => {
-  const raw = Array.isArray(req.params.storyId) ? req.params.storyId[0] : req.params.storyId;
+  const raw = Array.isArray(req.params.storyId)
+    ? req.params.storyId[0]
+    : req.params.storyId;
   const rows = await db
     .select({ user: usersTable, profile: profilesTable })
     .from(storyViewsTable)
     .innerJoin(usersTable, eq(usersTable.id, storyViewsTable.viewerId))
-    .innerJoin(profilesTable, eq(profilesTable.userId, storyViewsTable.viewerId))
+    .innerJoin(
+      profilesTable,
+      eq(profilesTable.userId, storyViewsTable.viewerId),
+    )
     .where(eq(storyViewsTable.storyId, raw))
     .limit(100);
 

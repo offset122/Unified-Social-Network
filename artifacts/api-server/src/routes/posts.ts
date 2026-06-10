@@ -1,5 +1,5 @@
 import { Router, type IRouter } from "express";
-import { eq, sql, inArray } from "drizzle-orm";
+import { eq, sql, inArray, and, lt, isNull } from "drizzle-orm";
 import { db } from "@workspace/db";
 import {
   usersTable,
@@ -64,7 +64,7 @@ async function buildPost(
   };
 }
 
-// GET /posts — feed
+// GET /posts — feed (own posts + followed users)
 router.get("/posts", async (req, res): Promise<void> => {
   if (!req.isAuthenticated()) {
     res.status(401).json({ error: "Unauthorized" });
@@ -77,6 +77,7 @@ router.get("/posts", async (req, res): Promise<void> => {
     .select({ id: followsTable.followingId })
     .from(followsTable)
     .where(eq(followsTable.followerId, req.user.id));
+
   const feedUserIds = [req.user.id, ...following.map((f) => f.id)];
 
   const rows = await db
@@ -84,8 +85,15 @@ router.get("/posts", async (req, res): Promise<void> => {
     .from(postsTable)
     .where(
       cursor
-        ? sql`${postsTable.authorId} = ANY(${feedUserIds}) AND ${postsTable.id} < ${cursor}`
-        : sql`${postsTable.authorId} = ANY(${feedUserIds}) AND ${postsTable.channelId} IS NULL`
+        ? and(
+            inArray(postsTable.authorId, feedUserIds),
+            isNull(postsTable.channelId),
+            lt(postsTable.id, cursor),
+          )
+        : and(
+            inArray(postsTable.authorId, feedUserIds),
+            isNull(postsTable.channelId),
+          )
     )
     .orderBy(sql`${postsTable.createdAt} DESC`)
     .limit(limit);
@@ -119,7 +127,7 @@ router.get("/posts/saved", async (req, res): Promise<void> => {
   res.json({ items, nextCursor: null });
 });
 
-// GET /posts/reels — video posts feed
+// GET /posts/reels
 router.get("/posts/reels", async (req, res): Promise<void> => {
   const limit = Math.min(Number(req.query.limit ?? 20), 50);
   const cursor = req.query.cursor as string | undefined;
@@ -146,7 +154,7 @@ router.get("/posts/explore", async (req, res): Promise<void> => {
   const rows = await db
     .select()
     .from(postsTable)
-    .where(sql`${postsTable.channelId} IS NULL`)
+    .where(isNull(postsTable.channelId))
     .orderBy(sql`${postsTable.createdAt} DESC`)
     .limit(30);
   const viewerId = req.isAuthenticated() ? req.user.id : null;
@@ -181,7 +189,6 @@ router.post("/posts", async (req, res): Promise<void> => {
 
   const built = await buildPost(post, req.user.id);
 
-  // Notify followers via socket
   const followers = await db
     .select({ id: followsTable.followerId })
     .from(followsTable)
@@ -261,7 +268,6 @@ router.post("/posts/:postId/like", async (req, res): Promise<void> => {
     .where(eq(postsTable.id, raw))
     .returning();
 
-  // Notify post author
   if (post && post.authorId !== req.user.id) {
     await db.insert(notificationsTable).values({
       userId: post.authorId,
