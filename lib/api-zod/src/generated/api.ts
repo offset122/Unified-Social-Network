@@ -207,6 +207,8 @@ export const GetMyProfileResponse = zod.object({
   "postsCount": zod.number(),
   "isFollowing": zod.boolean(),
   "isMe": zod.boolean().optional(),
+  "isAdmin": zod.boolean().optional(),
+  "isBanned": zod.boolean().optional(),
   "createdAt": zod.coerce.date()
 })
 
@@ -238,6 +240,8 @@ export const UpdateMyProfileResponse = zod.object({
   "postsCount": zod.number(),
   "isFollowing": zod.boolean(),
   "isMe": zod.boolean().optional(),
+  "isAdmin": zod.boolean().optional(),
+  "isBanned": zod.boolean().optional(),
   "createdAt": zod.coerce.date()
 })
 
@@ -261,6 +265,8 @@ export const GetUserProfileResponse = zod.object({
   "postsCount": zod.number(),
   "isFollowing": zod.boolean(),
   "isMe": zod.boolean().optional(),
+  "isAdmin": zod.boolean().optional(),
+  "isBanned": zod.boolean().optional(),
   "createdAt": zod.coerce.date()
 })
 
@@ -589,6 +595,43 @@ export const GetSavedPostsQueryParams = zod.object({
 })
 
 export const GetSavedPostsResponse = zod.object({
+  "items": zod.array(zod.object({
+  "id": zod.string(),
+  "author": zod.object({
+  "id": zod.string(),
+  "username": zod.string(),
+  "displayName": zod.string(),
+  "avatarUrl": zod.string().nullish(),
+  "isFollowing": zod.boolean().optional()
+}),
+  "content": zod.string(),
+  "mediaUrls": zod.array(zod.string()),
+  "mediaType": zod.enum(['image', 'video', 'null']).nullish(),
+  "likesCount": zod.number(),
+  "commentsCount": zod.number(),
+  "sharesCount": zod.number().optional(),
+  "isLiked": zod.boolean(),
+  "isSaved": zod.boolean(),
+  "channelId": zod.string().nullish(),
+  "createdAt": zod.coerce.date(),
+  "updatedAt": zod.coerce.date().optional()
+})),
+  "nextCursor": zod.string().nullish()
+})
+
+
+/**
+ * @summary Get video reels feed
+ */
+export const GetReelsQueryParams = zod.object({
+  "cursor": zod.coerce.string().optional()
+})
+
+export const GetReelsHeader = zod.object({
+  "Authorization": zod.string().optional().describe('Opaque session token — `Bearer <sid>`.')
+})
+
+export const GetReelsResponse = zod.object({
   "items": zod.array(zod.object({
   "id": zod.string(),
   "author": zod.object({
@@ -1427,6 +1470,94 @@ export const GetUnreadNotificationCountResponse = zod.object({
  */
 export const MarkAllNotificationsReadResponse = zod.object({
   "success": zod.boolean()
+})
+
+
+/**
+ * @summary Platform statistics (admin only)
+ */
+export const GetAdminStatsHeader = zod.object({
+  "Authorization": zod.string().optional().describe('Opaque session token — `Bearer <sid>`.')
+})
+
+export const GetAdminStatsResponse = zod.object({
+  "usersCount": zod.number(),
+  "postsCount": zod.number(),
+  "storiesCount": zod.number(),
+  "reelsCount": zod.number(),
+  "chatsCount": zod.number()
+})
+
+
+/**
+ * @summary All users (admin only)
+ */
+export const GetAdminUsersHeader = zod.object({
+  "Authorization": zod.string().optional().describe('Opaque session token — `Bearer <sid>`.')
+})
+
+export const GetAdminUsersResponseItem = zod.object({
+  "id": zod.string(),
+  "username": zod.string(),
+  "displayName": zod.string(),
+  "bio": zod.string().nullish(),
+  "avatarUrl": zod.string().nullish(),
+  "coverUrl": zod.string().nullish(),
+  "followersCount": zod.number(),
+  "followingCount": zod.number(),
+  "postsCount": zod.number(),
+  "isFollowing": zod.boolean(),
+  "isMe": zod.boolean().optional(),
+  "isAdmin": zod.boolean().optional(),
+  "isBanned": zod.boolean().optional(),
+  "createdAt": zod.coerce.date()
+})
+export const GetAdminUsersResponse = zod.array(GetAdminUsersResponseItem)
+
+
+/**
+ * @summary Update user admin/ban status (admin only)
+ */
+export const UpdateAdminUserParams = zod.object({
+  "userId": zod.coerce.string()
+})
+
+export const UpdateAdminUserHeader = zod.object({
+  "Authorization": zod.string().optional().describe('Opaque session token — `Bearer <sid>`.')
+})
+
+export const UpdateAdminUserBody = zod.object({
+  "isAdmin": zod.boolean().optional(),
+  "isBanned": zod.boolean().optional()
+})
+
+export const UpdateAdminUserResponse = zod.object({
+  "id": zod.string(),
+  "username": zod.string(),
+  "displayName": zod.string(),
+  "bio": zod.string().nullish(),
+  "avatarUrl": zod.string().nullish(),
+  "coverUrl": zod.string().nullish(),
+  "followersCount": zod.number(),
+  "followingCount": zod.number(),
+  "postsCount": zod.number(),
+  "isFollowing": zod.boolean(),
+  "isMe": zod.boolean().optional(),
+  "isAdmin": zod.boolean().optional(),
+  "isBanned": zod.boolean().optional(),
+  "createdAt": zod.coerce.date()
+})
+
+
+/**
+ * @summary Delete any post (admin only)
+ */
+export const DeleteAdminPostParams = zod.object({
+  "postId": zod.coerce.string()
+})
+
+export const DeleteAdminPostHeader = zod.object({
+  "Authorization": zod.string().optional().describe('Opaque session token — `Bearer <sid>`.')
 })
 
 

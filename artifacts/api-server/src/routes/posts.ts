@@ -119,6 +119,28 @@ router.get("/posts/saved", async (req, res): Promise<void> => {
   res.json({ items, nextCursor: null });
 });
 
+// GET /posts/reels — video posts feed
+router.get("/posts/reels", async (req, res): Promise<void> => {
+  const limit = Math.min(Number(req.query.limit ?? 20), 50);
+  const cursor = req.query.cursor as string | undefined;
+  const viewerId = req.isAuthenticated() ? req.user.id : null;
+
+  const rows = await db
+    .select()
+    .from(postsTable)
+    .where(
+      cursor
+        ? sql`${postsTable.mediaType} = 'video' AND ${postsTable.id} < ${cursor}`
+        : sql`${postsTable.mediaType} = 'video'`
+    )
+    .orderBy(sql`${postsTable.createdAt} DESC`)
+    .limit(limit);
+
+  const items = await Promise.all(rows.map((p) => buildPost(p, viewerId)));
+  const nextCursor = rows.length === limit ? rows[rows.length - 1].id : null;
+  res.json({ items, nextCursor });
+});
+
 // GET /posts/explore
 router.get("/posts/explore", async (req, res): Promise<void> => {
   const rows = await db

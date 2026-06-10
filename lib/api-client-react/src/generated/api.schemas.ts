@@ -102,6 +102,8 @@ export interface UserProfile {
   postsCount: number;
   isFollowing: boolean;
   isMe?: boolean;
+  isAdmin?: boolean;
+  isBanned?: boolean;
   createdAt: string;
 }
 
@@ -432,6 +434,19 @@ export interface SearchResults {
   nextCursor?: string | null;
 }
 
+export interface AdminStats {
+  usersCount: number;
+  postsCount: number;
+  storiesCount: number;
+  reelsCount: number;
+  chatsCount: number;
+}
+
+export interface AdminUserUpdate {
+  isAdmin?: boolean;
+  isBanned?: boolean;
+}
+
 /**
  * Opaque session token — `Bearer <sid>`.
  */
@@ -469,6 +484,10 @@ cursor?: string;
 };
 
 export type GetSavedPostsParams = {
+cursor?: string;
+};
+
+export type GetReelsParams = {
 cursor?: string;
 };
 

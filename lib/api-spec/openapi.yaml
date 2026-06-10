@@ -677,6 +677,24 @@ paths:
               schema:
                 $ref: '#/components/schemas/PostListPage'
 
+  /posts/reels:
+    get:
+      tags: [Posts]
+      operationId: getReels
+      summary: Get video reels feed
+      parameters:
+        - $ref: '#/components/parameters/AuthorizationSessionHeader'
+        - name: cursor
+          in: query
+          schema: { type: string }
+      responses:
+        '200':
+          description: Reels page.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PostListPage'
+
   # ── Comments ──────────────────────────────────────────────────────────────
   /posts/{postId}/comments:
     get:
@@ -1303,6 +1321,98 @@ paths:
                 $ref: '#/components/schemas/LogoutSuccess'
 
   # ── Search ────────────────────────────────────────────────────────────────
+  /admin/stats:
+    get:
+      tags: [Admin]
+      operationId: getAdminStats
+      summary: Platform statistics (admin only)
+      parameters:
+        - $ref: '#/components/parameters/AuthorizationSessionHeader'
+      responses:
+        '200':
+          description: Stats.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminStats'
+        '403':
+          description: Forbidden.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+  /admin/users:
+    get:
+      tags: [Admin]
+      operationId: getAdminUsers
+      summary: All users (admin only)
+      parameters:
+        - $ref: '#/components/parameters/AuthorizationSessionHeader'
+      responses:
+        '200':
+          description: Users.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/UserProfile'
+        '403':
+          description: Forbidden.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+  /admin/users/{userId}:
+    patch:
+      tags: [Admin]
+      operationId: updateAdminUser
+      summary: Update user admin/ban status (admin only)
+      parameters:
+        - $ref: '#/components/parameters/AuthorizationSessionHeader'
+        - name: userId
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AdminUserUpdate'
+      responses:
+        '200':
+          description: Updated user.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserProfile'
+        '403':
+          description: Forbidden.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+  /admin/posts/{postId}:
+    delete:
+      tags: [Admin]
+      operationId: deleteAdminPost
+      summary: Delete any post (admin only)
+      parameters:
+        - $ref: '#/components/parameters/AuthorizationSessionHeader'
+        - name: postId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '204':
+          description: Deleted.
+        '403':
+          description: Forbidden.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
   /search:
     get:
       tags: [Search]
@@ -1457,6 +1567,8 @@ components:
         postsCount: { type: integer }
         isFollowing: { type: boolean }
         isMe: { type: boolean }
+        isAdmin: { type: boolean }
+        isBanned: { type: boolean }
         createdAt: { type: string, format: date-time }
     ProfileUpdate:
       type: object
@@ -1784,3 +1896,18 @@ components:
           items:
             $ref: '#/components/schemas/Channel'
         nextCursor: { type: ["string", "null"] }
+
+    AdminStats:
+      type: object
+      required: [usersCount, postsCount, storiesCount, reelsCount, chatsCount]
+      properties:
+        usersCount: { type: integer }
+        postsCount: { type: integer }
+        storiesCount: { type: integer }
+        reelsCount: { type: integer }
+        chatsCount: { type: integer }
+    AdminUserUpdate:
+      type: object
+      properties:
+        isAdmin: { type: boolean }
+        isBanned: { type: boolean }

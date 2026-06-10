@@ -19,6 +19,10 @@ function NativeTabLayout() {
         <Icon sf={{ default: "magnifyingglass", selected: "magnifyingglass" }} />
         <Label>Search</Label>
       </NativeTabs.Trigger>
+      <NativeTabs.Trigger name="reels">
+        <Icon sf={{ default: "film", selected: "film.fill" }} />
+        <Label>Reels</Label>
+      </NativeTabs.Trigger>
       <NativeTabs.Trigger name="create">
         <Icon sf={{ default: "plus.circle", selected: "plus.circle.fill" }} />
         <Label>Create</Label>
@@ -94,6 +98,18 @@ function ClassicTabLayout() {
               <SymbolView name="magnifyingglass" tintColor={color} size={24} />
             ) : (
               <Feather name="search" size={22} color={color} />
+            ),
+        }}
+      />
+      <Tabs.Screen
+        name="reels"
+        options={{
+          title: "Reels",
+          tabBarIcon: ({ color }) =>
+            isIOS ? (
+              <SymbolView name="film" tintColor={color} size={24} />
+            ) : (
+              <Feather name="film" size={22} color={color} />
             ),
         }}
       />

@@ -30,6 +30,8 @@ function buildUserProfile(
     postsCount: profile.postsCount,
     isFollowing,
     isMe,
+    isAdmin: profile.isAdmin,
+    isBanned: profile.isBanned,
     createdAt: profile.createdAt.toISOString(),
   };
 }

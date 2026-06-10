@@ -13,6 +13,7 @@ import groupsRouter from "./groups";
 import channelsRouter from "./channels";
 import notificationsRouter from "./notifications";
 import searchRouter from "./search";
+import adminRouter from "./admin";
 
 const router: IRouter = Router();
 
@@ -30,5 +31,6 @@ router.use(groupsRouter);
 router.use(channelsRouter);
 router.use(notificationsRouter);
 router.use(searchRouter);
+router.use(adminRouter);
 
 export default router;

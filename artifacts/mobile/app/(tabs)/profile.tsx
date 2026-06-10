@@ -114,6 +114,15 @@ export default function ProfileScreen() {
               <Text style={[styles.bio, { color: colors.foreground }]}>{profile.bio}</Text>
             ) : null}
 
+            {profile?.isAdmin && (
+              <Link href="/admin" asChild>
+                <Pressable style={[styles.adminBtn, { borderColor: "#7c3aed" }]}>
+                  <Feather name="shield" size={14} color="#7c3aed" />
+                  <Text style={[styles.adminBtnText, { color: "#7c3aed" }]}>Admin Dashboard</Text>
+                </Pressable>
+              </Link>
+            )}
+
             <View style={styles.statsRow}>
               <StatBlock value={profile?.postsCount ?? 0} label="Posts" colors={colors} />
               <View style={[styles.statDivider, { backgroundColor: colors.border }]} />
@@ -190,4 +199,6 @@ const styles = StyleSheet.create({
   emptyDesc: { fontSize: 14, textAlign: "center", lineHeight: 20 },
   logoutBtn: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, margin: 24, paddingVertical: 14, borderRadius: 12, borderWidth: 1 },
   logoutText: { fontSize: 15, fontWeight: "600" },
+  adminBtn: { flexDirection: "row", alignItems: "center", gap: 6, borderWidth: 1, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 7, alignSelf: "flex-start", marginBottom: 10 },
+  adminBtnText: { fontSize: 13, fontWeight: "600" },
 });
