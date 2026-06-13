@@ -344,6 +344,8 @@ export const GetUserPostsResponse = zod.object({
   "likesCount": zod.number(),
   "commentsCount": zod.number(),
   "sharesCount": zod.number().optional(),
+  "viewsCount": zod.number(),
+  "visibility": zod.enum(['public', 'followers', 'private']).optional(),
   "isLiked": zod.boolean(),
   "isSaved": zod.boolean(),
   "channelId": zod.string().nullish(),
@@ -406,6 +408,8 @@ export const GetFeedResponse = zod.object({
   "likesCount": zod.number(),
   "commentsCount": zod.number(),
   "sharesCount": zod.number().optional(),
+  "viewsCount": zod.number(),
+  "visibility": zod.enum(['public', 'followers', 'private']).optional(),
   "isLiked": zod.boolean(),
   "isSaved": zod.boolean(),
   "channelId": zod.string().nullish(),
@@ -425,7 +429,8 @@ export const GetFeedResponse = zod.object({
 export const CreatePostBody = zod.object({
   "content": zod.string().min(1),
   "mediaUrls": zod.array(zod.string()).optional(),
-  "mediaType": zod.enum(['image', 'video']).optional()
+  "mediaType": zod.enum(['image', 'video']).optional(),
+  "visibility": zod.enum(['public', 'followers', 'private']).optional()
 })
 
 
@@ -452,6 +457,8 @@ export const GetExplorePostsResponse = zod.object({
   "likesCount": zod.number(),
   "commentsCount": zod.number(),
   "sharesCount": zod.number().optional(),
+  "viewsCount": zod.number(),
+  "visibility": zod.enum(['public', 'followers', 'private']).optional(),
   "isLiked": zod.boolean(),
   "isSaved": zod.boolean(),
   "channelId": zod.string().nullish(),
@@ -484,6 +491,8 @@ export const GetPostResponse = zod.object({
   "likesCount": zod.number(),
   "commentsCount": zod.number(),
   "sharesCount": zod.number().optional(),
+  "viewsCount": zod.number(),
+  "visibility": zod.enum(['public', 'followers', 'private']).optional(),
   "isLiked": zod.boolean(),
   "isSaved": zod.boolean(),
   "channelId": zod.string().nullish(),
@@ -521,6 +530,8 @@ export const UpdatePostResponse = zod.object({
   "likesCount": zod.number(),
   "commentsCount": zod.number(),
   "sharesCount": zod.number().optional(),
+  "viewsCount": zod.number(),
+  "visibility": zod.enum(['public', 'followers', 'private']).optional(),
   "isLiked": zod.boolean(),
   "isSaved": zod.boolean(),
   "channelId": zod.string().nullish(),
@@ -610,6 +621,8 @@ export const GetSavedPostsResponse = zod.object({
   "likesCount": zod.number(),
   "commentsCount": zod.number(),
   "sharesCount": zod.number().optional(),
+  "viewsCount": zod.number(),
+  "visibility": zod.enum(['public', 'followers', 'private']).optional(),
   "isLiked": zod.boolean(),
   "isSaved": zod.boolean(),
   "channelId": zod.string().nullish(),
@@ -647,6 +660,8 @@ export const GetReelsResponse = zod.object({
   "likesCount": zod.number(),
   "commentsCount": zod.number(),
   "sharesCount": zod.number().optional(),
+  "viewsCount": zod.number(),
+  "visibility": zod.enum(['public', 'followers', 'private']).optional(),
   "isLiked": zod.boolean(),
   "isSaved": zod.boolean(),
   "channelId": zod.string().nullish(),
@@ -1402,6 +1417,8 @@ export const GetChannelPostsResponse = zod.object({
   "likesCount": zod.number(),
   "commentsCount": zod.number(),
   "sharesCount": zod.number().optional(),
+  "viewsCount": zod.number(),
+  "visibility": zod.enum(['public', 'followers', 'private']).optional(),
   "isLiked": zod.boolean(),
   "isSaved": zod.boolean(),
   "channelId": zod.string().nullish(),
@@ -1425,7 +1442,8 @@ export const BroadcastToChannelParams = zod.object({
 export const BroadcastToChannelBody = zod.object({
   "content": zod.string().min(1),
   "mediaUrls": zod.array(zod.string()).optional(),
-  "mediaType": zod.enum(['image', 'video']).optional()
+  "mediaType": zod.enum(['image', 'video']).optional(),
+  "visibility": zod.enum(['public', 'followers', 'private']).optional()
 })
 
 
@@ -1470,6 +1488,55 @@ export const GetUnreadNotificationCountResponse = zod.object({
  */
 export const MarkAllNotificationsReadResponse = zod.object({
   "success": zod.boolean()
+})
+
+
+/**
+ * @summary Get active live sessions
+ */
+export const GetLiveSessionsResponseItem = zod.object({
+  "id": zod.string(),
+  "host": zod.object({
+  "id": zod.string(),
+  "username": zod.string(),
+  "displayName": zod.string(),
+  "avatarUrl": zod.string().nullish(),
+  "isFollowing": zod.boolean().optional()
+}),
+  "title": zod.string(),
+  "viewersCount": zod.number(),
+  "isActive": zod.boolean(),
+  "startedAt": zod.coerce.date(),
+  "endedAt": zod.coerce.date().nullish()
+})
+export const GetLiveSessionsResponse = zod.array(GetLiveSessionsResponseItem)
+
+
+/**
+ * @summary Start a live session
+ */
+export const StartLiveSessionBody = zod.object({
+  "title": zod.string().optional()
+})
+
+
+/**
+ * @summary Join a live session as viewer
+ */
+export const JoinLiveSessionParams = zod.object({
+  "sessionId": zod.coerce.string()
+})
+
+export const JoinLiveSessionResponse = zod.object({
+  "viewersCount": zod.number().optional()
+})
+
+
+/**
+ * @summary Leave a live session
+ */
+export const LeaveLiveSessionParams = zod.object({
+  "sessionId": zod.coerce.string()
 })
 
 
@@ -1596,6 +1663,8 @@ export const SearchResponse = zod.object({
   "likesCount": zod.number(),
   "commentsCount": zod.number(),
   "sharesCount": zod.number().optional(),
+  "viewsCount": zod.number(),
+  "visibility": zod.enum(['public', 'followers', 'private']).optional(),
   "isLiked": zod.boolean(),
   "isSaved": zod.boolean(),
   "channelId": zod.string().nullish(),

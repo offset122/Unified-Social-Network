@@ -1320,7 +1320,80 @@ paths:
               schema:
                 $ref: '#/components/schemas/LogoutSuccess'
 
-  # ── Search ────────────────────────────────────────────────────────────────
+  # ── Live ──────────────────────────────────────────────────────────────────
+  /live/sessions:
+    get:
+      tags: [Live]
+      operationId: getLiveSessions
+      summary: Get active live sessions
+      responses:
+        '200':
+          description: Active live sessions
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/LiveSession'
+  /live/start:
+    post:
+      tags: [Live]
+      operationId: startLiveSession
+      summary: Start a live session
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LiveStartInput'
+      responses:
+        '201':
+          description: Live session started
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LiveSession'
+  /live/end:
+    delete:
+      tags: [Live]
+      operationId: endLiveSession
+      summary: End the current live session
+      responses:
+        '204':
+          description: Session ended
+  /live/{sessionId}/join:
+    post:
+      tags: [Live]
+      operationId: joinLiveSession
+      summary: Join a live session as viewer
+      parameters:
+        - name: sessionId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Joined
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  viewersCount: { type: integer }
+  /live/{sessionId}/leave:
+    delete:
+      tags: [Live]
+      operationId: leaveLiveSession
+      summary: Leave a live session
+      parameters:
+        - name: sessionId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '204':
+          description: Left
+
+  # ── Admin ──────────────────────────────────────────────────────────────────
   /admin/stats:
     get:
       tags: [Admin]
@@ -1606,7 +1679,7 @@ components:
     # ── Posts ────────────────────────────────────────────────────────────────
     Post:
       type: object
-      required: [id, author, content, mediaUrls, likesCount, commentsCount, isLiked, isSaved, createdAt]
+      required: [id, author, content, mediaUrls, likesCount, commentsCount, viewsCount, isLiked, isSaved, createdAt]
       properties:
         id: { type: string }
         author:
@@ -1619,6 +1692,8 @@ components:
         likesCount: { type: integer }
         commentsCount: { type: integer }
         sharesCount: { type: integer }
+        viewsCount: { type: integer }
+        visibility: { type: string, enum: [public, followers, private] }
         isLiked: { type: boolean }
         isSaved: { type: boolean }
         channelId: { type: ["string", "null"] }
@@ -1633,6 +1708,7 @@ components:
           type: array
           items: { type: string }
         mediaType: { type: string, enum: [image, video] }
+        visibility: { type: string, enum: [public, followers, private] }
     PostUpdate:
       type: object
       properties:
@@ -1646,6 +1722,22 @@ components:
           items:
             $ref: '#/components/schemas/Post'
         nextCursor: { type: ["string", "null"] }
+    LiveSession:
+      type: object
+      required: [id, host, title, viewersCount, isActive, startedAt]
+      properties:
+        id: { type: string }
+        host:
+          $ref: '#/components/schemas/UserSummary'
+        title: { type: string }
+        viewersCount: { type: integer }
+        isActive: { type: boolean }
+        startedAt: { type: string, format: date-time }
+        endedAt: { type: ["string", "null"], format: date-time }
+    LiveStartInput:
+      type: object
+      properties:
+        title: { type: string }
     LikeResult:
       type: object
       required: [liked, likesCount]

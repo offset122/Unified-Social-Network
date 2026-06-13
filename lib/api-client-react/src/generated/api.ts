@@ -54,7 +54,10 @@ import type {
   GroupUpdate,
   HandleBrowserLoginCallbackParams,
   HealthStatus,
+  JoinLiveSession200,
   LikeResult,
+  LiveSession,
+  LiveStartInput,
   LogoutSuccess,
   MemberInput,
   Message,
@@ -5098,6 +5101,364 @@ export const useMarkAllNotificationsRead = <TError = ErrorType<unknown>,
         TContext
       > => {
       return useMutation(getMarkAllNotificationsReadMutationOptions(options));
+    }
+
+export const getGetLiveSessionsUrl = () => {
+
+
+
+
+  return `/api/live/sessions`
+}
+
+/**
+ * @summary Get active live sessions
+ */
+export const getLiveSessions = async ( options?: RequestInit): Promise<LiveSession[]> => {
+
+  return customFetch<LiveSession[]>(getGetLiveSessionsUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetLiveSessionsQueryKey = () => {
+    return [
+    `/api/live/sessions`
+    ] as const;
+    }
+
+
+export const getGetLiveSessionsQueryOptions = <TData = Awaited<ReturnType<typeof getLiveSessions>>, TError = ErrorType<unknown>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getLiveSessions>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetLiveSessionsQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getLiveSessions>>> = ({ signal }) => getLiveSessions({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getLiveSessions>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetLiveSessionsQueryResult = NonNullable<Awaited<ReturnType<typeof getLiveSessions>>>
+export type GetLiveSessionsQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary Get active live sessions
+ */
+
+export function useGetLiveSessions<TData = Awaited<ReturnType<typeof getLiveSessions>>, TError = ErrorType<unknown>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getLiveSessions>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetLiveSessionsQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+
+
+
+
+
+
+export const getStartLiveSessionUrl = () => {
+
+
+
+
+  return `/api/live/start`
+}
+
+/**
+ * @summary Start a live session
+ */
+export const startLiveSession = async (liveStartInput?: LiveStartInput, options?: RequestInit): Promise<LiveSession> => {
+
+  return customFetch<LiveSession>(getStartLiveSessionUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      liveStartInput,)
+  }
+);}
+
+
+
+
+export const getStartLiveSessionMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof startLiveSession>>, TError,{data?: BodyType<LiveStartInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof startLiveSession>>, TError,{data?: BodyType<LiveStartInput>}, TContext> => {
+
+const mutationKey = ['startLiveSession'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof startLiveSession>>, {data?: BodyType<LiveStartInput>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  startLiveSession(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type StartLiveSessionMutationResult = NonNullable<Awaited<ReturnType<typeof startLiveSession>>>
+    export type StartLiveSessionMutationBody = BodyType<LiveStartInput> | undefined
+    export type StartLiveSessionMutationError = ErrorType<unknown>
+
+    /**
+ * @summary Start a live session
+ */
+export const useStartLiveSession = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof startLiveSession>>, TError,{data?: BodyType<LiveStartInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof startLiveSession>>,
+        TError,
+        {data?: BodyType<LiveStartInput>},
+        TContext
+      > => {
+      return useMutation(getStartLiveSessionMutationOptions(options));
+    }
+
+export const getEndLiveSessionUrl = () => {
+
+
+
+
+  return `/api/live/end`
+}
+
+/**
+ * @summary End the current live session
+ */
+export const endLiveSession = async ( options?: RequestInit): Promise<void> => {
+
+  return customFetch<void>(getEndLiveSessionUrl(),
+  {
+    ...options,
+    method: 'DELETE'
+
+
+  }
+);}
+
+
+
+
+export const getEndLiveSessionMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof endLiveSession>>, TError,void, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof endLiveSession>>, TError,void, TContext> => {
+
+const mutationKey = ['endLiveSession'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof endLiveSession>>, void> = () => {
+
+
+          return  endLiveSession(requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type EndLiveSessionMutationResult = NonNullable<Awaited<ReturnType<typeof endLiveSession>>>
+
+    export type EndLiveSessionMutationError = ErrorType<unknown>
+
+    /**
+ * @summary End the current live session
+ */
+export const useEndLiveSession = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof endLiveSession>>, TError,void, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof endLiveSession>>,
+        TError,
+        void,
+        TContext
+      > => {
+      return useMutation(getEndLiveSessionMutationOptions(options));
+    }
+
+export const getJoinLiveSessionUrl = (sessionId: string,) => {
+
+
+
+
+  return `/api/live/${sessionId}/join`
+}
+
+/**
+ * @summary Join a live session as viewer
+ */
+export const joinLiveSession = async (sessionId: string, options?: RequestInit): Promise<JoinLiveSession200> => {
+
+  return customFetch<JoinLiveSession200>(getJoinLiveSessionUrl(sessionId),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+
+export const getJoinLiveSessionMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof joinLiveSession>>, TError,{sessionId: string}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof joinLiveSession>>, TError,{sessionId: string}, TContext> => {
+
+const mutationKey = ['joinLiveSession'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof joinLiveSession>>, {sessionId: string}> = (props) => {
+          const {sessionId} = props ?? {};
+
+          return  joinLiveSession(sessionId,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type JoinLiveSessionMutationResult = NonNullable<Awaited<ReturnType<typeof joinLiveSession>>>
+
+    export type JoinLiveSessionMutationError = ErrorType<unknown>
+
+    /**
+ * @summary Join a live session as viewer
+ */
+export const useJoinLiveSession = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof joinLiveSession>>, TError,{sessionId: string}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof joinLiveSession>>,
+        TError,
+        {sessionId: string},
+        TContext
+      > => {
+      return useMutation(getJoinLiveSessionMutationOptions(options));
+    }
+
+export const getLeaveLiveSessionUrl = (sessionId: string,) => {
+
+
+
+
+  return `/api/live/${sessionId}/leave`
+}
+
+/**
+ * @summary Leave a live session
+ */
+export const leaveLiveSession = async (sessionId: string, options?: RequestInit): Promise<void> => {
+
+  return customFetch<void>(getLeaveLiveSessionUrl(sessionId),
+  {
+    ...options,
+    method: 'DELETE'
+
+
+  }
+);}
+
+
+
+
+export const getLeaveLiveSessionMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof leaveLiveSession>>, TError,{sessionId: string}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof leaveLiveSession>>, TError,{sessionId: string}, TContext> => {
+
+const mutationKey = ['leaveLiveSession'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof leaveLiveSession>>, {sessionId: string}> = (props) => {
+          const {sessionId} = props ?? {};
+
+          return  leaveLiveSession(sessionId,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type LeaveLiveSessionMutationResult = NonNullable<Awaited<ReturnType<typeof leaveLiveSession>>>
+
+    export type LeaveLiveSessionMutationError = ErrorType<unknown>
+
+    /**
+ * @summary Leave a live session
+ */
+export const useLeaveLiveSession = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof leaveLiveSession>>, TError,{sessionId: string}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof leaveLiveSession>>,
+        TError,
+        {sessionId: string},
+        TContext
+      > => {
+      return useMutation(getLeaveLiveSessionMutationOptions(options));
     }
 
 export const getGetAdminStatsUrl = () => {

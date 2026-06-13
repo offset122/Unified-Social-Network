@@ -149,6 +149,15 @@ export const PostMediaType = {
   null: 'null',
 } as const;
 
+export type PostVisibility = typeof PostVisibility[keyof typeof PostVisibility];
+
+
+export const PostVisibility = {
+  public: 'public',
+  followers: 'followers',
+  private: 'private',
+} as const;
+
 export interface Post {
   id: string;
   author: UserSummary;
@@ -159,6 +168,8 @@ export interface Post {
   likesCount: number;
   commentsCount: number;
   sharesCount?: number;
+  viewsCount: number;
+  visibility?: PostVisibility;
   isLiked: boolean;
   isSaved: boolean;
   /** @nullable */
@@ -175,11 +186,21 @@ export const PostInputMediaType = {
   video: 'video',
 } as const;
 
+export type PostInputVisibility = typeof PostInputVisibility[keyof typeof PostInputVisibility];
+
+
+export const PostInputVisibility = {
+  public: 'public',
+  followers: 'followers',
+  private: 'private',
+} as const;
+
 export interface PostInput {
   /** @minLength 1 */
   content: string;
   mediaUrls?: string[];
   mediaType?: PostInputMediaType;
+  visibility?: PostInputVisibility;
 }
 
 export interface PostUpdate {
@@ -191,6 +212,21 @@ export interface PostListPage {
   items: Post[];
   /** @nullable */
   nextCursor?: string | null;
+}
+
+export interface LiveSession {
+  id: string;
+  host: UserSummary;
+  title: string;
+  viewersCount: number;
+  isActive: boolean;
+  startedAt: string;
+  /** @nullable */
+  endedAt?: string | null;
+}
+
+export interface LiveStartInput {
+  title?: string;
 }
 
 export interface LikeResult {
@@ -510,6 +546,10 @@ cursor?: string;
 
 export type GetNotificationsParams = {
 cursor?: string;
+};
+
+export type JoinLiveSession200 = {
+  viewersCount?: number;
 };
 
 export type SearchParams = {

@@ -68,6 +68,8 @@ async function buildPost(
     likesCount: post.likesCount,
     commentsCount: post.commentsCount,
     sharesCount: post.sharesCount,
+    viewsCount: post.viewsCount,
+    visibility: post.visibility,
     isLiked,
     isSaved,
     channelId: post.channelId ?? null,
@@ -169,10 +171,11 @@ router.post("/posts", async (req, res): Promise<void> => {
     res.status(401).json({ error: "Unauthorized" });
     return;
   }
-  const { content, mediaUrls, mediaType } = req.body as {
+  const { content, mediaUrls, mediaType, visibility } = req.body as {
     content: string;
     mediaUrls?: string[];
     mediaType?: "image" | "video";
+    visibility?: "public" | "followers" | "private";
   };
   if (!content) {
     res.status(400).json({ error: "content is required" });
@@ -185,6 +188,7 @@ router.post("/posts", async (req, res): Promise<void> => {
       content,
       mediaUrls: mediaUrls ?? [],
       mediaType,
+      visibility: visibility ?? "public",
     })
     .returning();
 

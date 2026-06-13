@@ -14,6 +14,7 @@ import channelsRouter from "./channels";
 import notificationsRouter from "./notifications";
 import searchRouter from "./search";
 import adminRouter from "./admin";
+import liveRouter from "./live";
 
 const router: IRouter = Router();
 
@@ -32,5 +33,6 @@ router.use(channelsRouter);
 router.use(notificationsRouter);
 router.use(searchRouter);
 router.use(adminRouter);
+router.use(liveRouter);
 
 export default router;

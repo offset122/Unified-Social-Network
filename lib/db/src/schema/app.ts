@@ -50,6 +50,7 @@ export const followsTable = pgTable(
 
 // ── Posts ────────────────────────────────────────────────────────────────────
 export const postMediaTypeEnum = pgEnum("post_media_type", ["image", "video"]);
+export const postVisibilityEnum = pgEnum("post_visibility", ["public", "followers", "private"]);
 
 export const postsTable = pgTable(
   "posts",
@@ -66,6 +67,8 @@ export const postsTable = pgTable(
     likesCount: integer("likes_count").notNull().default(0),
     commentsCount: integer("comments_count").notNull().default(0),
     sharesCount: integer("shares_count").notNull().default(0),
+    viewsCount: integer("views_count").notNull().default(0),
+    visibility: postVisibilityEnum("visibility").notNull().default("public"),
     channelId: text("channel_id"),
     createdAt: timestamp("created_at").notNull().defaultNow(),
     updatedAt: timestamp("updated_at").notNull().defaultNow(),
@@ -338,3 +341,18 @@ export const notificationsTable = pgTable(
     index("notifications_created_idx").on(t.createdAt),
   ],
 );
+
+// ── Live Sessions ──────────────────────────────────────────────────────────────
+export const liveSessionsTable = pgTable("live_sessions", {
+  id: text("id")
+    .primaryKey()
+    .$defaultFn(() => crypto.randomUUID()),
+  hostId: text("host_id")
+    .notNull()
+    .references(() => usersTable.id, { onDelete: "cascade" }),
+  title: text("title").notNull().default("Live"),
+  viewersCount: integer("viewers_count").notNull().default(0),
+  isActive: boolean("is_active").notNull().default(true),
+  startedAt: timestamp("started_at").notNull().defaultNow(),
+  endedAt: timestamp("ended_at"),
+});
