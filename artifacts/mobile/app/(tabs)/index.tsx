@@ -11,7 +11,10 @@ import {
   Image,
   Animated,
   Dimensions,
+  Modal,
+  TextInput,
 } from "react-native";
+import { KeyboardAvoidingView } from "react-native-keyboard-controller";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Link, Redirect } from "expo-router";
 import { Feather } from "@expo/vector-icons";
@@ -24,6 +27,12 @@ import {
   useSavePost,
   useUnsavePost,
   getGetFeedQueryKey,
+  useGetComments,
+  getGetCommentsQueryKey,
+  useCreateComment,
+  useGetUnreadNotificationCount,
+  getGetUnreadNotificationCountQueryKey,
+  getGetStoriesQueryKey,
 } from "@workspace/api-client-react";
 import type { Post, StoryGroup } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
@@ -116,7 +125,7 @@ function StoryItem({ group }: { group: StoryGroup }) {
   const colors = useColors();
   const hasUnviewed =
     (group as any).hasUnviewed ?? group.stories?.some((s: any) => !s.isViewed);
-  const author = group.author;
+  const author = group.user;
   return (
     <Pressable style={styles.storyItem}>
       <View
@@ -333,10 +342,12 @@ function PostCard({
   post,
   myId,
   isVisible,
+  onCommentPress,
 }: {
   post: Post;
   myId: string | undefined;
   isVisible: boolean;
+  onCommentPress: () => void;
 }) {
   const colors = useColors();
   const qc = useQueryClient();
@@ -409,7 +420,7 @@ function PostCard({
       >
         {/* Header */}
         <View style={styles.postHeader}>
-          <Link href={`/profile/${post.author.id}`} asChild>
+          <Link href={`/user/${post.author.id}` as any} asChild>
             <Pressable onPress={(e) => e.stopPropagation?.()}>
               <View style={styles.avatarWrap}>
                 <Avatar
@@ -495,7 +506,7 @@ function PostCard({
           <View style={styles.actionGap} />
 
           <Pressable
-            onPress={(e) => e.stopPropagation?.()}
+            onPress={onCommentPress}
             style={styles.actionBtn}
             hitSlop={10}
           >
@@ -619,6 +630,156 @@ function PostSkeleton() {
   );
 }
 
+// ─── Comment Sheet ───────────────────────────────────────────────────────────
+
+function CommentSheet({
+  postId,
+  onClose,
+  colors,
+}: {
+  postId: string;
+  onClose: () => void;
+  colors: ReturnType<typeof import("@/hooks/useColors").useColors>;
+}) {
+  const insets = useSafeAreaInsets();
+  const qc = useQueryClient();
+  const [text, setText] = useState("");
+  const { data: commentsPage, isLoading } = useGetComments(postId, undefined, {
+    query: { queryKey: getGetCommentsQueryKey(postId) },
+  });
+  const createComment = useCreateComment();
+
+  const handleSend = () => {
+    if (!text.trim()) return;
+    createComment.mutate(
+      { postId, data: { content: text.trim() } },
+      {
+        onSuccess: () => {
+          setText("");
+          qc.invalidateQueries({ queryKey: getGetCommentsQueryKey(postId) });
+        },
+      },
+    );
+  };
+
+  const comments = commentsPage?.items ?? [];
+
+  return (
+    <View style={{ flex: 1, backgroundColor: colors.background }}>
+      {/* Handle bar */}
+      <View style={{ alignItems: "center", paddingTop: 12, paddingBottom: 8 }}>
+        <View style={{ width: 36, height: 4, borderRadius: 2, backgroundColor: colors.border }} />
+      </View>
+      <View style={[sheetStyles.header, { borderBottomColor: colors.border }]}>
+        <Text style={[sheetStyles.title, { color: colors.foreground }]}>
+          Comments
+        </Text>
+        <Pressable onPress={onClose} hitSlop={12}>
+          <Feather name="x" size={22} color={colors.mutedForeground} />
+        </Pressable>
+      </View>
+
+      {isLoading ? (
+        <View style={{ flex: 1, alignItems: "center", justifyContent: "center" }}>
+          <Text style={{ color: colors.mutedForeground }}>Loading…</Text>
+        </View>
+      ) : (
+        <FlatList
+          data={comments}
+          keyExtractor={(c) => c.id}
+          ListEmptyComponent={
+            <View style={{ padding: 32, alignItems: "center", gap: 8 }}>
+              <Feather name="message-circle" size={26} color={colors.mutedForeground} />
+              <Text style={{ color: colors.mutedForeground, fontSize: 14 }}>
+                No comments yet. Be the first!
+              </Text>
+            </View>
+          }
+          renderItem={({ item }) => {
+            const initials = item.author.displayName
+              .split(" ").map((w: string) => w[0]).join("").slice(0, 2).toUpperCase();
+            const hue = item.author.displayName.split("").reduce((a: number, c: string) => a + c.charCodeAt(0), 0) % 360;
+            return (
+              <View style={[sheetStyles.commentRow, { borderBottomColor: colors.border }]}>
+                {item.author.avatarUrl ? (
+                  <Image
+                    source={{ uri: resolveMediaUrl(item.author.avatarUrl) }}
+                    style={sheetStyles.commentAvatar}
+                  />
+                ) : (
+                  <View style={[sheetStyles.commentAvatar, { backgroundColor: `hsl(${hue},55%,58%)`, alignItems: "center", justifyContent: "center" }]}>
+                    <Text style={{ color: "#fff", fontSize: 12, fontWeight: "700" }}>{initials}</Text>
+                  </View>
+                )}
+                <View style={{ flex: 1 }}>
+                  <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                    <Text style={[sheetStyles.commentName, { color: colors.foreground }]}>
+                      {item.author.displayName}
+                    </Text>
+                    <Text style={{ fontSize: 11, color: colors.mutedForeground }}>
+                      {(() => {
+                        const diff = Date.now() - new Date(item.createdAt).getTime();
+                        const m = Math.floor(diff / 60000);
+                        if (m < 1) return "now";
+                        if (m < 60) return `${m}m`;
+                        const h = Math.floor(m / 60);
+                        return h < 24 ? `${h}h` : `${Math.floor(h / 24)}d`;
+                      })()}
+                    </Text>
+                  </View>
+                  <Text style={[sheetStyles.commentText, { color: colors.foreground }]}>{item.content}</Text>
+                </View>
+              </View>
+            );
+          }}
+          showsVerticalScrollIndicator={false}
+          contentContainerStyle={{ paddingBottom: 10 }}
+        />
+      )}
+
+      <KeyboardAvoidingView behavior="padding" keyboardVerticalOffset={10}>
+        <View
+          style={[
+            sheetStyles.inputRow,
+            { borderTopColor: colors.border, backgroundColor: colors.background, paddingBottom: insets.bottom + 4 },
+          ]}
+        >
+          <TextInput
+            style={[sheetStyles.input, { color: colors.foreground, backgroundColor: colors.secondary }]}
+            placeholder="Write a comment…"
+            placeholderTextColor={colors.mutedForeground}
+            value={text}
+            onChangeText={setText}
+            multiline
+            maxLength={500}
+          />
+          <Pressable
+            onPress={handleSend}
+            disabled={!text.trim() || createComment.isPending}
+            hitSlop={8}
+            style={({ pressed }) => ({
+              opacity: !text.trim() || createComment.isPending ? 0.4 : pressed ? 0.7 : 1,
+            })}
+          >
+            <Feather name="send" size={22} color={colors.primary} />
+          </Pressable>
+        </View>
+      </KeyboardAvoidingView>
+    </View>
+  );
+}
+
+const sheetStyles = StyleSheet.create({
+  header: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 16, paddingVertical: 10, borderBottomWidth: StyleSheet.hairlineWidth },
+  title: { fontSize: 16, fontWeight: "700" },
+  commentRow: { flexDirection: "row", alignItems: "flex-start", gap: 10, paddingHorizontal: 16, paddingVertical: 12, borderBottomWidth: StyleSheet.hairlineWidth },
+  commentAvatar: { width: 34, height: 34, borderRadius: 17, flexShrink: 0 },
+  commentName: { fontSize: 13, fontWeight: "700" },
+  commentText: { fontSize: 14, lineHeight: 20, marginTop: 2 },
+  inputRow: { flexDirection: "row", alignItems: "center", gap: 10, paddingHorizontal: 14, paddingTop: 10, borderTopWidth: StyleSheet.hairlineWidth },
+  input: { flex: 1, borderRadius: 22, paddingHorizontal: 16, paddingVertical: 10, fontSize: 15, maxHeight: 90 },
+});
+
 // ─── Home Screen ─────────────────────────────────────────────────────────────
 
 export default function HomeScreen() {
@@ -628,16 +789,25 @@ export default function HomeScreen() {
   const isWeb = Platform.OS === "web";
   const [refreshing, setRefreshing] = useState(false);
   const [visiblePostId, setVisiblePostId] = useState<string | null>(null);
+  const [commentPostId, setCommentPostId] = useState<string | null>(null);
+
+  const { data: unreadData } = useGetUnreadNotificationCount({
+    query: {
+      queryKey: getGetUnreadNotificationCountQueryKey(),
+      enabled: isAuthenticated === true,
+    },
+  });
+  const unreadCount = unreadData?.count ?? 0;
 
   const {
     data: feedData,
     isLoading: feedLoading,
     refetch,
   } = useGetFeed(undefined, {
-    query: { enabled: isAuthenticated === true },
+    query: { queryKey: getGetFeedQueryKey(), enabled: isAuthenticated === true },
   });
   const { data: storiesData } = useGetStories({
-    query: { enabled: isAuthenticated === true },
+    query: { queryKey: getGetStoriesQueryKey(), enabled: isAuthenticated === true },
   });
 
   const onRefresh = useCallback(async () => {
@@ -685,6 +855,11 @@ export default function HomeScreen() {
             style={[styles.headerBtn, { backgroundColor: colors.secondary }]}
           >
             <Feather name="bell" size={19} color={colors.foreground} />
+            {unreadCount > 0 && (
+              <View style={[styles.badge, { backgroundColor: colors.primary }]}>
+                <Text style={styles.badgeText}>{unreadCount > 99 ? "99+" : unreadCount}</Text>
+              </View>
+            )}
           </Pressable>
         </Link>
       </View>
@@ -699,7 +874,7 @@ export default function HomeScreen() {
               contentContainerStyle={styles.storiesContent}
             >
               {stories.map((g) => (
-                <StoryItem key={g.author.id} group={g} />
+                <StoryItem key={g.user.id} group={g} />
               ))}
             </ScrollView>
           )}
@@ -738,7 +913,7 @@ export default function HomeScreen() {
                 contentContainerStyle={styles.storiesContent}
               >
                 {stories.map((g) => (
-                  <StoryItem key={g.author.id} group={g} />
+                  <StoryItem key={g.user.id} group={g} />
                 ))}
               </ScrollView>
             ) : null
@@ -748,6 +923,7 @@ export default function HomeScreen() {
               post={item}
               myId={user?.id}
               isVisible={visiblePostId === item.id}
+              onCommentPress={() => setCommentPostId(item.id)}
             />
           )}
           contentContainerStyle={{ paddingBottom: 110, flexGrow: 1 }}
@@ -782,6 +958,20 @@ export default function HomeScreen() {
           }
         />
       )}
+      <Modal
+        visible={!!commentPostId}
+        animationType="slide"
+        presentationStyle="pageSheet"
+        onRequestClose={() => setCommentPostId(null)}
+      >
+        {commentPostId && (
+          <CommentSheet
+            postId={commentPostId}
+            onClose={() => setCommentPostId(null)}
+            colors={colors}
+          />
+        )}
+      </Modal>
     </View>
   );
 }
@@ -806,7 +996,20 @@ const styles = StyleSheet.create({
     borderRadius: 17,
     alignItems: "center",
     justifyContent: "center",
+    position: "relative",
   },
+  badge: {
+    position: "absolute",
+    top: -3,
+    right: -3,
+    minWidth: 16,
+    height: 16,
+    borderRadius: 8,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 3,
+  },
+  badgeText: { color: "#fff", fontSize: 9, fontWeight: "700" },
 
   storiesBar: { borderBottomWidth: StyleSheet.hairlineWidth },
   storiesContent: { paddingHorizontal: 14, paddingVertical: 10, gap: 14 },

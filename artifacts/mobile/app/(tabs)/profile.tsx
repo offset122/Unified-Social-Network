@@ -21,6 +21,7 @@ import { Link, Redirect, useRouter } from "expo-router";
 import {
   useGetMyProfile,
   useGetUserPosts,
+  getGetUserPostsQueryKey,
 } from "@workspace/api-client-react";
 import { useAuth } from "@/lib/auth";
 import { useColors } from "@/hooks/useColors";
@@ -33,12 +34,13 @@ type Post = {
   content: string;
   likesCount: number;
   commentsCount: number;
+  viewsCount?: number;
   createdAt: string;
-  mediaUrls: string[];   // ← server returns mediaUrls: string[]
+  mediaUrls: string[];
   mediaType?: string | null;
   author: {
     avatarUrl: string | null;
-    };
+  };
 };
 
 // ─── Avatar ────────────────────────────────────────────────────────────────────
@@ -160,6 +162,14 @@ function PostCard({ item, colors }: { item: Post; colors: any }) {
                 {item.commentsCount}
               </Text>
             </View>
+            {(item.viewsCount ?? 0) > 0 && (
+              <View style={styles.postStatItem}>
+                <Feather name="eye" size={13} color={colors.mutedForeground} />
+                <Text style={[styles.postStatText, { color: colors.mutedForeground }]}>
+                  {item.viewsCount}
+                </Text>
+              </View>
+            )}
           </View>
         </View>
       </Pressable>
@@ -197,7 +207,7 @@ function SettingsSheet({
         {
           icon: "lock" as const,
           label: "Change Password",
-          onPress: () => { onClose(); router.push("/change-password"); },
+          onPress: () => { onClose(); router.push("/change-password" as any); },
           chevron: true,
         },
       ],
@@ -310,8 +320,8 @@ export default function ProfileScreen() {
   // Returns: { items: Post[], nextCursor }  where Post.mediaUrls is string[]
   const { data: postsPage, isLoading: postsLoading } = useGetUserPosts(
     user?.id ?? "",
-    { limit: 20 },
-    { query: { enabled: !!user?.id } },
+    undefined,
+    { query: { queryKey: getGetUserPostsQueryKey(user?.id ?? ""), enabled: !!user?.id } },
   );
 
   if (authLoading) return null;

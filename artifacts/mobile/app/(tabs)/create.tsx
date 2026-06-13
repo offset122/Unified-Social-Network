@@ -73,6 +73,7 @@ export default function CreateScreen() {
   const [content, setContent] = useState("");
   const [media, setMedia] = useState<ImagePicker.ImagePickerAsset | null>(null);
   const [uploading, setUploading] = useState(false);
+  const [visibility, setVisibility] = useState<"public" | "followers" | "private">("public");
   const qc = useQueryClient();
   const createPost = useCreatePost();
   const requestUploadUrl = useRequestUploadUrl();
@@ -147,6 +148,7 @@ export default function CreateScreen() {
         data: {
           content: content.trim() || (mode === "reel" ? "🎬" : ""),
           ...(mediaUrls.length > 0 && { mediaUrls, mediaType }),
+          visibility,
         },
       },
       {
@@ -209,6 +211,27 @@ export default function CreateScreen() {
             <Avatar name={displayName} size={44} />
             <View style={styles.inputArea}>
               <Text style={[styles.authorName, { color: colors.foreground }]}>{displayName}</Text>
+              <View style={styles.visibilityRow}>
+                {(["public", "followers", "private"] as const).map((v) => (
+                  <Pressable
+                    key={v}
+                    onPress={() => setVisibility(v)}
+                    style={[
+                      styles.visibilityBtn,
+                      { backgroundColor: visibility === v ? colors.primary : colors.secondary },
+                    ]}
+                  >
+                    <Feather
+                      name={v === "public" ? "globe" : v === "followers" ? "users" : "lock"}
+                      size={11}
+                      color={visibility === v ? "#fff" : colors.mutedForeground}
+                    />
+                    <Text style={[styles.visibilityBtnText, { color: visibility === v ? "#fff" : colors.mutedForeground }]}>
+                      {v === "public" ? "Public" : v === "followers" ? "Followers" : "Private"}
+                    </Text>
+                  </Pressable>
+                ))}
+              </View>
               {mode === "reel" && !media && (
                 <Pressable onPress={pickMedia} style={[styles.videoPickerPlaceholder, { borderColor: colors.border }]}>
                   <Feather name="film" size={32} color="#7c3aed" />
@@ -309,6 +332,9 @@ const styles = StyleSheet.create({
   body: { flexDirection: "row", padding: 16, gap: 12 },
   inputArea: { flex: 1 },
   authorName: { fontWeight: "600", fontSize: 15, marginBottom: 6 },
+  visibilityRow: { flexDirection: "row", gap: 6, marginBottom: 10 },
+  visibilityBtn: { flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: 10, paddingVertical: 5, borderRadius: 12 },
+  visibilityBtnText: { fontSize: 12, fontWeight: "600" },
   videoPickerPlaceholder: {
     borderWidth: 2, borderStyle: "dashed", borderRadius: 12,
     paddingVertical: 36, alignItems: "center", gap: 8, marginBottom: 12,

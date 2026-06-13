@@ -1,0 +1,4 @@
+- [Orval v8 queryKey requirement](orval-querykey.md) — useGetX hooks require explicit queryKey in query options; import getGetXQueryKey() and pass it.
+- [StoryGroup user field](story-group-type.md) — StoryGroup.user (not .author) is the story author; author property does not exist on the type.
+- [Expo Router dynamic routes](expo-router-dynamic-routes.md) — dynamic routes like /user/${id} and non-registered paths need `as any` cast on href.
+- [GetUserPostsParams](api-params-gotchas.md) — only has cursor, not limit; passing limit causes TS2353 error.
