@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useRef } from "react";
+import React, { useState, useCallback, useRef, useEffect } from "react";
 import {
   View,
   Text,
@@ -13,10 +13,13 @@ import {
   Dimensions,
   Modal,
   TextInput,
+  ActivityIndicator,
+  Alert,
 } from "react-native";
+import * as ImagePicker from "expo-image-picker";
 import { KeyboardAvoidingView } from "react-native-keyboard-controller";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { Link, Redirect } from "expo-router";
+import { Link, Redirect, useRouter } from "expo-router";
 import { Feather } from "@expo/vector-icons";
 import { Video, ResizeMode } from "expo-av";
 import {
@@ -33,6 +36,10 @@ import {
   useGetUnreadNotificationCount,
   getGetUnreadNotificationCountQueryKey,
   getGetStoriesQueryKey,
+  useSearch,
+  getSearchQueryKey,
+  useCreateStory,
+  useRequestUploadUrl,
 } from "@workspace/api-client-react";
 import type { Post, StoryGroup } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
@@ -787,9 +794,19 @@ export default function HomeScreen() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
   const isWeb = Platform.OS === "web";
+  const router = useRouter();
   const [refreshing, setRefreshing] = useState(false);
   const [visiblePostId, setVisiblePostId] = useState<string | null>(null);
   const [commentPostId, setCommentPostId] = useState<string | null>(null);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [showCreateStory, setShowCreateStory] = useState(false);
+  const [storyMedia, setStoryMedia] = useState<ImagePicker.ImagePickerAsset | null>(null);
+  const [storyUploading, setStoryUploading] = useState(false);
+  const debouncedSearch = useRef(searchQuery);
+  useEffect(() => {
+    const t = setTimeout(() => { debouncedSearch.current = searchQuery; }, 300);
+    return () => clearTimeout(t);
+  }, [searchQuery]);
 
   const { data: unreadData } = useGetUnreadNotificationCount({
     query: {
@@ -835,6 +852,62 @@ export default function HomeScreen() {
   const posts: Post[] = feedData?.items ?? [];
   const stories: StoryGroup[] = Array.isArray(storiesData) ? storiesData : [];
 
+  const { data: searchResults, isFetching: searchLoading } = useSearch(
+    { q: searchQuery },
+    {
+      query: {
+        queryKey: getSearchQueryKey({ q: searchQuery }),
+        enabled: searchQuery.length >= 2,
+      },
+    },
+  );
+
+  const qcHome = useQueryClient();
+  const createStory = useCreateStory();
+  const requestUploadUrl = useRequestUploadUrl();
+
+  const handlePickStoryMedia = async () => {
+    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (status !== "granted") {
+      Alert.alert("Permission needed", "Allow media access to share a story.");
+      return;
+    }
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      quality: 0.85,
+      allowsEditing: true,
+      aspect: [9, 16],
+    });
+    if (!result.canceled && result.assets[0]) {
+      setStoryMedia(result.assets[0]);
+      setShowCreateStory(true);
+    }
+  };
+
+  const handlePostStory = async () => {
+    if (!storyMedia) return;
+    setStoryUploading(true);
+    try {
+      const ext = storyMedia.uri.split(".").pop() ?? "jpg";
+      const contentType = storyMedia.type === "video" ? "video/mp4" : `image/${ext}`;
+      const { uploadURL, objectPath } = await requestUploadUrl.mutateAsync({
+        data: { name: `story-${Date.now()}.${ext}`, size: storyMedia.fileSize ?? 0, contentType },
+      });
+      const blob = await (await fetch(storyMedia.uri)).blob();
+      await fetch(uploadURL, { method: "PUT", body: blob, headers: { "Content-Type": contentType } });
+      await createStory.mutateAsync({
+        data: { mediaUrl: objectPath, mediaType: "image" as const },
+      });
+      setShowCreateStory(false);
+      setStoryMedia(null);
+      qcHome.invalidateQueries({ queryKey: getGetStoriesQueryKey() });
+    } catch {
+      Alert.alert("Error", "Failed to post story. Try again.");
+    } finally {
+      setStoryUploading(false);
+    }
+  };
+
   return (
     <View
       style={[
@@ -847,37 +920,129 @@ export default function HomeScreen() {
     >
       {/* Header */}
       <View style={[styles.header, { borderBottomColor: colors.border }]}>
-        <Text style={[styles.headerTitle, { color: colors.foreground }]}>
-          Feed
-        </Text>
-        <Link href="/notifications" asChild>
+        <Text style={[styles.headerTitle, { color: colors.foreground }]}>SocialApp</Text>
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
           <Pressable
+            onPress={() => router.push("/live-sessions" as any)}
             style={[styles.headerBtn, { backgroundColor: colors.secondary }]}
           >
-            <Feather name="bell" size={19} color={colors.foreground} />
-            {unreadCount > 0 && (
-              <View style={[styles.badge, { backgroundColor: colors.primary }]}>
-                <Text style={styles.badgeText}>{unreadCount > 99 ? "99+" : unreadCount}</Text>
-              </View>
-            )}
+            <Feather name="video" size={18} color="#ef4444" />
           </Pressable>
-        </Link>
+          <Link href="/notifications" asChild>
+            <Pressable style={[styles.headerBtn, { backgroundColor: colors.secondary }]}>
+              <Feather name="bell" size={19} color={colors.foreground} />
+              {unreadCount > 0 && (
+                <View style={[styles.badge, { backgroundColor: colors.primary }]}>
+                  <Text style={styles.badgeText}>{unreadCount > 99 ? "99+" : unreadCount}</Text>
+                </View>
+              )}
+            </Pressable>
+          </Link>
+        </View>
       </View>
+
+      {/* Search Bar */}
+      <View style={[styles.searchWrapper, { backgroundColor: colors.background }]}>
+        <View style={[styles.searchBar, { backgroundColor: colors.secondary }]}>
+          <Feather name="search" size={15} color={colors.mutedForeground} />
+          <TextInput
+            style={[styles.searchInput, { color: colors.foreground }]}
+            placeholder="Search people, posts..."
+            placeholderTextColor={colors.mutedForeground}
+            value={searchQuery}
+            onChangeText={setSearchQuery}
+            returnKeyType="search"
+          />
+          {searchQuery.length > 0 && (
+            <Pressable onPress={() => setSearchQuery("")} hitSlop={8}>
+              <Feather name="x" size={15} color={colors.mutedForeground} />
+            </Pressable>
+          )}
+        </View>
+      </View>
+
+      {/* Search Results Overlay */}
+      {searchQuery.length >= 2 && (
+        <View style={[StyleSheet.absoluteFillObject, { top: isWeb ? 67 + 58 + 56 : insets.top + 58 + 56, backgroundColor: colors.background, zIndex: 10 }]}>
+          {searchLoading ? (
+            <View style={{ flex: 1, alignItems: "center", paddingTop: 40 }}>
+              <ActivityIndicator color={colors.primary} />
+            </View>
+          ) : (
+            <FlatList
+              data={[
+                ...(searchResults?.users ?? []).map((u) => ({ type: "user" as const, item: u })),
+                ...(searchResults?.posts ?? []).map((p) => ({ type: "post" as const, item: p })),
+              ]}
+              keyExtractor={(r) => `${r.type}-${r.item.id}`}
+              showsVerticalScrollIndicator={false}
+              contentContainerStyle={{ paddingBottom: 120 }}
+              ListEmptyComponent={
+                <View style={{ alignItems: "center", paddingTop: 60, gap: 8 }}>
+                  <Feather name="search" size={28} color={colors.mutedForeground} />
+                  <Text style={{ color: colors.mutedForeground, fontSize: 15 }}>No results for "{searchQuery}"</Text>
+                </View>
+              }
+              renderItem={({ item: row }) => {
+                if (row.type === "user") {
+                  const u = row.item as any;
+                  return (
+                    <Pressable
+                      onPress={() => { setSearchQuery(""); router.push(`/user/${u.id}` as any); }}
+                      style={({ pressed }) => [styles.searchRow, { backgroundColor: colors.background, opacity: pressed ? 0.7 : 1, borderBottomColor: colors.border }]}
+                    >
+                      <Avatar name={u.displayName} avatarUrl={u.avatarUrl} size={40} />
+                      <View style={{ flex: 1 }}>
+                        <Text style={[{ fontWeight: "600", fontSize: 15, color: colors.foreground }]}>{u.displayName}</Text>
+                        {u.username && <Text style={[{ fontSize: 13, color: colors.mutedForeground }]}>@{u.username}</Text>}
+                      </View>
+                      <Feather name="chevron-right" size={16} color={colors.mutedForeground} />
+                    </Pressable>
+                  );
+                }
+                const p = row.item as any;
+                return (
+                  <Pressable
+                    onPress={() => { setSearchQuery(""); router.push(`/post/${p.id}` as any); }}
+                    style={({ pressed }) => [styles.searchRow, { backgroundColor: colors.background, opacity: pressed ? 0.7 : 1, borderBottomColor: colors.border }]}
+                  >
+                    <View style={[styles.searchPostIcon, { backgroundColor: colors.secondary }]}>
+                      <Feather name="file-text" size={18} color={colors.mutedForeground} />
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={[{ fontWeight: "600", fontSize: 14, color: colors.foreground }]} numberOfLines={1}>{p.author?.displayName ?? "Post"}</Text>
+                      <Text style={[{ fontSize: 13, color: colors.mutedForeground }]} numberOfLines={1}>{p.content}</Text>
+                    </View>
+                    <Feather name="chevron-right" size={16} color={colors.mutedForeground} />
+                  </Pressable>
+                );
+              }}
+            />
+          )}
+        </View>
+      )}
 
       {feedLoading && !refreshing ? (
         <View>
-          {stories.length > 0 && (
-            <ScrollView
+          <ScrollView
               horizontal
               showsHorizontalScrollIndicator={false}
               style={[styles.storiesBar, { borderBottomColor: colors.border }]}
               contentContainerStyle={styles.storiesContent}
             >
+              <Pressable onPress={handlePickStoryMedia} style={styles.storyItem}>
+                <View style={[styles.storyRing, { borderColor: colors.primary, borderWidth: 2 }]}>
+                  <Avatar name={[user?.firstName, user?.lastName].filter(Boolean).join(" ") || "Me"} avatarUrl={(user as any)?.profileImageUrl} size={52} />
+                </View>
+                <View style={[styles.storyPlusBtn, { backgroundColor: colors.primary }]}>
+                  <Feather name="plus" size={12} color="#fff" />
+                </View>
+                <Text style={[styles.storyLabel, { color: colors.foreground }]} numberOfLines={1}>Your Story</Text>
+              </Pressable>
               {stories.map((g) => (
                 <StoryItem key={g.user.id} group={g} />
               ))}
             </ScrollView>
-          )}
           {[0, 1, 2, 3].map((i) => (
             <PostSkeleton key={i} />
           ))}
@@ -902,21 +1067,25 @@ export default function HomeScreen() {
             />
           )}
           ListHeaderComponent={
-            stories.length > 0 ? (
-              <ScrollView
+            <ScrollView
                 horizontal
                 showsHorizontalScrollIndicator={false}
-                style={[
-                  styles.storiesBar,
-                  { borderBottomColor: colors.border },
-                ]}
+                style={[styles.storiesBar, { borderBottomColor: colors.border }]}
                 contentContainerStyle={styles.storiesContent}
               >
+                <Pressable onPress={handlePickStoryMedia} style={styles.storyItem}>
+                  <View style={[styles.storyRing, { borderColor: colors.primary, borderWidth: 2 }]}>
+                    <Avatar name={[user?.firstName, user?.lastName].filter(Boolean).join(" ") || "Me"} avatarUrl={(user as any)?.profileImageUrl} size={52} />
+                  </View>
+                  <View style={[styles.storyPlusBtn, { backgroundColor: colors.primary }]}>
+                    <Feather name="plus" size={12} color="#fff" />
+                  </View>
+                  <Text style={[styles.storyLabel, { color: colors.foreground }]} numberOfLines={1}>Your Story</Text>
+                </Pressable>
                 {stories.map((g) => (
                   <StoryItem key={g.user.id} group={g} />
                 ))}
               </ScrollView>
-            ) : null
           }
           renderItem={({ item }) => (
             <PostCard
@@ -972,6 +1141,50 @@ export default function HomeScreen() {
           />
         )}
       </Modal>
+
+      {/* Story Creation Modal */}
+      <Modal
+        visible={showCreateStory}
+        animationType="slide"
+        presentationStyle="pageSheet"
+        onRequestClose={() => { setShowCreateStory(false); setStoryMedia(null); }}
+      >
+        <View style={[styles.storyModalContainer, { backgroundColor: colors.background }]}>
+          <View style={[styles.storyModalHeader, { borderBottomColor: colors.border }]}>
+            <Pressable onPress={() => { setShowCreateStory(false); setStoryMedia(null); }}>
+              <Feather name="x" size={22} color={colors.foreground} />
+            </Pressable>
+            <Text style={[styles.storyModalTitle, { color: colors.foreground }]}>New Story</Text>
+            <Pressable
+              onPress={handlePostStory}
+              disabled={storyUploading || !storyMedia}
+              style={[styles.storyPostBtn, { backgroundColor: colors.primary, opacity: storyUploading ? 0.6 : 1 }]}
+            >
+              {storyUploading
+                ? <ActivityIndicator color="#fff" size="small" />
+                : <Text style={{ color: "#fff", fontWeight: "700", fontSize: 15 }}>Share</Text>
+              }
+            </Pressable>
+          </View>
+          {storyMedia ? (
+            <View style={styles.storyPreviewWrap}>
+              <Image source={{ uri: storyMedia.uri }} style={styles.storyPreviewImg} resizeMode="cover" />
+              <View style={[styles.storyPreviewOverlay]}>
+                <Pressable onPress={handlePickStoryMedia} style={[styles.storyChangeBtn, { backgroundColor: "rgba(0,0,0,0.5)" }]}>
+                  <Feather name="image" size={14} color="#fff" />
+                  <Text style={{ color: "#fff", fontSize: 13, fontWeight: "600" }}>Change</Text>
+                </Pressable>
+              </View>
+            </View>
+          ) : (
+            <Pressable onPress={handlePickStoryMedia} style={[styles.storyPickerPlaceholder, { borderColor: colors.border, backgroundColor: colors.secondary }]}>
+              <Feather name="image" size={40} color={colors.mutedForeground} />
+              <Text style={{ color: colors.mutedForeground, fontSize: 16, fontWeight: "600", marginTop: 10 }}>Tap to pick a photo</Text>
+              <Text style={{ color: colors.mutedForeground, fontSize: 13, marginTop: 4 }}>Your story disappears after 24 hours</Text>
+            </Pressable>
+          )}
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -1011,10 +1224,25 @@ const styles = StyleSheet.create({
   },
   badgeText: { color: "#fff", fontSize: 9, fontWeight: "700" },
 
+  searchWrapper: { paddingHorizontal: 14, paddingVertical: 8, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: "transparent" },
+  searchBar: { flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: 12, paddingVertical: 9, borderRadius: 22 },
+  searchInput: { flex: 1, fontSize: 15, padding: 0 },
+  searchRow: { flexDirection: "row", alignItems: "center", gap: 12, paddingHorizontal: 16, paddingVertical: 12, borderBottomWidth: StyleSheet.hairlineWidth },
+  searchPostIcon: { width: 40, height: 40, borderRadius: 10, alignItems: "center", justifyContent: "center" },
   storiesBar: { borderBottomWidth: StyleSheet.hairlineWidth },
   storiesContent: { paddingHorizontal: 14, paddingVertical: 10, gap: 14 },
   storyItem: { alignItems: "center", width: 64, position: "relative" },
   storyRing: { borderRadius: 30, padding: 2.5, marginBottom: 5 },
+  storyPlusBtn: { position: "absolute", bottom: 20, right: 0, width: 20, height: 20, borderRadius: 10, alignItems: "center", justifyContent: "center", borderWidth: 2, borderColor: "#fff" },
+  storyModalContainer: { flex: 1 },
+  storyModalHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 16, paddingVertical: 14, borderBottomWidth: StyleSheet.hairlineWidth },
+  storyModalTitle: { fontSize: 17, fontWeight: "700" },
+  storyPostBtn: { paddingHorizontal: 18, paddingVertical: 8, borderRadius: 20, minWidth: 70, alignItems: "center" },
+  storyPreviewWrap: { flex: 1, position: "relative" },
+  storyPreviewImg: { flex: 1, width: "100%" },
+  storyPreviewOverlay: { position: "absolute", bottom: 20, left: 0, right: 0, alignItems: "center" },
+  storyChangeBtn: { flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 14, paddingVertical: 8, borderRadius: 20 },
+  storyPickerPlaceholder: { flex: 1, margin: 20, borderRadius: 20, borderWidth: 2, borderStyle: "dashed", alignItems: "center", justifyContent: "center" },
   storyDot: {
     width: 9,
     height: 9,

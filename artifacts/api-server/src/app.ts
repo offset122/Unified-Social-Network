@@ -69,6 +69,24 @@ io.on("connection", (socket) => {
     socket.to(`chat:${chatId}`).emit("stop_typing", { userId });
   });
 
+  socket.on("live:join", (sessionId: string) => {
+    socket.join(`live:${sessionId}`);
+    logger.info({ socketId: socket.id, sessionId }, "Socket joined live room");
+  });
+
+  socket.on("live:leave", (sessionId: string) => {
+    socket.leave(`live:${sessionId}`);
+  });
+
+  socket.on("live:chat", ({ sessionId, message, userName }: { sessionId: string; message: string; userName: string }) => {
+    io.to(`live:${sessionId}`).emit("live:chat", {
+      message,
+      userName,
+      timestamp: Date.now(),
+    });
+    logger.info({ sessionId, userName }, "Live chat message sent");
+  });
+
   socket.on("disconnect", () => {
     logger.info({ socketId: socket.id }, "Socket disconnected");
   });

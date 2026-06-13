@@ -2,3 +2,4 @@
 - [StoryGroup user field](story-group-type.md) — StoryGroup.user (not .author) is the story author; author property does not exist on the type.
 - [Expo Router dynamic routes](expo-router-dynamic-routes.md) — dynamic routes like /user/${id} and non-registered paths need `as any` cast on href.
 - [GetUserPostsParams](api-params-gotchas.md) — only has cursor, not limit; passing limit causes TS2353 error.
+- [Auth User type fields](auth-user-fields.md) — useAuth() User has firstName/lastName/profileImageUrl, not displayName/avatarUrl. Compose display name as [firstName, lastName].filter(Boolean).join(" ").
