@@ -7,13 +7,12 @@ import {
   Pressable,
   Switch,
   Alert,
-  Platform,
 } from "react-native";
 import { Stack, useRouter } from "expo-router";
 import { Feather } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useColors } from "@/hooks/useColors";
-import { useColorScheme } from "react-native";
+import { useTheme } from "@/lib/theme";
 import { useAuth } from "@/lib/auth";
 
 type SectionItem = {
@@ -39,7 +38,7 @@ function SettingsRow({
   isLast,
 }: {
   item: SectionItem;
-  colors: any;
+  colors: ReturnType<typeof useColors>;
   isLast: boolean;
 }) {
   return (
@@ -86,12 +85,14 @@ export default function SettingsScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const { logout } = useAuth();
-  const colorScheme = useColorScheme();
+  const { colorScheme, toggleTheme } = useTheme();
 
   const [pushNotifs, setPushNotifs] = useState(true);
   const [emailNotifs, setEmailNotifs] = useState(false);
   const [privateAccount, setPrivateAccount] = useState(false);
   const [showActivity, setShowActivity] = useState(true);
+
+  const isDark = colorScheme === "dark";
 
   const handleLogout = () => {
     Alert.alert("Log Out", "Are you sure you want to log out?", [
@@ -118,9 +119,9 @@ export default function SettingsScreen() {
           chevron: true,
         },
         {
-          icon: "at-sign",
-          label: "Username",
-          onPress: () => router.push("/edit-profile"),
+          icon: "lock",
+          label: "Change Password",
+          onPress: () => router.push("/change-password" as any),
           chevron: true,
         },
       ],
@@ -129,7 +130,7 @@ export default function SettingsScreen() {
       title: "Privacy",
       items: [
         {
-          icon: "lock",
+          icon: "shield",
           label: "Private Account",
           note: "Only approved followers can see your posts",
           toggle: true,
@@ -169,11 +170,12 @@ export default function SettingsScreen() {
       title: "Appearance",
       items: [
         {
-          icon: colorScheme === "dark" ? "moon" : "sun",
-          label: "Theme",
-          note: colorScheme === "dark" ? "Dark mode" : "Light mode",
-          onPress: () => {},
-          chevron: false,
+          icon: isDark ? "moon" : "sun",
+          label: "Dark Mode",
+          note: isDark ? "Currently dark" : "Currently light",
+          toggle: true,
+          value: isDark,
+          onChange: toggleTheme,
         },
       ],
     },

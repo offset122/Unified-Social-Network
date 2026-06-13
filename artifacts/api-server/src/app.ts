@@ -87,6 +87,33 @@ io.on("connection", (socket) => {
     logger.info({ sessionId, userName }, "Live chat message sent");
   });
 
+  // ── WebRTC Call Signaling ──────────────────────────────────────────────────
+  socket.on("call:offer", ({ to, from, fromName, chatId, offer, callType }: {
+    to: string; from: string; fromName: string; chatId: string;
+    offer: unknown; callType: "audio" | "video";
+  }) => {
+    io.to(`user:${to}`).emit("call:incoming", { from, fromName, chatId, offer, callType });
+    logger.info({ from, to, callType }, "Call offer relayed");
+  });
+
+  socket.on("call:answer", ({ to, answer }: { to: string; answer: unknown }) => {
+    io.to(`user:${to}`).emit("call:answer", { answer });
+  });
+
+  socket.on("call:ice-candidate", ({ to, candidate }: { to: string; candidate: unknown }) => {
+    io.to(`user:${to}`).emit("call:ice-candidate", { candidate });
+  });
+
+  socket.on("call:end", ({ to }: { to: string }) => {
+    io.to(`user:${to}`).emit("call:end", {});
+    logger.info({ to }, "Call ended");
+  });
+
+  socket.on("call:reject", ({ to }: { to: string }) => {
+    io.to(`user:${to}`).emit("call:reject", {});
+    logger.info({ to }, "Call rejected");
+  });
+
   socket.on("disconnect", () => {
     logger.info({ socketId: socket.id }, "Socket disconnected");
   });

@@ -342,6 +342,16 @@ export const notificationsTable = pgTable(
   ],
 );
 
+// ── User Public Keys (E2E Encryption) ─────────────────────────────────────────
+export const userPublicKeysTable = pgTable("user_public_keys", {
+  userId: text("user_id")
+    .primaryKey()
+    .references(() => usersTable.id, { onDelete: "cascade" }),
+  publicKey: text("public_key").notNull(),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
 // ── Live Sessions ──────────────────────────────────────────────────────────────
 export const liveSessionsTable = pgTable("live_sessions", {
   id: text("id")

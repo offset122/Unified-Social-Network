@@ -427,6 +427,46 @@ paths:
               schema:
                 $ref: '#/components/schemas/PostListPage'
 
+  # ── Public Keys (E2E Encryption) ─────────────────────────────────────────
+  /users/{userId}/public-key:
+    get:
+      tags: [Users]
+      operationId: getUserPublicKey
+      summary: Get a user's ECDH public key for E2E encryption
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Public key
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserPublicKey'
+        '404':
+          description: No public key registered
+
+  /users/me/public-key:
+    put:
+      tags: [Users]
+      operationId: registerPublicKey
+      summary: Register or update my ECDH public key
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UserPublicKey'
+      responses:
+        '200':
+          description: Public key registered
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserPublicKey'
+
   # ── Follow / Unfollow ─────────────────────────────────────────────────────
   /follows/{userId}:
     post:
@@ -1988,6 +2028,14 @@ components:
           items:
             $ref: '#/components/schemas/Channel'
         nextCursor: { type: ["string", "null"] }
+
+    UserPublicKey:
+      type: object
+      required: [publicKey]
+      properties:
+        publicKey:
+          type: string
+          description: JWK-encoded ECDH P-256 public key
 
     AdminStats:
       type: object

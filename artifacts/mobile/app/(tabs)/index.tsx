@@ -130,11 +130,15 @@ function Avatar({
 
 function StoryItem({ group }: { group: StoryGroup }) {
   const colors = useColors();
+  const router = useRouter();
   const hasUnviewed =
     (group as any).hasUnviewed ?? group.stories?.some((s: any) => !s.isViewed);
   const author = group.user;
   return (
-    <Pressable style={styles.storyItem}>
+    <Pressable
+      style={styles.storyItem}
+      onPress={() => router.push(`/story-viewer?userId=${author.id}` as any)}
+    >
       <View
         style={[
           styles.storyRing,

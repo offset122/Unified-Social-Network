@@ -357,6 +357,30 @@ export const GetUserPostsResponse = zod.object({
 
 
 /**
+ * @summary Get a user's ECDH public key for E2E encryption
+ */
+export const GetUserPublicKeyParams = zod.object({
+  "userId": zod.coerce.string()
+})
+
+export const GetUserPublicKeyResponse = zod.object({
+  "publicKey": zod.string().describe('JWK-encoded ECDH P-256 public key')
+})
+
+
+/**
+ * @summary Register or update my ECDH public key
+ */
+export const RegisterPublicKeyBody = zod.object({
+  "publicKey": zod.string().describe('JWK-encoded ECDH P-256 public key')
+})
+
+export const RegisterPublicKeyResponse = zod.object({
+  "publicKey": zod.string().describe('JWK-encoded ECDH P-256 public key')
+})
+
+
+/**
  * @summary Follow a user
  */
 export const FollowUserParams = zod.object({

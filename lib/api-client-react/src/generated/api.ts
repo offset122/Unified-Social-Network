@@ -81,7 +81,8 @@ import type {
   UploadUrlRequest,
   UploadUrlResponse,
   UserListPage,
-  UserProfile
+  UserProfile,
+  UserPublicKey
 } from './api.schemas';
 
 import { customFetch } from '../custom-fetch';
@@ -1494,6 +1495,154 @@ export function useGetUserPosts<TData = Awaited<ReturnType<typeof getUserPosts>>
 
 
 
+
+export const getGetUserPublicKeyUrl = (userId: string,) => {
+
+
+
+
+  return `/api/users/${userId}/public-key`
+}
+
+/**
+ * @summary Get a user's ECDH public key for E2E encryption
+ */
+export const getUserPublicKey = async (userId: string, options?: RequestInit): Promise<UserPublicKey> => {
+
+  return customFetch<UserPublicKey>(getGetUserPublicKeyUrl(userId),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetUserPublicKeyQueryKey = (userId: string,) => {
+    return [
+    `/api/users/${userId}/public-key`
+    ] as const;
+    }
+
+
+export const getGetUserPublicKeyQueryOptions = <TData = Awaited<ReturnType<typeof getUserPublicKey>>, TError = ErrorType<void>>(userId: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getUserPublicKey>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetUserPublicKeyQueryKey(userId);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getUserPublicKey>>> = ({ signal }) => getUserPublicKey(userId, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: !!(userId), ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getUserPublicKey>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetUserPublicKeyQueryResult = NonNullable<Awaited<ReturnType<typeof getUserPublicKey>>>
+export type GetUserPublicKeyQueryError = ErrorType<void>
+
+
+/**
+ * @summary Get a user's ECDH public key for E2E encryption
+ */
+
+export function useGetUserPublicKey<TData = Awaited<ReturnType<typeof getUserPublicKey>>, TError = ErrorType<void>>(
+ userId: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getUserPublicKey>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetUserPublicKeyQueryOptions(userId,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+
+
+
+
+
+
+export const getRegisterPublicKeyUrl = () => {
+
+
+
+
+  return `/api/users/me/public-key`
+}
+
+/**
+ * @summary Register or update my ECDH public key
+ */
+export const registerPublicKey = async (userPublicKey: UserPublicKey, options?: RequestInit): Promise<UserPublicKey> => {
+
+  return customFetch<UserPublicKey>(getRegisterPublicKeyUrl(),
+  {
+    ...options,
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      userPublicKey,)
+  }
+);}
+
+
+
+
+export const getRegisterPublicKeyMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof registerPublicKey>>, TError,{data: BodyType<UserPublicKey>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof registerPublicKey>>, TError,{data: BodyType<UserPublicKey>}, TContext> => {
+
+const mutationKey = ['registerPublicKey'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof registerPublicKey>>, {data: BodyType<UserPublicKey>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  registerPublicKey(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type RegisterPublicKeyMutationResult = NonNullable<Awaited<ReturnType<typeof registerPublicKey>>>
+    export type RegisterPublicKeyMutationBody = BodyType<UserPublicKey>
+    export type RegisterPublicKeyMutationError = ErrorType<unknown>
+
+    /**
+ * @summary Register or update my ECDH public key
+ */
+export const useRegisterPublicKey = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof registerPublicKey>>, TError,{data: BodyType<UserPublicKey>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof registerPublicKey>>,
+        TError,
+        {data: BodyType<UserPublicKey>},
+        TContext
+      > => {
+      return useMutation(getRegisterPublicKeyMutationOptions(options));
+    }
 
 export const getFollowUserUrl = (userId: string,) => {
 

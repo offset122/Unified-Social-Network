@@ -3,3 +3,7 @@
 - [Expo Router dynamic routes](expo-router-dynamic-routes.md) — dynamic routes like /user/${id} and non-registered paths need `as any` cast on href.
 - [GetUserPostsParams](api-params-gotchas.md) — only has cursor, not limit; passing limit causes TS2353 error.
 - [Auth User type fields](auth-user-fields.md) — useAuth() User has firstName/lastName/profileImageUrl, not displayName/avatarUrl. Compose display name as [firstName, lastName].filter(Boolean).join(" ").
+- [Upload URL fields](upload-url-fields.md) — UploadUrlRequest takes `name`/`size`/`contentType`, not `fileName`. Size fallback: `asset.fileSize ?? 500_000`.
+- [Shared Avatar component](avatar-component.md) — Avatar lives at `artifacts/mobile/components/Avatar.tsx`; was previously inline-only in index.tsx.
+- [resolveMediaUrl pattern](resolve-media-url.md) — defined inline per-file (no shared lib); `/objects/` path → prepend `/api/storage`; always prepend `https://${EXPO_PUBLIC_DOMAIN}`.
+- [ThemeProvider placement](theme-provider.md) — ThemeProvider wraps QueryClientProvider in `_layout.tsx`; `useTheme()` returns `{ colorScheme, toggleTheme }`; persists via AsyncStorage.

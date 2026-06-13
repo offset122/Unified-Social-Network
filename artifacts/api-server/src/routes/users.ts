@@ -8,6 +8,7 @@ import {
   postsTable,
   likesTable,
   savesTable,
+  userPublicKeysTable,
 } from "@workspace/db";
 
 const router: IRouter = Router();
@@ -206,6 +207,38 @@ router.get("/users/:userId/posts", async (req, res): Promise<void> => {
     })),
     nextCursor: null,
   });
+});
+
+// GET /users/:userId/public-key
+router.get("/users/:userId/public-key", async (req, res): Promise<void> => {
+  const userId = Array.isArray(req.params.userId) ? req.params.userId[0] : req.params.userId;
+  const [keyRecord] = await db.select().from(userPublicKeysTable).where(eq(userPublicKeysTable.userId, userId));
+  if (!keyRecord) {
+    res.status(404).json({ error: "No public key registered" });
+    return;
+  }
+  res.json({ publicKey: keyRecord.publicKey });
+});
+
+// PUT /users/me/public-key
+router.put("/users/me/public-key", async (req, res): Promise<void> => {
+  if (!req.isAuthenticated()) {
+    res.status(401).json({ error: "Unauthorized" });
+    return;
+  }
+  const { publicKey } = req.body as { publicKey: string };
+  if (!publicKey) {
+    res.status(400).json({ error: "publicKey required" });
+    return;
+  }
+  await db
+    .insert(userPublicKeysTable)
+    .values({ userId: req.user.id, publicKey })
+    .onConflictDoUpdate({
+      target: userPublicKeysTable.userId,
+      set: { publicKey, updatedAt: new Date() },
+    });
+  res.json({ publicKey });
 });
 
 export default router;

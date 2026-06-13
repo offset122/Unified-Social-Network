@@ -470,6 +470,11 @@ export interface SearchResults {
   nextCursor?: string | null;
 }
 
+export interface UserPublicKey {
+  /** JWK-encoded ECDH P-256 public key */
+  publicKey: string;
+}
+
 export interface AdminStats {
   usersCount: number;
   postsCount: number;
