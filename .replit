@@ -11,6 +11,27 @@ env = { "CI" = "true" }
 [workflows]
 runButton = "Project"
 
+[[workflows.workflow]]
+name = "Project"
+mode = "parallel"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "Mobile App"
+
+[[workflows.workflow]]
+name = "Mobile App"
+author = "agent"
+
+[workflows.workflow.metadata]
+outputType = "webview"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "cd artifacts/mobile && PORT=8081 pnpm dev"
+waitForPort = 8081
+
 [agent]
 stack = "PNPM_WORKSPACE"
 expertMode = true
@@ -40,3 +61,10 @@ packages = ["nano"]
 
 [objectStorage]
 defaultBucketID = "replit-objstore-9ba0b56c-633b-41fb-a8ef-e5e996ff6444"
+
+[userenv]
+
+[userenv.shared]
+EXPO_PUBLIC_SUPABASE_URL = "https://lgawmewdxfkhfumoczlk.supabase.co"
+EXPO_PUBLIC_SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImxnYXdtZXdkeGZraGZ1bW9jemxrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODI0NDA0MjcsImV4cCI6MjA5ODAxNjQyN30.2PAX8C_9LoYbXxWkfdqfMr-5WoXlxBOP8hRh99vvYFo"
+EXPO_PUBLIC_SUPABASE_SERVICE_ROLE = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImxnYXdtZXdkeGZraGZ1bW9jemxrIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc4MjQ0MDQyNywiZXhwIjoyMDk4MDE2NDI3fQ.hROJ5BUsWzwa5WJnYAJHbQQ0O93OdLr3mKDuSS_YPs0"

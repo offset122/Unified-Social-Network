@@ -1,295 +1,432 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
-  View, Text, StyleSheet, FlatList, TextInput,
-  ActivityIndicator, Pressable, Alert, Platform,
+  View, Text, StyleSheet, FlatList, TextInput, ActivityIndicator,
+  Pressable, Alert, Platform, Image, ActionSheetIOS, Modal, ScrollView,
 } from "react-native";
 import { KeyboardAvoidingView } from "react-native-keyboard-controller";
 import { useLocalSearchParams, Stack, useRouter } from "expo-router";
 import { Feather } from "@expo/vector-icons";
+import { LinearGradient } from "expo-linear-gradient";
 import { useColors } from "@/hooks/useColors";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import {
-  useGetChatMessages,
-  getGetChatMessagesQueryKey,
-  useSendMessage,
-  useGetUserPublicKey,
-  getGetUserPublicKeyQueryKey,
-  useRegisterPublicKey,
-} from "@workspace/api-client-react";
-import { useQueryClient } from "@tanstack/react-query";
-import { getSocket } from "@/lib/socket";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/lib/auth";
+import { supabase } from "@/lib/supabase";
+import * as ImagePicker from "expo-image-picker";
+import * as DocumentPicker from "expo-document-picker";
 import {
-  isE2ESupported,
-  getOrCreateKeyPair,
-  getSharedKey,
-  encryptMessage,
-  decryptMessage,
-  isEncrypted,
-} from "@/lib/e2e-crypto";
+  fetchMessages, sendMessage, deleteMessage, markConversationRead,
+  uploadMedia, resolveMediaUrl, generateAIReplySuggestion, timeAgo,
+  type Message, type Profile,
+} from "@/lib/db";
+import { Video, ResizeMode } from "expo-av";
 
-export default function ChatScreen() {
-  const { chatId } = useLocalSearchParams<{ chatId: string; peerId?: string; peerName?: string; peerAvatar?: string }>();
-  const params = useLocalSearchParams<{ peerId?: string; peerName?: string; peerAvatar?: string }>();
-  const colors = useColors();
-  const insets = useSafeAreaInsets();
-  const { user } = useAuth();
-  const queryClient = useQueryClient();
-  const router = useRouter();
-  const [text, setText] = useState("");
-  const [e2eReady, setE2eReady] = useState(false);
-  const [e2eEnabled, setE2eEnabled] = useState(false);
-  const sharedKeyRef = useRef<CryptoKey | null>(null);
-  const [decryptedMessages, setDecryptedMessages] = useState<Record<string, string>>({});
-
-  const { data: page, isLoading } = useGetChatMessages(
-    chatId as string,
-    undefined,
-    { query: { enabled: !!chatId, queryKey: getGetChatMessagesQueryKey(chatId as string) } },
-  );
-
-  const { data: peerKeyData } = useGetUserPublicKey(
-    params.peerId ?? "",
-    { query: { enabled: !!params.peerId, queryKey: getGetUserPublicKeyQueryKey(params.peerId ?? "") } },
-  );
-
-  const sendMessage = useSendMessage();
-  const registerPublicKey = useRegisterPublicKey();
-
-  // Set up E2E encryption
-  useEffect(() => {
-    if (!isE2ESupported() || !user?.id) return;
-    getOrCreateKeyPair().then(async (result) => {
-      if (!result) return;
-      registerPublicKey.mutate({ data: { publicKey: result.publicKeyJwk } });
-      setE2eReady(true);
-    });
-  }, [user?.id]);
-
-  useEffect(() => {
-    if (!e2eReady || !peerKeyData?.publicKey || !params.peerId) return;
-    getSharedKey(peerKeyData.publicKey, `${user?.id}:${params.peerId}`).then((key) => {
-      if (key) {
-        sharedKeyRef.current = key;
-        setE2eEnabled(true);
-      }
-    });
-  }, [e2eReady, peerKeyData?.publicKey, params.peerId]);
-
-  // Decrypt messages as they come in
-  useEffect(() => {
-    if (!sharedKeyRef.current) return;
-    const messages = page?.items ?? [];
-    const toDecrypt = messages.filter((m) => isEncrypted(m.content) && !decryptedMessages[m.id]);
-    if (toDecrypt.length === 0) return;
-    Promise.all(
-      toDecrypt.map(async (m) => ({
-        id: m.id,
-        text: await decryptMessage(sharedKeyRef.current!, m.content),
-      })),
-    ).then((results) => {
-      setDecryptedMessages((prev) => {
-        const updated = { ...prev };
-        results.forEach(({ id, text }) => { updated[id] = text; });
-        return updated;
-      });
-    });
-  }, [page?.items, e2eEnabled]);
-
-  // Socket setup
-  useEffect(() => {
-    let active = true;
-    const setupSocket = async () => {
-      const socket = await getSocket();
-      if (!socket || !active || !chatId) return;
-      socket.emit("join_chat", chatId);
-      if (user?.id) socket.emit("join", user.id);
-      socket.on("new_message", () => {
-        queryClient.invalidateQueries({ queryKey: getGetChatMessagesQueryKey(chatId) });
-      });
-
-      // Incoming call notification
-      socket.on("call:incoming", ({ from, fromName, chatId: incomingChatId, offer, callType }: {
-        from: string; fromName: string; chatId: string; offer: unknown; callType: string;
-      }) => {
-        if (!active) return;
-        Alert.alert(
-          `📞 Incoming ${callType} call`,
-          `${fromName} is calling you`,
-          [
-            { text: "Decline", style: "destructive", onPress: async () => {
-              const s = await getSocket();
-              s?.emit("call:reject", { to: from });
-            }},
-            { text: "Accept", onPress: () => {
-              router.push({
-                pathname: `/call/${incomingChatId}` as any,
-                params: {
-                  fromId: from, toName: fromName, callType,
-                  isIncoming: "true",
-                  offer: offer ? JSON.stringify(offer) : "",
-                },
-              });
-            }},
-          ],
-        );
-      });
-    };
-    setupSocket();
-    return () => { active = false; };
-  }, [chatId, queryClient, user?.id]);
-
-  const handleSend = useCallback(async () => {
-    if (!text.trim() || !chatId) return;
-    let content = text.trim();
-    if (e2eEnabled && sharedKeyRef.current) {
-      content = await encryptMessage(sharedKeyRef.current, content);
-    }
-    sendMessage.mutate(
-      { chatId: chatId as string, data: { content } },
-      {
-        onSuccess: () => {
-          setText("");
-          queryClient.invalidateQueries({ queryKey: getGetChatMessagesQueryKey(chatId) });
-        },
-      },
-    );
-  }, [text, chatId, e2eEnabled, sendMessage, queryClient]);
-
-  const startCall = (callType: "audio" | "video") => {
-    if (!params.peerId) {
-      Alert.alert("Unable to call", "Could not identify the other user.");
-      return;
-    }
-    router.push({
-      pathname: `/call/${chatId}` as any,
-      params: { toId: params.peerId, toName: params.peerName ?? "User", callType, isIncoming: "false" },
-    });
-  };
-
-  if (isLoading) {
-    return (
-      <View style={[styles.center, { backgroundColor: colors.background }]}>
-        <ActivityIndicator color={colors.primary} />
-      </View>
-    );
+function Avatar({ name, avatarUrl, size }: { name: string; avatarUrl?: string | null; size: number }) {
+  const [err, setErr] = useState(false);
+  const initials = name.split(" ").map(w => w[0]).join("").slice(0, 2).toUpperCase();
+  const hue = name.split("").reduce((a, c) => a + c.charCodeAt(0), 0) % 360;
+  if (avatarUrl && !err) {
+    return <Image source={{ uri: resolveMediaUrl(avatarUrl) }}
+      style={{ width: size, height: size, borderRadius: size / 2 }}
+      onError={() => setErr(true)} />;
   }
-
-  const messages = page?.items ?? [];
-
   return (
-    <View style={[styles.container, { backgroundColor: colors.background }]}>
-      <Stack.Screen
-        options={{
-          title: params.peerName ?? "Chat",
-          headerRight: () => (
-            <View style={{ flexDirection: "row", gap: 12, paddingRight: 4 }}>
-              {e2eEnabled && (
-                <Feather name="lock" size={14} color="#22c55e" style={{ alignSelf: "center" }} />
-              )}
-              <Pressable onPress={() => startCall("audio")} hitSlop={8}>
-                <Feather name="phone" size={22} color={colors.primary} />
-              </Pressable>
-              <Pressable onPress={() => startCall("video")} hitSlop={8}>
-                <Feather name="video" size={22} color={colors.primary} />
-              </Pressable>
-            </View>
-          ),
-        }}
-      />
-
-      <FlatList
-        data={[...messages].reverse()}
-        inverted
-        keyExtractor={(item) => item.id}
-        contentContainerStyle={{ padding: 16 }}
-        renderItem={({ item }) => {
-          const isMe = item.senderId === user?.id;
-          const displayText = decryptedMessages[item.id] ?? (isEncrypted(item.content) ? "🔒 decrypting…" : item.content);
-          const wasEncrypted = isEncrypted(item.content);
-          return (
-            <View
-              style={[
-                styles.bubble,
-                isMe
-                  ? [styles.bubbleMe, { backgroundColor: colors.primary }]
-                  : [styles.bubbleOther, { backgroundColor: colors.secondary }],
-              ]}
-            >
-              <Text style={{ color: isMe ? colors.primaryForeground : colors.secondaryForeground }}>
-                {displayText}
-              </Text>
-              {wasEncrypted && (
-                <View style={styles.encRow}>
-                  <Feather name="lock" size={9} color={isMe ? "rgba(255,255,255,0.6)" : colors.mutedForeground} />
-                  <Text style={[styles.encLabel, { color: isMe ? "rgba(255,255,255,0.6)" : colors.mutedForeground }]}>
-                    encrypted
-                  </Text>
-                </View>
-              )}
-            </View>
-          );
-        }}
-      />
-
-      <KeyboardAvoidingView behavior="padding" keyboardVerticalOffset={90}>
-        <View
-          style={[
-            styles.inputContainer,
-            { borderTopColor: colors.border, paddingBottom: Math.max(insets.bottom, 12), backgroundColor: colors.background },
-          ]}
-        >
-          {e2eEnabled && (
-            <View style={styles.e2eBadge}>
-              <Feather name="lock" size={10} color="#22c55e" />
-              <Text style={styles.e2eBadgeText}>E2E</Text>
-            </View>
-          )}
-          <TextInput
-            style={[styles.input, { color: colors.foreground, backgroundColor: colors.secondary }]}
-            placeholder={e2eEnabled ? "Encrypted message…" : "Message…"}
-            placeholderTextColor={colors.mutedForeground}
-            value={text}
-            onChangeText={setText}
-            onSubmitEditing={handleSend}
-            returnKeyType="send"
-          />
-          <Pressable onPress={handleSend} disabled={!text.trim() || sendMessage.isPending} style={styles.sendBtn}>
-            {sendMessage.isPending ? (
-              <ActivityIndicator size="small" color={colors.primary} />
-            ) : (
-              <Text style={{ color: text.trim() ? colors.primary : colors.mutedForeground, fontWeight: "600" }}>
-                Send
-              </Text>
-            )}
-          </Pressable>
-        </View>
-      </KeyboardAvoidingView>
+    <View style={{ width: size, height: size, borderRadius: size / 2,
+      backgroundColor: `hsl(${hue},55%,45%)`, alignItems: "center", justifyContent: "center" }}>
+      <Text style={{ color: "#fff", fontSize: size * 0.38, fontWeight: "700" }}>{initials}</Text>
     </View>
   );
 }
 
+function MediaBubble({ msg, isMine, colors }: { msg: Message; isMine: boolean; colors: any }) {
+  if (!msg.media_url) return null;
+  const uri = resolveMediaUrl(msg.media_url);
+  if (msg.media_type === "image") {
+    return <Image source={{ uri }} style={styles.msgImage} resizeMode="cover" />;
+  }
+  if (msg.media_type === "video") {
+    return (
+      <View style={styles.msgVideo}>
+        <Video source={{ uri }} style={StyleSheet.absoluteFill}
+          resizeMode={ResizeMode.COVER} shouldPlay={false} useNativeControls />
+      </View>
+    );
+  }
+  if (msg.media_type === "audio") {
+    return (
+      <View style={[styles.audioBubble, { backgroundColor: isMine ? "rgba(255,255,255,0.2)" : colors.secondary }]}>
+        <Feather name="mic" size={18} color={isMine ? "#fff" : colors.primary} />
+        <Text style={{ color: isMine ? "#fff" : colors.foreground, fontSize: 13, marginLeft: 8 }}>Audio message</Text>
+        <Feather name="play" size={16} color={isMine ? "#fff" : colors.primary} style={{ marginLeft: "auto" }} />
+      </View>
+    );
+  }
+  return (
+    <View style={[styles.fileBubble, { backgroundColor: isMine ? "rgba(255,255,255,0.2)" : colors.secondary }]}>
+      <Feather name="file" size={18} color={isMine ? "#fff" : colors.primary} />
+      <Text style={{ color: isMine ? "#fff" : colors.foreground, fontSize: 13, marginLeft: 8 }} numberOfLines={1}>
+        {msg.media_url.split("/").pop()}
+      </Text>
+    </View>
+  );
+}
+
+function MessageBubble({
+  msg, isMine, showAvatar, colors, onLongPress,
+}: {
+  msg: Message; isMine: boolean; showAvatar: boolean; colors: any;
+  onLongPress: (msg: Message) => void;
+}) {
+  const profile = msg.profiles as Profile | undefined;
+
+  if (msg.is_deleted) {
+    return (
+      <View style={[styles.msgRow, isMine ? styles.msgRowMine : styles.msgRowOther]}>
+        {!isMine && <View style={{ width: 30 }} />}
+        <View style={[styles.deletedBubble, { borderColor: colors.border }]}>
+          <Feather name="trash-2" size={12} color={colors.mutedForeground} />
+          <Text style={[styles.deletedText, { color: colors.mutedForeground }]}>Message deleted</Text>
+        </View>
+      </View>
+    );
+  }
+
+  return (
+    <View style={[styles.msgRow, isMine ? styles.msgRowMine : styles.msgRowOther]}>
+      {!isMine && showAvatar ? (
+        <Avatar name={profile?.display_name ?? "U"} avatarUrl={profile?.avatar_url} size={28} />
+      ) : !isMine ? (
+        <View style={{ width: 28 }} />
+      ) : null}
+
+      <Pressable
+        onLongPress={() => onLongPress(msg)}
+        style={[styles.bubble, isMine ? styles.bubbleMine : [styles.bubbleOther, { backgroundColor: colors.card, borderColor: colors.border }]]}
+      >
+        {msg.reply_to_id && (
+          <View style={[styles.replyPreview, { borderLeftColor: isMine ? "rgba(255,255,255,0.5)" : colors.primary }]}>
+            <Text style={{ color: isMine ? "rgba(255,255,255,0.7)" : colors.mutedForeground, fontSize: 12 }}>Replying to a message</Text>
+          </View>
+        )}
+        <MediaBubble msg={msg} isMine={isMine} colors={colors} />
+        {!!msg.content && !msg.is_deleted && (
+          <Text style={[styles.bubbleText, { color: isMine ? "#fff" : colors.foreground }]}>{msg.content}</Text>
+        )}
+        <Text style={[styles.bubbleTime, { color: isMine ? "rgba(255,255,255,0.6)" : colors.mutedForeground }]}>
+          {timeAgo(msg.created_at)}{isMine ? " ✓✓" : ""}
+        </Text>
+      </Pressable>
+    </View>
+  );
+}
+
+export default function ChatScreen() {
+  const { chatId } = useLocalSearchParams<{ chatId: string }>();
+  const params = useLocalSearchParams<{ peerName?: string; peerAvatar?: string; peerId?: string }>();
+  const colors = useColors();
+  const insets = useSafeAreaInsets();
+  const { user } = useAuth();
+  const qc = useQueryClient();
+  const router = useRouter();
+  const flatRef = useRef<FlatList>(null);
+
+  const [text, setText] = useState("");
+  const [sending, setSending] = useState(false);
+  const [replyTo, setReplyTo] = useState<Message | null>(null);
+  const [aiSuggestions, setAiSuggestions] = useState<string[]>([]);
+  const [showMediaMenu, setShowMediaMenu] = useState(false);
+  const [loadingAI, setLoadingAI] = useState(false);
+
+  const { data: messages = [], isLoading } = useQuery({
+    queryKey: ["chat-messages", chatId],
+    queryFn: () => fetchMessages(chatId as string),
+    enabled: !!chatId,
+    refetchInterval: false,
+  });
+
+  // Mark as read when entering
+  useEffect(() => {
+    if (chatId && user?.id) markConversationRead(chatId as string, user.id);
+  }, [chatId, user?.id]);
+
+  // Realtime subscription
+  useEffect(() => {
+    if (!chatId) return;
+    const ch = supabase.channel(`chat-${chatId}`)
+      .on("postgres_changes", {
+        event: "*", schema: "public", table: "messages",
+        filter: `conversation_id=eq.${chatId}`,
+      }, () => {
+        qc.invalidateQueries({ queryKey: ["chat-messages", chatId] });
+        qc.invalidateQueries({ queryKey: ["conversations"] });
+      }).subscribe();
+    return () => { supabase.removeChannel(ch); };
+  }, [chatId]);
+
+  // Scroll to bottom when new messages arrive
+  useEffect(() => {
+    if (messages.length > 0) {
+      setTimeout(() => flatRef.current?.scrollToEnd({ animated: true }), 100);
+    }
+  }, [messages.length]);
+
+  const handleSend = useCallback(async (msgText?: string, opts?: { mediaUrl?: string; mediaType?: string }) => {
+    const content = msgText ?? text.trim();
+    if (!content && !opts?.mediaUrl) return;
+    if (!user?.id) return;
+
+    setSending(true);
+    const prev = text;
+    setText("");
+    setReplyTo(null);
+    setAiSuggestions([]);
+
+    try {
+      await sendMessage(chatId as string, user.id, content, {
+        ...opts,
+        replyToId: replyTo?.id,
+      });
+      qc.invalidateQueries({ queryKey: ["chat-messages", chatId] });
+      qc.invalidateQueries({ queryKey: ["conversations"] });
+    } catch {
+      setText(prev);
+      Alert.alert("Error", "Failed to send message");
+    } finally {
+      setSending(false);
+    }
+  }, [text, chatId, user?.id, replyTo]);
+
+  const handleLongPress = (msg: Message) => {
+    const isMine = msg.sender_id === user?.id;
+    const options = isMine
+      ? ["Reply", "Delete", "Cancel"]
+      : ["Reply", "Cancel"];
+    const destructiveIndex = isMine ? 1 : -1;
+
+    if (Platform.OS === "ios") {
+      ActionSheetIOS.showActionSheetWithOptions(
+        { options, cancelButtonIndex: options.length - 1, destructiveButtonIndex: destructiveIndex },
+        (i) => {
+          if (options[i] === "Reply") setReplyTo(msg);
+          if (options[i] === "Delete") handleDelete(msg);
+        }
+      );
+    } else {
+      Alert.alert("Message options", undefined, [
+        { text: "Reply", onPress: () => setReplyTo(msg) },
+        ...(isMine ? [{ text: "Delete", style: "destructive" as const, onPress: () => handleDelete(msg) }] : []),
+        { text: "Cancel", style: "cancel" },
+      ]);
+    }
+  };
+
+  const handleDelete = async (msg: Message) => {
+    if (!user?.id) return;
+    try {
+      await deleteMessage(msg.id, user.id);
+      qc.invalidateQueries({ queryKey: ["chat-messages", chatId] });
+    } catch {
+      Alert.alert("Error", "Could not delete message");
+    }
+  };
+
+  const pickImage = async () => {
+    setShowMediaMenu(false);
+    const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!perm.granted) return;
+    const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ImagePicker.MediaTypeOptions.All, quality: 0.8 });
+    if (!result.canceled && result.assets[0]) {
+      setSending(true);
+      try {
+        const a = result.assets[0];
+        const ext = a.uri.split(".").pop() ?? "jpg";
+        const mime = a.type === "video" ? `video/${ext}` : `image/${ext}`;
+        const url = await uploadMedia(a.uri, `${Date.now()}.${ext}`, mime, "chat-media");
+        await handleSend("", { mediaUrl: url, mediaType: a.type === "video" ? "video" : "image" });
+      } catch { Alert.alert("Error", "Failed to send media"); }
+      finally { setSending(false); }
+    }
+  };
+
+  const getAISuggestions = async () => {
+    const lastMsg = messages[messages.length - 1];
+    if (!lastMsg || lastMsg.sender_id === user?.id) return;
+    setLoadingAI(true);
+    try {
+      const suggestions = await generateAIReplySuggestion(lastMsg.content);
+      setAiSuggestions(suggestions);
+    } finally { setLoadingAI(false); }
+  };
+
+  const peerName = params.peerName ?? "Chat";
+
+  return (
+    <KeyboardAvoidingView style={{ flex: 1, backgroundColor: colors.background }}
+      behavior={Platform.OS === "ios" ? "padding" : "height"} keyboardVerticalOffset={0}>
+      <Stack.Screen options={{ headerShown: false }} />
+
+      {/* Header */}
+      <LinearGradient colors={[colors.primary, colors.primary + "dd"]}
+        style={[styles.chatHeader, { paddingTop: insets.top + 8 }]}>
+        <Pressable onPress={() => router.back()} style={styles.backBtn} hitSlop={8}>
+          <Feather name="arrow-left" size={22} color="#fff" />
+        </Pressable>
+        <Avatar name={peerName} avatarUrl={params.peerAvatar} size={36} />
+        <View style={{ flex: 1, marginLeft: 10 }}>
+          <Text style={styles.chatHeaderName}>{peerName}</Text>
+          <Text style={styles.chatHeaderStatus}>Active now</Text>
+        </View>
+        <Pressable onPress={() => router.push({ pathname: `/call/${chatId}`, params: { peerName } } as any)} style={styles.headerBtn}>
+          <Feather name="phone" size={20} color="#fff" />
+        </Pressable>
+        <Pressable onPress={() => router.push({ pathname: `/call/${chatId}`, params: { peerName, isVideo: "true" } } as any)} style={styles.headerBtn}>
+          <Feather name="video" size={20} color="#fff" />
+        </Pressable>
+      </LinearGradient>
+
+      {/* Messages */}
+      {isLoading ? (
+        <View style={styles.loadingCenter}><ActivityIndicator color={colors.primary} size="large" /></View>
+      ) : (
+        <FlatList
+          ref={flatRef}
+          data={messages as Message[]}
+          keyExtractor={m => m.id}
+          contentContainerStyle={{ padding: 12, paddingBottom: 8, gap: 4 }}
+          showsVerticalScrollIndicator={false}
+          renderItem={({ item: msg, index }) => {
+            const isMine = msg.sender_id === user?.id;
+            const prevMsg = index > 0 ? (messages as Message[])[index - 1] : null;
+            const showAvatar = !isMine && (!prevMsg || prevMsg.sender_id !== msg.sender_id);
+            return (
+              <MessageBubble msg={msg} isMine={isMine} showAvatar={showAvatar}
+                colors={colors} onLongPress={handleLongPress} />
+            );
+          }}
+          ListEmptyComponent={
+            <View style={styles.emptyChat}>
+              <Feather name="message-circle" size={48} color={colors.mutedForeground} />
+              <Text style={[styles.emptyChatText, { color: colors.mutedForeground }]}>Say hello!</Text>
+            </View>
+          }
+        />
+      )}
+
+      {/* Reply preview */}
+      {replyTo && (
+        <View style={[styles.replyBar, { backgroundColor: colors.secondary, borderTopColor: colors.border }]}>
+          <View style={[styles.replyBarLine, { backgroundColor: colors.primary }]} />
+          <View style={{ flex: 1 }}>
+            <Text style={[styles.replyBarLabel, { color: colors.primary }]}>Replying to {replyTo.profiles ? (replyTo.profiles as Profile).display_name : "message"}</Text>
+            <Text style={[styles.replyBarContent, { color: colors.mutedForeground }]} numberOfLines={1}>{replyTo.content}</Text>
+          </View>
+          <Pressable onPress={() => setReplyTo(null)} hitSlop={8}>
+            <Feather name="x" size={16} color={colors.mutedForeground} />
+          </Pressable>
+        </View>
+      )}
+
+      {/* AI suggestions */}
+      {aiSuggestions.length > 0 && (
+        <ScrollView horizontal showsHorizontalScrollIndicator={false}
+          contentContainerStyle={[styles.aiSuggestions, { borderTopColor: colors.border }]}>
+          {aiSuggestions.map((s, i) => (
+            <Pressable key={i} onPress={() => { handleSend(s); setAiSuggestions([]); }}
+              style={[styles.aiChip, { backgroundColor: colors.primary + "22", borderColor: colors.primary + "44" }]}>
+              <Text style={{ color: colors.primary, fontSize: 13 }}>{s}</Text>
+            </Pressable>
+          ))}
+          <Pressable onPress={() => setAiSuggestions([])} style={[styles.aiChip, { backgroundColor: colors.secondary }]}>
+            <Feather name="x" size={14} color={colors.mutedForeground} />
+          </Pressable>
+        </ScrollView>
+      )}
+
+      {/* Input bar */}
+      <View style={[styles.inputBar, { borderTopColor: colors.border, paddingBottom: insets.bottom + 4, backgroundColor: colors.background }]}>
+        <Pressable onPress={() => setShowMediaMenu(true)} style={styles.inputAction}>
+          <Feather name="plus-circle" size={24} color={colors.primary} />
+        </Pressable>
+        <TextInput
+          style={[styles.inputField, { color: colors.foreground, backgroundColor: colors.secondary, borderColor: colors.border }]}
+          placeholder="Message..." placeholderTextColor={colors.mutedForeground}
+          value={text} onChangeText={t => { setText(t); if (!t) setAiSuggestions([]); }}
+          multiline
+        />
+        {text.length === 0 ? (
+          <Pressable onPress={getAISuggestions} disabled={loadingAI} style={styles.inputAction}>
+            {loadingAI ? <ActivityIndicator size="small" color={colors.primary} /> : <Feather name="zap" size={22} color={colors.primary} />}
+          </Pressable>
+        ) : (
+          <Pressable onPress={() => handleSend()} disabled={sending || !text.trim()} style={styles.sendBtn}>
+            {sending ? <ActivityIndicator color="#fff" size="small" /> : <Feather name="send" size={16} color="#fff" />}
+          </Pressable>
+        )}
+      </View>
+
+      {/* Media menu modal */}
+      <Modal visible={showMediaMenu} transparent animationType="slide" onRequestClose={() => setShowMediaMenu(false)}>
+        <Pressable style={styles.mediaMenuOverlay} onPress={() => setShowMediaMenu(false)}>
+          <View style={[styles.mediaMenu, { backgroundColor: colors.background, borderColor: colors.border }]}>
+            <Text style={[styles.mediaMenuTitle, { color: colors.foreground }]}>Share</Text>
+            {[
+              { icon: "image" as const, label: "Photo / Video", onPress: pickImage },
+              { icon: "file" as const, label: "Document", onPress: async () => { setShowMediaMenu(false); /* DocumentPicker would go here */ } },
+            ].map(item => (
+              <Pressable key={item.label} onPress={item.onPress}
+                style={[styles.mediaMenuItem, { borderBottomColor: colors.border }]}>
+                <View style={[styles.mediaMenuIcon, { backgroundColor: colors.primary + "22" }]}>
+                  <Feather name={item.icon} size={20} color={colors.primary} />
+                </View>
+                <Text style={[styles.mediaMenuLabel, { color: colors.foreground }]}>{item.label}</Text>
+                <Feather name="chevron-right" size={16} color={colors.mutedForeground} />
+              </Pressable>
+            ))}
+          </View>
+        </Pressable>
+      </Modal>
+    </KeyboardAvoidingView>
+  );
+}
+
 const styles = StyleSheet.create({
-  container: { flex: 1 },
-  center: { flex: 1, alignItems: "center", justifyContent: "center" },
-  bubble: { padding: 12, borderRadius: 16, maxWidth: "80%", marginBottom: 8 },
-  bubbleMe: { alignSelf: "flex-end", borderBottomRightRadius: 4 },
-  bubbleOther: { alignSelf: "flex-start", borderBottomLeftRadius: 4 },
-  encRow: { flexDirection: "row", alignItems: "center", gap: 3, marginTop: 4 },
-  encLabel: { fontSize: 9 },
-  inputContainer: {
-    flexDirection: "row", padding: 12,
-    borderTopWidth: StyleSheet.hairlineWidth, alignItems: "center",
-  },
-  e2eBadge: {
-    flexDirection: "row", alignItems: "center", gap: 2,
-    marginRight: 6, backgroundColor: "#dcfce7",
-    paddingHorizontal: 6, paddingVertical: 2, borderRadius: 8,
-  },
-  e2eBadgeText: { fontSize: 10, color: "#16a34a", fontWeight: "700" },
-  input: {
-    flex: 1, borderRadius: 20, paddingHorizontal: 16,
-    paddingVertical: 10, fontSize: 16, marginRight: 8,
-  },
-  sendBtn: { padding: 8 },
+  chatHeader: { flexDirection: "row", alignItems: "center", paddingHorizontal: 12, paddingBottom: 12, gap: 8 },
+  backBtn: { width: 36, height: 36, alignItems: "center", justifyContent: "center" },
+  chatHeaderName: { color: "#fff", fontSize: 16, fontWeight: "700" },
+  chatHeaderStatus: { color: "rgba(255,255,255,0.7)", fontSize: 11 },
+  headerBtn: { width: 36, height: 36, alignItems: "center", justifyContent: "center" },
+  loadingCenter: { flex: 1, alignItems: "center", justifyContent: "center" },
+  msgRow: { flexDirection: "row", alignItems: "flex-end", gap: 6, marginBottom: 2 },
+  msgRowMine: { justifyContent: "flex-end" },
+  msgRowOther: { justifyContent: "flex-start" },
+  bubble: { maxWidth: "72%", borderRadius: 18, paddingHorizontal: 14, paddingVertical: 9, gap: 4 },
+  bubbleMine: { backgroundColor: "#7c3aed", borderBottomRightRadius: 4 },
+  bubbleOther: { borderWidth: StyleSheet.hairlineWidth, borderBottomLeftRadius: 4 },
+  bubbleText: { fontSize: 15, lineHeight: 21 },
+  bubbleTime: { fontSize: 10, alignSelf: "flex-end" },
+  replyPreview: { borderLeftWidth: 3, paddingLeft: 8, marginBottom: 4 },
+  deletedBubble: { flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 12, paddingVertical: 8, borderRadius: 12, borderWidth: StyleSheet.hairlineWidth },
+  deletedText: { fontSize: 13, fontStyle: "italic" },
+  msgImage: { width: 200, height: 200, borderRadius: 12 },
+  msgVideo: { width: 200, height: 150, borderRadius: 12, overflow: "hidden" },
+  audioBubble: { flexDirection: "row", alignItems: "center", paddingHorizontal: 12, paddingVertical: 8, borderRadius: 12, minWidth: 140 },
+  fileBubble: { flexDirection: "row", alignItems: "center", paddingHorizontal: 12, paddingVertical: 8, borderRadius: 12, minWidth: 140 },
+  emptyChat: { flex: 1, alignItems: "center", justifyContent: "center", paddingVertical: 80, gap: 10 },
+  emptyChatText: { fontSize: 16 },
+  replyBar: { flexDirection: "row", alignItems: "center", paddingHorizontal: 14, paddingVertical: 8, borderTopWidth: StyleSheet.hairlineWidth, gap: 10 },
+  replyBarLine: { width: 3, height: "100%", borderRadius: 2 },
+  replyBarLabel: { fontSize: 12, fontWeight: "700" },
+  replyBarContent: { fontSize: 13 },
+  aiSuggestions: { paddingHorizontal: 12, paddingVertical: 8, gap: 8, borderTopWidth: StyleSheet.hairlineWidth },
+  aiChip: { paddingHorizontal: 14, paddingVertical: 7, borderRadius: 20, borderWidth: 1 },
+  inputBar: { flexDirection: "row", alignItems: "flex-end", paddingHorizontal: 8, paddingTop: 8, gap: 6, borderTopWidth: StyleSheet.hairlineWidth },
+  inputAction: { width: 40, height: 40, alignItems: "center", justifyContent: "center" },
+  inputField: { flex: 1, borderWidth: 1.5, borderRadius: 22, paddingHorizontal: 14, paddingVertical: 9, fontSize: 15, maxHeight: 120 },
+  sendBtn: { width: 40, height: 40, borderRadius: 20, backgroundColor: "#7c3aed", alignItems: "center", justifyContent: "center" },
+  mediaMenuOverlay: { flex: 1, justifyContent: "flex-end", backgroundColor: "rgba(0,0,0,0.4)" },
+  mediaMenu: { borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 20, borderWidth: StyleSheet.hairlineWidth },
+  mediaMenuTitle: { fontSize: 17, fontWeight: "700", marginBottom: 16 },
+  mediaMenuItem: { flexDirection: "row", alignItems: "center", gap: 14, paddingVertical: 14, borderBottomWidth: StyleSheet.hairlineWidth },
+  mediaMenuIcon: { width: 44, height: 44, borderRadius: 12, alignItems: "center", justifyContent: "center" },
+  mediaMenuLabel: { flex: 1, fontSize: 15, fontWeight: "500" },
 });

@@ -1,15 +1,8 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, type ReactNode } from "react";
-import * as AuthSession from "expo-auth-session";
-import * as WebBrowser from "expo-web-browser";
-import * as SecureStore from "expo-secure-store";
-import { emailRegister, emailLogin } from "@workspace/api-client-react";
+import { supabase } from "./supabase";
+import type { Session, User } from "@supabase/supabase-js";
 
-WebBrowser.maybeCompleteAuthSession();
-
-const AUTH_TOKEN_KEY = "auth_session_token";
-const ISSUER_URL = process.env.EXPO_PUBLIC_ISSUER_URL ?? "https://replit.com/oidc";
-
-interface User {
+interface AppUser {
   id: string;
   email: string | null;
   firstName: string | null;
@@ -18,7 +11,8 @@ interface User {
 }
 
 interface AuthContextValue {
-  user: User | null;
+  user: AppUser | null;
+  session: Session | null;
   isLoading: boolean;
   isAuthenticated: boolean;
   login: () => Promise<void>;
@@ -29,6 +23,7 @@ interface AuthContextValue {
 
 const AuthContext = createContext<AuthContextValue>({
   user: null,
+  session: null,
   isLoading: true,
   isAuthenticated: false,
   login: async () => {},
@@ -37,155 +32,92 @@ const AuthContext = createContext<AuthContextValue>({
   registerWithEmail: async () => {},
 });
 
-function getApiBaseUrl(): string {
-  if (process.env.EXPO_PUBLIC_DOMAIN) {
-    return `https://${process.env.EXPO_PUBLIC_DOMAIN}`;
-  }
-  return "";
-}
-
-function getClientId(): string {
-  return process.env.EXPO_PUBLIC_REPL_ID || "";
+function mapUser(supabaseUser: User): AppUser {
+  const meta = supabaseUser.user_metadata ?? {};
+  return {
+    id: supabaseUser.id,
+    email: supabaseUser.email ?? null,
+    firstName: meta.first_name ?? meta.firstName ?? null,
+    lastName: meta.last_name ?? meta.lastName ?? null,
+    profileImageUrl: meta.avatar_url ?? meta.profileImageUrl ?? null,
+  };
 }
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [user, setUser] = useState<User | null>(null);
+  const [user, setUser] = useState<AppUser | null>(null);
+  const [session, setSession] = useState<Session | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
-  const discovery = AuthSession.useAutoDiscovery(ISSUER_URL);
-  const redirectUri = AuthSession.makeRedirectUri();
-
-  const [request, response, promptAsync] = AuthSession.useAuthRequest(
-    {
-      clientId: getClientId(),
-      scopes: ["openid", "email", "profile", "offline_access"],
-      redirectUri,
-      prompt: AuthSession.Prompt.Login,
-    },
-    discovery,
-  );
-
-  const fetchUser = useCallback(async () => {
-    try {
-      const token = await SecureStore.getItemAsync(AUTH_TOKEN_KEY);
-      if (!token) {
-        setUser(null);
-        setIsLoading(false);
-        return;
-      }
-
-      const apiBase = getApiBaseUrl();
-      const res = await fetch(`${apiBase}/api/auth/user`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      const data = await res.json() as { user?: User };
-
-      if (data.user) {
-        setUser(data.user);
-      } else {
-        await SecureStore.deleteItemAsync(AUTH_TOKEN_KEY);
-        setUser(null);
-      }
-    } catch {
-      setUser(null);
-    } finally {
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setSession(session);
+      setUser(session?.user ? mapUser(session.user) : null);
       setIsLoading(false);
-    }
+    });
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      setSession(session);
+      setUser(session?.user ? mapUser(session.user) : null);
+      setIsLoading(false);
+    });
+
+    return () => subscription.unsubscribe();
   }, []);
 
-  useEffect(() => {
-    fetchUser();
-  }, [fetchUser]);
+  const loginWithEmail = useCallback(async (email: string, password: string) => {
+    const { error } = await supabase.auth.signInWithPassword({ email, password });
+    if (error) throw new Error(error.message);
+  }, []);
 
-  useEffect(() => {
-    if (response?.type !== "success" || !request?.codeVerifier) return;
+  const registerWithEmail = useCallback(async (
+    email: string,
+    password: string,
+    firstName?: string,
+    lastName?: string
+  ) => {
+    const { data, error } = await supabase.auth.signUp({
+      email,
+      password,
+      options: {
+        data: {
+          first_name: firstName ?? "",
+          last_name: lastName ?? "",
+          display_name: [firstName, lastName].filter(Boolean).join(" ") || email.split("@")[0],
+        },
+      },
+    });
+    if (error) throw new Error(error.message);
 
-    const { code, state } = response.params;
-
-    (async () => {
-      try {
-        const apiBase = getApiBaseUrl();
-        if (!apiBase) return;
-
-        const exchangeRes = await fetch(`${apiBase}/api/mobile-auth/token-exchange`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            code,
-            code_verifier: request.codeVerifier,
-            redirect_uri: redirectUri,
-            state,
-            nonce: (request as unknown as Record<string, unknown>).nonce as string | undefined,
-          }),
-        });
-
-        if (!exchangeRes.ok) return;
-
-        const data = await exchangeRes.json() as { token?: string };
-        if (data.token) {
-          await SecureStore.setItemAsync(AUTH_TOKEN_KEY, data.token);
-          setIsLoading(true);
-          await fetchUser();
-        }
-      } catch {
-        setIsLoading(false);
-      }
-    })();
-  }, [response, request, redirectUri, fetchUser]);
-
-  const login = useCallback(async () => {
-    try {
-      await promptAsync();
-    } catch {
-      // ignore
+    if (data.user) {
+      const username = (email.split("@")[0] + "_" + Math.random().toString(36).slice(2, 6)).toLowerCase();
+      const displayName = [firstName, lastName].filter(Boolean).join(" ") || email.split("@")[0];
+      await supabase.from("profiles").upsert({
+        id: data.user.id,
+        username,
+        display_name: displayName,
+        bio: null,
+        avatar_url: null,
+      });
     }
-  }, [promptAsync]);
+  }, []);
 
   const logout = useCallback(async () => {
-    try {
-      const token = await SecureStore.getItemAsync(AUTH_TOKEN_KEY);
-      if (token) {
-        const apiBase = getApiBaseUrl();
-        await fetch(`${apiBase}/api/mobile-auth/logout`, {
-          method: "POST",
-          headers: { Authorization: `Bearer ${token}` },
-        });
-      }
-    } catch {
-      // ignore
-    } finally {
-      await SecureStore.deleteItemAsync(AUTH_TOKEN_KEY);
-      setUser(null);
-    }
+    await supabase.auth.signOut();
   }, []);
 
-  const loginWithEmail = useCallback(async (em: string, pw: string) => {
-    const result = await emailLogin({ email: em, password: pw });
-    await SecureStore.setItemAsync(AUTH_TOKEN_KEY, result.token);
-    setUser(result.user);
-  }, []);
-
-  const registerWithEmail = useCallback(
-    async (em: string, pw: string, firstName?: string, lastName?: string) => {
-      const result = await emailRegister({ email: em, password: pw, firstName, lastName });
-      await SecureStore.setItemAsync(AUTH_TOKEN_KEY, result.token);
-      setUser(result.user);
-    },
-    [],
-  );
+  const login = useCallback(async () => {}, []);
 
   return (
-    <AuthContext.Provider
-      value={{
-        user,
-        isLoading,
-        isAuthenticated: !!user,
-        login,
-        logout,
-        loginWithEmail,
-        registerWithEmail,
-      }}
-    >
+    <AuthContext.Provider value={{
+      user,
+      session,
+      isLoading,
+      isAuthenticated: !!user,
+      login,
+      logout,
+      loginWithEmail,
+      registerWithEmail,
+    }}>
       {children}
     </AuthContext.Provider>
   );

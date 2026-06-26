@@ -1,73 +1,32 @@
 import React from "react";
-import { View, Text, StyleSheet, FlatList, ActivityIndicator } from "react-native";
-import { useLocalSearchParams, Stack } from "expo-router";
+import { View, Text, Pressable, StyleSheet, ActivityIndicator } from "react-native";
+import { Stack, useLocalSearchParams, useRouter } from "expo-router";
+import { Feather } from "@expo/vector-icons";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useColors } from "@/hooks/useColors";
-import {
-  useGetChannel,
-  getGetChannelQueryKey,
-  useGetChannelPosts,
-  getGetChannelPostsQueryKey,
-} from "@workspace/api-client-react";
 
 export default function ChannelScreen() {
   const { channelId } = useLocalSearchParams<{ channelId: string }>();
   const colors = useColors();
-
-  const { data: channel, isLoading: isChannelLoading } = useGetChannel(
-    channelId as string,
-    { query: { enabled: !!channelId, queryKey: getGetChannelQueryKey(channelId as string) } },
-  );
-  const { data: postsPage } = useGetChannelPosts(
-    channelId as string,
-    undefined,
-    { query: { enabled: !!channelId, queryKey: getGetChannelPostsQueryKey(channelId as string) } },
-  );
-
-  if (isChannelLoading) {
-    return (
-      <View style={[styles.center, { backgroundColor: colors.background }]}>
-        <ActivityIndicator color={colors.primary} />
-      </View>
-    );
-  }
-  if (!channel) {
-    return (
-      <View style={[styles.center, { backgroundColor: colors.background }]}>
-        <Text style={{ color: colors.foreground }}>Channel not found</Text>
-      </View>
-    );
-  }
-
+  const insets = useSafeAreaInsets();
+  const router = useRouter();
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
-      <Stack.Screen options={{ title: channel.name }} />
-      <FlatList
-        data={postsPage?.items ?? []}
-        keyExtractor={(item) => item.id}
-        ListHeaderComponent={
-          <View style={[styles.header, { borderBottomColor: colors.border }]}>
-            {channel.description ? (
-              <Text style={[styles.description, { color: colors.foreground }]}>{channel.description}</Text>
-            ) : null}
-            <Text style={{ color: colors.mutedForeground, marginTop: 8 }}>
-              {channel.subscribersCount} Subscribers
-            </Text>
-          </View>
-        }
-        renderItem={({ item }) => (
-          <View style={[styles.postCard, { borderBottomColor: colors.border }]}>
-            <Text style={{ color: colors.foreground }}>{item.content}</Text>
-          </View>
-        )}
-      />
+      <Stack.Screen options={{ headerShown: false }} />
+      <View style={[styles.header, { paddingTop: insets.top + 8, borderBottomColor: colors.border }]}>
+        <Pressable onPress={() => router.back()} hitSlop={8}><Feather name="arrow-left" size={22} color={colors.foreground} /></Pressable>
+        <Text style={[styles.title, { color: colors.foreground }]}>Channel</Text>
+        <View style={{ width: 30 }} />
+      </View>
+      <View style={{ flex: 1, alignItems: "center", justifyContent: "center" }}>
+        <Feather name="hash" size={48} color={colors.mutedForeground} />
+        <Text style={{ color: colors.mutedForeground, marginTop: 12, fontSize: 16 }}>Channel {channelId}</Text>
+      </View>
     </View>
   );
 }
-
 const styles = StyleSheet.create({
   container: { flex: 1 },
-  center: { flex: 1, alignItems: "center", justifyContent: "center" },
-  header: { padding: 16, borderBottomWidth: StyleSheet.hairlineWidth },
-  description: { fontSize: 16 },
-  postCard: { padding: 16, borderBottomWidth: StyleSheet.hairlineWidth },
+  header: { flexDirection: "row", alignItems: "center", paddingHorizontal: 16, paddingBottom: 12, borderBottomWidth: StyleSheet.hairlineWidth, gap: 12 },
+  title: { flex: 1, textAlign: "center", fontSize: 17, fontWeight: "700" },
 });

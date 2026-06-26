@@ -1,209 +1,153 @@
 import React from "react";
 import {
-  View,
-  Text,
-  StyleSheet,
-  FlatList,
-  ActivityIndicator,
-  Pressable,
-  Image,
+  View, Text, StyleSheet, FlatList, ActivityIndicator,
+  Pressable, Image, Platform,
 } from "react-native";
 import { Stack, useRouter } from "expo-router";
 import { Feather } from "@expo/vector-icons";
 import { useColors } from "@/hooks/useColors";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import {
-  useGetNotifications,
-  useMarkAllNotificationsRead,
-  getGetNotificationsQueryKey,
-  getGetUnreadNotificationCountQueryKey,
-} from "@workspace/api-client-react";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useAuth } from "@/lib/auth";
+import { resolveMediaUrl, timeAgo } from "@/lib/db";
+import { supabase } from "@/lib/supabase";
+import { LinearGradient } from "expo-linear-gradient";
 
-const BASE_URL = process.env.EXPO_PUBLIC_DOMAIN
-  ? `https://${process.env.EXPO_PUBLIC_DOMAIN}`
-  : "";
+type Notif = {
+  id: string;
+  type: string;
+  is_read: boolean;
+  created_at: string;
+  profiles?: { display_name: string; avatar_url: string | null; username: string } | null;
+  posts?: { media_urls: string[] } | null;
+};
 
-function resolveMediaUrl(path: string): string {
-  if (!path) return path;
-  if (path.startsWith("http://") || path.startsWith("https://")) return path;
-  const apiPath = path.startsWith("/objects/") ? `/api/storage${path}` : path;
-  return `${BASE_URL}${apiPath}`;
+const NOTIF_ICONS: Record<string, { icon: any; color: string; label: string }> = {
+  follow:  { icon: "user-plus",      color: "#7c3aed", label: "followed you" },
+  like:    { icon: "heart",          color: "#ef4444", label: "liked your post" },
+  comment: { icon: "message-circle", color: "#3b82f6", label: "commented on your post" },
+  reply:   { icon: "corner-up-right",color: "#06b6d4", label: "replied to your comment" },
+  mention: { icon: "at-sign",        color: "#8b5cf6", label: "mentioned you" },
+  message: { icon: "send",           color: "#10b981", label: "sent you a message" },
+  live:    { icon: "radio",          color: "#ef4444", label: "went live" },
+};
+
+async function fetchNotifications(userId: string): Promise<Notif[]> {
+  const { data } = await supabase
+    .from("notifications")
+    .select("*, profiles:actor_id(display_name, avatar_url, username), posts(media_urls)")
+    .eq("user_id", userId)
+    .order("created_at", { ascending: false })
+    .limit(50);
+  return (data ?? []) as Notif[];
 }
 
-function timeAgo(iso: string): string {
-  const diff = Date.now() - new Date(iso).getTime();
-  const m = Math.floor(diff / 60000);
-  if (m < 1) return "now";
-  if (m < 60) return `${m}m`;
-  const h = Math.floor(m / 60);
-  if (h < 24) return `${h}h`;
-  const d = Math.floor(h / 24);
-  if (d < 7) return `${d}d`;
-  return `${Math.floor(d / 7)}w`;
+async function markAllRead(userId: string) {
+  await supabase.from("notifications").update({ is_read: true }).eq("user_id", userId).eq("is_read", false);
 }
 
-type NotifType = "follow" | "like" | "comment" | "reply" | "message" | "mention" | "channel_post";
-
-function notifIcon(type: NotifType): { name: React.ComponentProps<typeof Feather>["name"]; color: string } {
-  switch (type) {
-    case "follow": return { name: "user-plus", color: "#7c3aed" };
-    case "like": return { name: "heart", color: "#ef4444" };
-    case "comment": return { name: "message-circle", color: "#0ea5e9" };
-    case "reply": return { name: "corner-down-right", color: "#0ea5e9" };
-    case "message": return { name: "mail", color: "#10b981" };
-    case "mention": return { name: "at-sign", color: "#f59e0b" };
-    case "channel_post": return { name: "radio", color: "#8b5cf6" };
-    default: return { name: "bell", color: "#6b7280" };
-  }
-}
-
-function notifText(type: NotifType, actorName: string): string {
-  switch (type) {
-    case "follow": return `${actorName} started following you`;
-    case "like": return `${actorName} liked your post`;
-    case "comment": return `${actorName} commented on your post`;
-    case "reply": return `${actorName} replied to your comment`;
-    case "message": return `${actorName} sent you a message`;
-    case "mention": return `${actorName} mentioned you in a post`;
-    case "channel_post": return `${actorName} posted in a channel you follow`;
-    default: return `${actorName} interacted with you`;
-  }
-}
-
-function Avatar({ name, avatarUrl, size }: { name: string; avatarUrl?: string | null; size: number }) {
+function NotifAvatar({ name, avatarUrl }: { name: string; avatarUrl?: string | null }) {
   const [err, setErr] = React.useState(false);
-  const initials = name.split(" ").map((w) => w[0]).join("").slice(0, 2).toUpperCase();
+  const initials = name.split(" ").map(w => w[0]).join("").slice(0, 2).toUpperCase();
   const hue = name.split("").reduce((a, c) => a + c.charCodeAt(0), 0) % 360;
   if (avatarUrl && !err) {
-    return (
-      <Image
-        source={{ uri: resolveMediaUrl(avatarUrl) }}
-        style={{ width: size, height: size, borderRadius: size / 2 }}
-        onError={() => setErr(true)}
-      />
-    );
+    return <Image source={{ uri: resolveMediaUrl(avatarUrl) }}
+      style={{ width: 44, height: 44, borderRadius: 22 }}
+      onError={() => setErr(true)} />;
   }
   return (
-    <View style={{
-      width: size, height: size, borderRadius: size / 2,
-      backgroundColor: `hsl(${hue},55%,58%)`,
-      alignItems: "center", justifyContent: "center",
-    }}>
-      <Text style={{ color: "#fff", fontSize: size * 0.38, fontWeight: "700" }}>{initials}</Text>
+    <View style={{ width: 44, height: 44, borderRadius: 22, backgroundColor: `hsl(${hue},55%,45%)`, alignItems: "center", justifyContent: "center" }}>
+      <Text style={{ color: "#fff", fontSize: 16, fontWeight: "700" }}>{initials}</Text>
     </View>
   );
 }
 
 export default function NotificationsScreen() {
+  const { user } = useAuth();
   const colors = useColors();
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const qc = useQueryClient();
 
-  const { data: page, isLoading, refetch } = useGetNotifications();
-  const markAllRead = useMarkAllNotificationsRead();
+  const { data: notifs = [], isLoading } = useQuery({
+    queryKey: ["notifications", user?.id],
+    queryFn: () => fetchNotifications(user?.id ?? ""),
+    enabled: !!user?.id,
+  });
 
-  const notifications = page?.items ?? [];
+  const markAllMut = useMutation({
+    mutationFn: () => markAllRead(user?.id ?? ""),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["notifications"] });
+      qc.invalidateQueries({ queryKey: ["notif-count"] });
+    },
+  });
 
-  const handleMarkAllRead = () => {
-    markAllRead.mutate(undefined, {
-      onSuccess: () => {
-        qc.invalidateQueries({ queryKey: getGetNotificationsQueryKey() });
-        qc.invalidateQueries({ queryKey: getGetUnreadNotificationCountQueryKey() });
-      },
-    });
-  };
-
-  const handlePress = (item: typeof notifications[0]) => {
-    if (item.postId) {
-      router.push(`/post/${item.postId}`);
-    } else if (item.actor) {
-      router.push(`/user/${item.actor.id}`);
-    }
-  };
+  const unreadCount = (notifs as Notif[]).filter(n => !n.is_read).length;
 
   return (
-    <View style={[styles.container, { backgroundColor: colors.background, paddingBottom: insets.bottom }]}>
-      <Stack.Screen
-        options={{
-          title: "Notifications",
-          headerRight: () =>
-            notifications.some((n) => !n.isRead) ? (
-              <Pressable
-                onPress={handleMarkAllRead}
-                style={{ marginRight: 16 }}
-                disabled={markAllRead.isPending}
-              >
-                <Text style={{ color: colors.primary, fontWeight: "600", fontSize: 14 }}>
-                  Mark all read
-                </Text>
-              </Pressable>
-            ) : null,
-        }}
-      />
+    <View style={[styles.container, { backgroundColor: colors.background }]}>
+      <Stack.Screen options={{ headerShown: false }} />
+      <View style={[styles.header, { paddingTop: insets.top + 8, borderBottomColor: colors.border }]}>
+        <Pressable onPress={() => router.back()} hitSlop={8}>
+          <Feather name="arrow-left" size={22} color={colors.foreground} />
+        </Pressable>
+        <Text style={[styles.title, { color: colors.foreground }]}>Notifications</Text>
+        {unreadCount > 0 && (
+          <Pressable onPress={() => markAllMut.mutate()} hitSlop={8}>
+            <Text style={{ color: colors.primary, fontSize: 13, fontWeight: "600" }}>Mark all read</Text>
+          </Pressable>
+        )}
+      </View>
 
       {isLoading ? (
-        <View style={styles.center}>
-          <ActivityIndicator color={colors.primary} />
-        </View>
-      ) : notifications.length === 0 ? (
+        <View style={styles.center}><ActivityIndicator color={colors.primary} size="large" /></View>
+      ) : (notifs as Notif[]).length === 0 ? (
         <View style={styles.empty}>
-          <View style={[styles.emptyIcon, { backgroundColor: colors.secondary }]}>
-            <Feather name="bell" size={32} color={colors.mutedForeground} />
-          </View>
+          <LinearGradient colors={[colors.primary + "22", colors.primary + "08"]}
+            style={{ width: 80, height: 80, borderRadius: 40, alignItems: "center", justifyContent: "center", marginBottom: 12 }}>
+            <Feather name="bell" size={36} color={colors.primary} />
+          </LinearGradient>
           <Text style={[styles.emptyTitle, { color: colors.foreground }]}>All caught up!</Text>
-          <Text style={[styles.emptyDesc, { color: colors.mutedForeground }]}>
-            You'll see notifications when people interact with you
-          </Text>
+          <Text style={[styles.emptyDesc, { color: colors.mutedForeground }]}>No notifications yet</Text>
         </View>
       ) : (
         <FlatList
-          data={notifications}
-          keyExtractor={(item) => item.id}
-          onRefresh={refetch}
-          refreshing={isLoading}
-          showsVerticalScrollIndicator={false}
-          renderItem={({ item }) => {
-            const icon = notifIcon(item.type as NotifType);
-            const actorName = item.actor?.displayName ?? "Someone";
+          data={notifs as Notif[]}
+          keyExtractor={n => n.id}
+          contentContainerStyle={{ paddingBottom: insets.bottom + 80 }}
+          renderItem={({ item: n }) => {
+            const meta = NOTIF_ICONS[n.type] ?? NOTIF_ICONS.like;
+            const actor = n.profiles;
+            const name = actor?.display_name ?? "Someone";
+            const thumb = n.posts?.media_urls?.[0];
             return (
               <Pressable
-                onPress={() => handlePress(item)}
-                style={({ pressed }) => [
-                  styles.card,
-                  {
-                    backgroundColor: !item.isRead ? `${colors.primary}08` : colors.background,
-                    borderBottomColor: colors.border,
-                    opacity: pressed ? 0.7 : 1,
-                  },
-                ]}
+                style={[styles.notifRow, { borderBottomColor: colors.border, backgroundColor: n.is_read ? "transparent" : colors.primary + "08" }]}
+                onPress={async () => {
+                  await supabase.from("notifications").update({ is_read: true }).eq("id", n.id);
+                  qc.invalidateQueries({ queryKey: ["notifications"] });
+                  qc.invalidateQueries({ queryKey: ["notif-count"] });
+                }}
               >
-                {/* Unread indicator */}
-                <View style={[styles.unreadDot, { backgroundColor: !item.isRead ? colors.primary : "transparent" }]} />
-
-                {/* Avatar with icon badge */}
                 <View style={{ position: "relative" }}>
-                  <Avatar name={actorName} avatarUrl={item.actor?.avatarUrl} size={46} />
-                  <View style={[styles.iconBadge, { backgroundColor: icon.color }]}>
-                    <Feather name={icon.name} size={10} color="#fff" />
+                  <NotifAvatar name={name} avatarUrl={actor?.avatar_url} />
+                  <View style={[styles.notifIconBadge, { backgroundColor: meta.color }]}>
+                    <Feather name={meta.icon} size={10} color="#fff" />
                   </View>
                 </View>
-
-                {/* Content */}
-                <View style={styles.notifBody}>
+                <View style={{ flex: 1 }}>
                   <Text style={[styles.notifText, { color: colors.foreground }]}>
-                    {notifText(item.type as NotifType, actorName)}
+                    <Text style={{ fontWeight: "700" }}>{name}</Text>
+                    {" "}{meta.label}
                   </Text>
-                  <Text style={[styles.notifTime, { color: colors.mutedForeground }]}>
-                    {timeAgo(item.createdAt)}
-                  </Text>
+                  <Text style={[styles.notifTime, { color: colors.mutedForeground }]}>{timeAgo(n.created_at)}</Text>
                 </View>
-
-                {/* Chevron */}
-                {(item.postId || item.actor) ? (
-                  <Feather name="chevron-right" size={16} color={colors.mutedForeground} />
-                ) : null}
+                {thumb && (
+                  <Image source={{ uri: resolveMediaUrl(thumb) }}
+                    style={styles.notifThumb} resizeMode="cover" />
+                )}
+                {!n.is_read && <View style={[styles.unreadDot, { backgroundColor: colors.primary }]} />}
               </Pressable>
             );
           }}
@@ -215,24 +159,16 @@ export default function NotificationsScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
+  header: { flexDirection: "row", alignItems: "center", gap: 12, paddingHorizontal: 16, paddingBottom: 12, borderBottomWidth: StyleSheet.hairlineWidth },
+  title: { flex: 1, fontSize: 20, fontWeight: "800", letterSpacing: -0.3 },
   center: { flex: 1, alignItems: "center", justifyContent: "center" },
-  empty: { flex: 1, alignItems: "center", justifyContent: "center", paddingHorizontal: 40, gap: 12 },
-  emptyIcon: { width: 80, height: 80, borderRadius: 40, alignItems: "center", justifyContent: "center", marginBottom: 8 },
-  emptyTitle: { fontSize: 20, fontWeight: "800", letterSpacing: -0.3 },
-  emptyDesc: { fontSize: 14, textAlign: "center", lineHeight: 20 },
-  card: {
-    flexDirection: "row", alignItems: "center", gap: 12,
-    paddingHorizontal: 16, paddingVertical: 14,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-  },
-  unreadDot: { width: 6, height: 6, borderRadius: 3, flexShrink: 0 },
-  iconBadge: {
-    position: "absolute", bottom: -2, right: -2,
-    width: 20, height: 20, borderRadius: 10,
-    alignItems: "center", justifyContent: "center",
-    borderWidth: 2, borderColor: "#fff",
-  },
-  notifBody: { flex: 1 },
+  empty: { flex: 1, alignItems: "center", justifyContent: "center", gap: 8 },
+  emptyTitle: { fontSize: 18, fontWeight: "700" },
+  emptyDesc: { fontSize: 14 },
+  notifRow: { flexDirection: "row", alignItems: "center", gap: 12, paddingHorizontal: 16, paddingVertical: 13, borderBottomWidth: StyleSheet.hairlineWidth },
+  notifIconBadge: { position: "absolute", bottom: -2, right: -2, width: 18, height: 18, borderRadius: 9, alignItems: "center", justifyContent: "center", borderWidth: 2, borderColor: "#fff" },
   notifText: { fontSize: 14, lineHeight: 20 },
-  notifTime: { fontSize: 12, marginTop: 3 },
+  notifTime: { fontSize: 12, marginTop: 2 },
+  notifThumb: { width: 44, height: 44, borderRadius: 8 },
+  unreadDot: { width: 8, height: 8, borderRadius: 4 },
 });

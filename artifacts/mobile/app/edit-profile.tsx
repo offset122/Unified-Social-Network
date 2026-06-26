@@ -1,285 +1,177 @@
 import React, { useState, useEffect } from "react";
 import {
-  View,
-  Text,
-  StyleSheet,
-  TextInput,
-  Pressable,
-  ActivityIndicator,
-  Platform,
-  KeyboardAvoidingView,
-  ScrollView,
-  Alert,
-  Image,
+  View, Text, StyleSheet, TextInput, Pressable, ActivityIndicator,
+  Platform, ScrollView, Alert, Image,
 } from "react-native";
 import { Feather } from "@expo/vector-icons";
 import * as ImagePicker from "expo-image-picker";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Stack, router } from "expo-router";
-import {
-  useGetMyProfile,
-  useUpdateMyProfile,
-  useRequestUploadUrl,
-  getGetMyProfileQueryKey,
-} from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useColors } from "@/hooks/useColors";
-
-function AvatarPicker({
-  displayName,
-  avatarUrl,
-  onPress,
-}: {
-  displayName: string;
-  avatarUrl?: string | null;
-  onPress: () => void;
-}) {
-  const initials = displayName.split(" ").map((w) => w[0]).join("").slice(0, 2).toUpperCase();
-  return (
-    <Pressable onPress={onPress} style={styles.avatarWrap}>
-      {avatarUrl ? (
-        <Image source={{ uri: avatarUrl }} style={styles.avatar} />
-      ) : (
-        <View style={styles.avatarPlaceholder}>
-          <Text style={styles.avatarInitials}>{initials || "?"}</Text>
-        </View>
-      )}
-      <View style={styles.avatarEditBadge}>
-        <Feather name="camera" size={14} color="#fff" />
-      </View>
-    </Pressable>
-  );
-}
+import { useAuth } from "@/lib/auth";
+import { fetchProfile, updateProfile, uploadMedia, resolveMediaUrl } from "@/lib/db";
+import { LinearGradient } from "expo-linear-gradient";
 
 export default function EditProfileScreen() {
+  const { user } = useAuth();
   const colors = useColors();
   const insets = useSafeAreaInsets();
-  const isWeb = Platform.OS === "web";
   const qc = useQueryClient();
-
-  const { data: profile, isLoading: profileLoading } = useGetMyProfile();
-  const updateProfile = useUpdateMyProfile();
-  const requestUploadUrl = useRequestUploadUrl();
 
   const [displayName, setDisplayName] = useState("");
   const [username, setUsername] = useState("");
   const [bio, setBio] = useState("");
-  const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
-  const [newAvatarAsset, setNewAvatarAsset] = useState<ImagePicker.ImagePickerAsset | null>(null);
-  const [uploading, setUploading] = useState(false);
+  const [avatarUri, setAvatarUri] = useState<string | null>(null);
+  const [coverUri, setCoverUri] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    if (profile) {
-      setDisplayName(profile.displayName ?? "");
-      setUsername(profile.username ?? "");
-      setBio(profile.bio ?? "");
-      setAvatarUrl(profile.avatarUrl ?? null);
-    }
-  }, [profile]);
+    if (!user?.id) return;
+    fetchProfile(user.id).then(p => {
+      if (p) {
+        setDisplayName(p.display_name ?? "");
+        setUsername(p.username ?? "");
+        setBio(p.bio ?? "");
+        setAvatarUri(p.avatar_url ? resolveMediaUrl(p.avatar_url) : null);
+        setCoverUri(p.cover_url ? resolveMediaUrl(p.cover_url) : null);
+      }
+      setLoading(false);
+    });
+  }, [user?.id]);
 
   const pickAvatar = async () => {
-    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (status !== "granted") {
-      Alert.alert("Permission needed", "Grant photo library access to change your avatar.");
-      return;
-    }
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ["images"],
-      quality: 0.85,
-      allowsEditing: true,
-      aspect: [1, 1],
-    });
-    if (!result.canceled && result.assets[0]) {
-      setNewAvatarAsset(result.assets[0]);
-      setAvatarUrl(result.assets[0].uri);
-    }
+    const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!perm.granted) return;
+    const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ImagePicker.MediaTypeOptions.Images, quality: 0.85, allowsEditing: true, aspect: [1, 1] });
+    if (!result.canceled) setAvatarUri(result.assets[0].uri);
+  };
+
+  const pickCover = async () => {
+    const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!perm.granted) return;
+    const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ImagePicker.MediaTypeOptions.Images, quality: 0.85, allowsEditing: true, aspect: [16, 9] });
+    if (!result.canceled) setCoverUri(result.assets[0].uri);
   };
 
   const handleSave = async () => {
-    if (!displayName.trim()) {
-      Alert.alert("Validation", "Display name cannot be empty.");
-      return;
-    }
-    if (!username.trim()) {
-      Alert.alert("Validation", "Username cannot be empty.");
-      return;
-    }
+    if (!user?.id) return;
+    if (!displayName.trim()) { Alert.alert("Required", "Display name is required"); return; }
+    if (!username.trim()) { Alert.alert("Required", "Username is required"); return; }
+    setSaving(true);
+    try {
+      const updates: any = { display_name: displayName.trim(), username: username.trim().toLowerCase(), bio: bio.trim() };
 
-    let uploadedAvatarUrl: string | undefined;
-
-    if (newAvatarAsset) {
-      setUploading(true);
-      try {
-        const mimeType = newAvatarAsset.mimeType ?? "image/jpeg";
-        const ext = mimeType.split("/")[1] ?? "jpg";
-        const { uploadURL, objectPath } = await requestUploadUrl.mutateAsync({
-          data: { name: `avatar_${Date.now()}.${ext}`, size: newAvatarAsset.fileSize ?? 200_000, contentType: mimeType },
-        });
-        const fileRes = await fetch(newAvatarAsset.uri);
-        const blob = await fileRes.blob();
-        await fetch(uploadURL, { method: "PUT", body: blob, headers: { "Content-Type": mimeType } });
-        uploadedAvatarUrl = objectPath;
-      } catch {
-        setUploading(false);
-        Alert.alert("Upload failed", "Could not upload avatar. Please try again.");
-        return;
+      if (avatarUri && !avatarUri.startsWith("http")) {
+        const ext = avatarUri.split(".").pop() ?? "jpg";
+        updates.avatar_url = await uploadMedia(avatarUri, `avatar_${user.id}.${ext}`, `image/${ext}`, "avatars");
       }
-      setUploading(false);
-    }
+      if (coverUri && !coverUri.startsWith("http")) {
+        const ext = coverUri.split(".").pop() ?? "jpg";
+        updates.cover_url = await uploadMedia(coverUri, `cover_${user.id}.${ext}`, `image/${ext}`, "media");
+      }
 
-    updateProfile.mutate(
-      {
-        data: {
-          displayName: displayName.trim(),
-          username: username.trim(),
-          bio: bio.trim(),
-          ...(uploadedAvatarUrl && { avatarUrl: uploadedAvatarUrl }),
-        },
-      },
-      {
-        onSuccess: () => {
-          qc.invalidateQueries({ queryKey: getGetMyProfileQueryKey() });
-          Alert.alert("Saved!", "Your profile has been updated.", [
-            { text: "OK", onPress: () => router.back() },
-          ]);
-        },
-        onError: (err: unknown) => {
-          const msg = (err as { message?: string })?.message ?? "Please try again.";
-          Alert.alert("Error", msg);
-        },
-      },
-    );
+      await updateProfile(user.id, updates);
+      qc.invalidateQueries({ queryKey: ["my-profile"] });
+      qc.invalidateQueries({ queryKey: ["profile", user.id] });
+      Alert.alert("Saved!", "Your profile has been updated.", [{ text: "OK", onPress: () => router.back() }]);
+    } catch (e: any) {
+      Alert.alert("Error", e.message ?? "Failed to save");
+    } finally { setSaving(false); }
   };
 
-  const isSaving = uploading || updateProfile.isPending;
-  const canSave = displayName.trim().length > 0 && username.trim().length > 0;
-
-  if (profileLoading) {
-    return (
-      <View style={[styles.center, { flex: 1, backgroundColor: colors.background }]}>
-        <Stack.Screen options={{ title: "Edit Profile", headerShown: false }} />
-        <ActivityIndicator color={colors.primary} size="large" />
-      </View>
-    );
-  }
+  if (loading) return <View style={{ flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: colors.background }}><ActivityIndicator color="#7c3aed" /></View>;
 
   return (
-    <KeyboardAvoidingView
-      style={{ flex: 1, backgroundColor: colors.background }}
-      behavior={Platform.OS === "ios" ? "padding" : "height"}
-    >
-      <Stack.Screen options={{ title: "Edit Profile", headerShown: false }} />
-      <View style={[styles.header, { paddingTop: isWeb ? 16 : insets.top + 4, borderBottomColor: colors.border }]}>
-        <Pressable onPress={() => router.back()} style={styles.backBtn}>
-          <Feather name="arrow-left" size={22} color={colors.foreground} />
-        </Pressable>
-        <Text style={[styles.headerTitle, { color: colors.foreground }]}>Edit Profile</Text>
-        <Pressable
-          onPress={handleSave}
-          disabled={!canSave || isSaving}
-          style={[styles.saveBtn, { backgroundColor: canSave ? colors.primary : colors.muted }]}
-        >
-          {isSaving ? (
-            <ActivityIndicator color="#fff" size="small" />
-          ) : (
-            <Text style={[styles.saveBtnText, { color: canSave ? "#fff" : colors.mutedForeground }]}>Save</Text>
-          )}
+    <View style={[styles.container, { backgroundColor: colors.background }]}>
+      <Stack.Screen options={{ headerShown: false }} />
+      <View style={[styles.header, { paddingTop: insets.top + 8, borderBottomColor: colors.border }]}>
+        <Pressable onPress={() => router.back()} hitSlop={8}><Feather name="x" size={22} color={colors.foreground} /></Pressable>
+        <Text style={[styles.title, { color: colors.foreground }]}>Edit Profile</Text>
+        <Pressable onPress={handleSave} disabled={saving}
+          style={[styles.saveBtn, { backgroundColor: saving ? colors.muted : colors.primary }]}>
+          {saving ? <ActivityIndicator color="#fff" size="small" /> : <Text style={styles.saveBtnText}>Save</Text>}
         </Pressable>
       </View>
 
-      <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: insets.bottom + 40 }}>
+        {/* Cover */}
+        <Pressable onPress={pickCover} style={styles.coverWrap}>
+          {coverUri ? (
+            <Image source={{ uri: coverUri }} style={styles.coverImg} resizeMode="cover" />
+          ) : (
+            <LinearGradient colors={["#1e1b4b", "#2d1b69"]} style={styles.coverImg} />
+          )}
+          <View style={styles.coverEditBtn}>
+            <Feather name="camera" size={16} color="#fff" />
+          </View>
+        </Pressable>
+
+        {/* Avatar */}
         <View style={styles.avatarSection}>
-          <AvatarPicker displayName={displayName || "?"} avatarUrl={avatarUrl} onPress={pickAvatar} />
-          <Text style={[styles.changePhotoLabel, { color: colors.primary }]}>Change Photo</Text>
+          <Pressable onPress={pickAvatar} style={{ position: "relative" }}>
+            {avatarUri ? (
+              <Image source={{ uri: avatarUri }} style={styles.avatar} resizeMode="cover" />
+            ) : (
+              <LinearGradient colors={["#7c3aed", "#4f46e5"]} style={styles.avatar}>
+                <Text style={{ color: "#fff", fontSize: 30, fontWeight: "800" }}>
+                  {displayName.split(" ").map(w => w[0]).join("").slice(0, 2).toUpperCase() || "?"}
+                </Text>
+              </LinearGradient>
+            )}
+            <View style={[styles.avatarEditBtn, { backgroundColor: colors.primary }]}>
+              <Feather name="camera" size={14} color="#fff" />
+            </View>
+          </Pressable>
         </View>
 
-        <View style={[styles.form, { borderColor: colors.border, backgroundColor: colors.card }]}>
-          <View style={[styles.field, { borderBottomColor: colors.border }]}>
-            <Text style={[styles.fieldLabel, { color: colors.mutedForeground }]}>Display Name</Text>
-            <TextInput
-              style={[styles.fieldInput, { color: colors.foreground }]}
-              value={displayName}
-              onChangeText={setDisplayName}
-              placeholder="Your name"
-              placeholderTextColor={colors.mutedForeground}
-              returnKeyType="next"
-              maxLength={50}
-            />
-          </View>
-          <View style={[styles.field, { borderBottomColor: colors.border }]}>
-            <Text style={[styles.fieldLabel, { color: colors.mutedForeground }]}>Username</Text>
-            <View style={styles.usernameRow}>
-              <Text style={[styles.atSign, { color: colors.mutedForeground }]}>@</Text>
+        {/* Fields */}
+        <View style={{ paddingHorizontal: 20, gap: 16, marginTop: 8 }}>
+          {[
+            { label: "Display Name", value: displayName, onChange: setDisplayName, placeholder: "Your full name", autoCapitalize: "words" as const },
+            { label: "Username", value: username, onChange: (v: string) => setUsername(v.toLowerCase().replace(/[^a-z0-9_]/g, "")), placeholder: "username", autoCapitalize: "none" as const },
+          ].map(field => (
+            <View key={field.label}>
+              <Text style={[styles.fieldLabel, { color: colors.mutedForeground }]}>{field.label}</Text>
               <TextInput
-                style={[styles.fieldInput, { flex: 1, color: colors.foreground }]}
-                value={username}
-                onChangeText={(v) => setUsername(v.toLowerCase().replace(/[^a-z0-9_.]/g, ""))}
-                placeholder="username"
-                placeholderTextColor={colors.mutedForeground}
-                autoCapitalize="none"
-                returnKeyType="next"
-                maxLength={30}
+                style={[styles.input, { color: colors.foreground, backgroundColor: colors.secondary, borderColor: colors.border }]}
+                value={field.value} onChangeText={field.onChange}
+                placeholder={field.placeholder} placeholderTextColor={colors.mutedForeground}
+                autoCapitalize={field.autoCapitalize} autoCorrect={false}
               />
             </View>
-          </View>
-          <View style={styles.field}>
+          ))}
+          <View>
             <Text style={[styles.fieldLabel, { color: colors.mutedForeground }]}>Bio</Text>
             <TextInput
-              style={[styles.fieldInput, styles.bioInput, { color: colors.foreground }]}
-              value={bio}
-              onChangeText={setBio}
-              placeholder="Write something about yourself…"
-              placeholderTextColor={colors.mutedForeground}
-              multiline
-              maxLength={160}
-              textAlignVertical="top"
+              style={[styles.input, styles.bioInput, { color: colors.foreground, backgroundColor: colors.secondary, borderColor: colors.border }]}
+              value={bio} onChangeText={setBio}
+              placeholder="Tell people about yourself..." placeholderTextColor={colors.mutedForeground}
+              multiline maxLength={150}
             />
-            <Text style={[styles.bioCount, { color: colors.mutedForeground }]}>{bio.length}/160</Text>
+            <Text style={[styles.charCount, { color: colors.mutedForeground }]}>{bio.length}/150</Text>
           </View>
         </View>
-
-        <Text style={[styles.hint, { color: colors.mutedForeground }]}>
-          Your username must be unique and can only contain letters, numbers, dots, and underscores.
-        </Text>
       </ScrollView>
-    </KeyboardAvoidingView>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  center: { alignItems: "center", justifyContent: "center" },
-  header: {
-    flexDirection: "row", alignItems: "center", justifyContent: "space-between",
-    paddingHorizontal: 16, paddingBottom: 12, borderBottomWidth: StyleSheet.hairlineWidth,
-  },
-  backBtn: { padding: 6, minWidth: 40 },
-  headerTitle: { fontSize: 17, fontWeight: "700" },
-  saveBtn: { paddingHorizontal: 18, paddingVertical: 8, borderRadius: 20, minWidth: 60, alignItems: "center" },
-  saveBtnText: { fontWeight: "700", fontSize: 15 },
-  content: { paddingBottom: 60 },
-  avatarSection: { alignItems: "center", paddingVertical: 28 },
-  avatarWrap: { position: "relative" },
-  avatar: { width: 90, height: 90, borderRadius: 45, borderWidth: 3, borderColor: "#7c3aed" },
-  avatarPlaceholder: {
-    width: 90, height: 90, borderRadius: 45, backgroundColor: "#7c3aed",
-    alignItems: "center", justifyContent: "center", borderWidth: 3, borderColor: "#a78bfa",
-  },
-  avatarInitials: { color: "#fff", fontSize: 32, fontWeight: "800" },
-  avatarEditBadge: {
-    position: "absolute", bottom: 2, right: 2,
-    backgroundColor: "#7c3aed", borderRadius: 14, padding: 5, borderWidth: 2, borderColor: "#fff",
-  },
-  changePhotoLabel: { marginTop: 10, fontSize: 14, fontWeight: "600" },
-  form: {
-    marginHorizontal: 16, borderRadius: 12,
-    borderWidth: StyleSheet.hairlineWidth, overflow: "hidden",
-  },
-  field: { paddingHorizontal: 16, paddingVertical: 12, borderBottomWidth: StyleSheet.hairlineWidth },
-  fieldLabel: { fontSize: 11, fontWeight: "600", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 6 },
-  fieldInput: { fontSize: 16, paddingVertical: 2 },
-  usernameRow: { flexDirection: "row", alignItems: "center" },
-  atSign: { fontSize: 16, marginRight: 2 },
-  bioInput: { minHeight: 80 },
-  bioCount: { fontSize: 11, textAlign: "right", marginTop: 4 },
-  hint: { fontSize: 12, lineHeight: 17, marginHorizontal: 16, marginTop: 12, textAlign: "center" },
+  container: { flex: 1 },
+  header: { flexDirection: "row", alignItems: "center", paddingHorizontal: 16, paddingBottom: 12, borderBottomWidth: StyleSheet.hairlineWidth, gap: 12 },
+  title: { flex: 1, fontSize: 17, fontWeight: "700" },
+  saveBtn: { paddingHorizontal: 18, paddingVertical: 8, borderRadius: 18 },
+  saveBtnText: { color: "#fff", fontWeight: "700", fontSize: 14 },
+  coverWrap: { height: 130, position: "relative" },
+  coverImg: { width: "100%", height: "100%" },
+  coverEditBtn: { position: "absolute", bottom: 10, right: 10, backgroundColor: "rgba(0,0,0,0.5)", borderRadius: 20, padding: 8 },
+  avatarSection: { paddingHorizontal: 20, marginTop: -40, marginBottom: 12 },
+  avatar: { width: 84, height: 84, borderRadius: 42, borderWidth: 3, borderColor: "#fff", alignItems: "center", justifyContent: "center", overflow: "hidden" },
+  avatarEditBtn: { position: "absolute", bottom: 0, right: 0, width: 26, height: 26, borderRadius: 13, alignItems: "center", justifyContent: "center", borderWidth: 2, borderColor: "#fff" },
+  fieldLabel: { fontSize: 12, fontWeight: "700", textTransform: "uppercase", letterSpacing: 0.6, marginBottom: 6 },
+  input: { borderWidth: 1.5, borderRadius: 14, paddingHorizontal: 14, paddingVertical: 12, fontSize: 15 },
+  bioInput: { height: 100, textAlignVertical: "top" },
+  charCount: { fontSize: 11, textAlign: "right", marginTop: 4 },
 });

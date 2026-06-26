@@ -1,390 +1,224 @@
 import React, { useState } from "react";
 import {
-  View,
-  Text,
-  StyleSheet,
-  FlatList,
-  ActivityIndicator,
-  TextInput,
-  Pressable,
-  Image,
-  Alert,
-  ScrollView,
+  View, Text, StyleSheet, ScrollView, Pressable, ActivityIndicator,
+  Image, FlatList, TextInput, Alert,
 } from "react-native";
-import { useLocalSearchParams, Stack, useRouter } from "expo-router";
-import { LinearGradient } from "expo-linear-gradient";
+import { Stack, useLocalSearchParams, useRouter } from "expo-router";
 import { Feather } from "@expo/vector-icons";
-import { KeyboardAvoidingView } from "react-native-keyboard-controller";
-import { useColors } from "@/hooks/useColors";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import {
-  useGetPost,
-  getGetPostQueryKey,
-  useGetComments,
-  getGetCommentsQueryKey,
-  useCreateComment,
-  useLikePost,
-  useUnlikePost,
-  useSavePost,
-  useUnsavePost,
-  getGetFeedQueryKey,
-} from "@workspace/api-client-react";
-import { useQueryClient } from "@tanstack/react-query";
-import { useAuth } from "@/lib/auth";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Video, ResizeMode } from "expo-av";
+import { LinearGradient } from "expo-linear-gradient";
+import { useColors } from "@/hooks/useColors";
+import { useAuth } from "@/lib/auth";
+import {
+  fetchComments, createComment, likePost, unlikePost, savePost, unsavePost,
+  resolveMediaUrl, timeAgo, formatCount, type Comment, type Profile,
+} from "@/lib/db";
+import { supabase } from "@/lib/supabase";
 
-const BASE_URL = process.env.EXPO_PUBLIC_DOMAIN
-  ? `https://${process.env.EXPO_PUBLIC_DOMAIN}`
-  : "";
-
-function resolveMediaUrl(path: string): string {
-  if (!path) return path;
-  if (path.startsWith("http://") || path.startsWith("https://")) return path;
-  const apiPath = path.startsWith("/objects/") ? `/api/storage${path}` : path;
-  return `${BASE_URL}${apiPath}`;
-}
-
-function timeAgo(iso: string): string {
-  const diff = Date.now() - new Date(iso).getTime();
-  const m = Math.floor(diff / 60000);
-  if (m < 1) return "just now";
-  if (m < 60) return `${m}m ago`;
-  const h = Math.floor(m / 60);
-  if (h < 24) return `${h}h ago`;
-  const d = Math.floor(h / 24);
-  if (d < 7) return `${d}d ago`;
-  return new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric" });
-}
-
-function formatNum(n: number): string {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
-  return String(n);
+async function fetchPost(postId: string) {
+  const { data } = await supabase
+    .from("posts")
+    .select("*, profiles(*)")
+    .eq("id", postId)
+    .single();
+  return data;
 }
 
 function Avatar({ name, avatarUrl, size }: { name: string; avatarUrl?: string | null; size: number }) {
   const [err, setErr] = useState(false);
-  const initials = name.split(" ").map((w) => w[0]).join("").slice(0, 2).toUpperCase();
+  const initials = name.split(" ").map(w => w[0]).join("").slice(0, 2).toUpperCase();
   const hue = name.split("").reduce((a, c) => a + c.charCodeAt(0), 0) % 360;
   if (avatarUrl && !err) {
-    return (
-      <Image
-        source={{ uri: resolveMediaUrl(avatarUrl) }}
-        style={{ width: size, height: size, borderRadius: size / 2 }}
-        onError={() => setErr(true)}
-      />
-    );
+    return <Image source={{ uri: resolveMediaUrl(avatarUrl) }}
+      style={{ width: size, height: size, borderRadius: size / 2 }} onError={() => setErr(true)} />;
   }
   return (
-    <View style={{
-      width: size, height: size, borderRadius: size / 2,
-      backgroundColor: `hsl(${hue},55%,58%)`,
-      alignItems: "center", justifyContent: "center",
-    }}>
+    <View style={{ width: size, height: size, borderRadius: size / 2,
+      backgroundColor: `hsl(${hue},55%,45%)`, alignItems: "center", justifyContent: "center" }}>
       <Text style={{ color: "#fff", fontSize: size * 0.38, fontWeight: "700" }}>{initials}</Text>
     </View>
   );
 }
 
-function HighlightedText({ text, style }: { text: string; style: any }) {
-  const parts = text.split(/(\B[#@]\w+)/g);
-  return (
-    <Text style={style}>
-      {parts.map((part, i) => (
-        <Text key={i} style={part.startsWith("#") ? { color: "#7c3aed" } : part.startsWith("@") ? { color: "#0ea5e9" } : undefined}>
-          {part}
-        </Text>
-      ))}
-    </Text>
-  );
-}
-
-export default function PostScreen() {
+export default function PostDetailScreen() {
   const { postId } = useLocalSearchParams<{ postId: string }>();
+  const { user } = useAuth();
   const colors = useColors();
   const insets = useSafeAreaInsets();
-  const qc = useQueryClient();
   const router = useRouter();
-  const { user: me } = useAuth();
+  const qc = useQueryClient();
+
   const [commentText, setCommentText] = useState("");
-  const [optimisticLike, setOptimisticLike] = useState<boolean | null>(null);
-  const [optimisticCount, setOptimisticCount] = useState<number | null>(null);
-  const [optimisticSave, setOptimisticSave] = useState<boolean | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+  const [isLiked, setIsLiked] = useState(false);
+  const [isSaved, setIsSaved] = useState(false);
 
-  const { data: post, isLoading: postLoading } = useGetPost(
-    postId as string,
-    { query: { enabled: !!postId, queryKey: getGetPostQueryKey(postId as string) } },
-  );
-  const { data: commentsPage, isLoading: commentsLoading } = useGetComments(
-    postId as string,
-    undefined,
-    { query: { enabled: !!postId, queryKey: getGetCommentsQueryKey(postId as string) } },
-  );
-  const createComment = useCreateComment();
-  const likePost = useLikePost();
-  const unlikePost = useUnlikePost();
-  const savePost = useSavePost();
-  const unsavePost = useUnsavePost();
+  const { data: post, isLoading: postLoading } = useQuery({
+    queryKey: ["post", postId],
+    queryFn: () => fetchPost(postId as string),
+    enabled: !!postId,
+  });
 
-  const isLiked = optimisticLike !== null ? optimisticLike : (post?.isLiked ?? false);
-  const likesCount = optimisticCount !== null ? optimisticCount : (post?.likesCount ?? 0);
-  const isSaved = optimisticSave !== null ? optimisticSave : (post?.isSaved ?? false);
+  const { data: comments = [] } = useQuery({
+    queryKey: ["post-comments", postId],
+    queryFn: () => fetchComments(postId as string),
+    enabled: !!postId,
+  });
 
-  const handleLike = () => {
-    if (!postId) return;
-    const next = !isLiked;
-    setOptimisticLike(next);
-    setOptimisticCount(likesCount + (next ? 1 : -1));
-    const mut = next ? likePost : unlikePost;
-    mut.mutate({ postId: postId as string }, {
-      onSuccess: () => {
-        qc.invalidateQueries({ queryKey: getGetPostQueryKey(postId as string) });
-        qc.invalidateQueries({ queryKey: getGetFeedQueryKey() });
-        setOptimisticLike(null);
-        setOptimisticCount(null);
-      },
-      onError: () => { setOptimisticLike(null); setOptimisticCount(null); },
-    });
+  React.useEffect(() => {
+    if (post && user?.id) {
+      supabase.from("likes").select("user_id").eq("user_id", user.id).eq("post_id", post.id).maybeSingle()
+        .then(({ data }) => setIsLiked(!!data));
+      supabase.from("saves").select("user_id").eq("user_id", user.id).eq("post_id", post.id).maybeSingle()
+        .then(({ data }) => setIsSaved(!!data));
+    }
+  }, [post?.id, user?.id]);
+
+  const handleLike = async () => {
+    if (!user?.id || !post) return;
+    const next = !isLiked; setIsLiked(next);
+    const fn = next ? likePost : unlikePost;
+    await fn(user.id, post.id);
+    qc.invalidateQueries({ queryKey: ["post", postId] });
   };
 
-  const handleSave = () => {
-    if (!postId) return;
-    const next = !isSaved;
-    setOptimisticSave(next);
-    const mut = next ? savePost : unsavePost;
-    mut.mutate({ postId: postId as string }, {
-      onSuccess: () => setOptimisticSave(null),
-      onError: () => setOptimisticSave(null),
-    });
+  const handleSave = async () => {
+    if (!user?.id || !post) return;
+    const next = !isSaved; setIsSaved(next);
+    const fn = next ? savePost : unsavePost;
+    await fn(user.id, post.id);
   };
 
-  const handleComment = () => {
-    if (!commentText.trim() || !postId) return;
-    createComment.mutate(
-      { postId: postId as string, data: { content: commentText.trim() } },
-      {
-        onSuccess: () => {
-          setCommentText("");
-          qc.invalidateQueries({ queryKey: getGetCommentsQueryKey(postId as string) });
-          qc.invalidateQueries({ queryKey: getGetPostQueryKey(postId as string) });
-        },
-      },
-    );
+  const submitComment = async () => {
+    if (!commentText.trim() || !user?.id || !post) return;
+    setSubmitting(true);
+    try {
+      await createComment(post.id, user.id, commentText.trim());
+      setCommentText("");
+      qc.invalidateQueries({ queryKey: ["post-comments", postId] });
+      qc.invalidateQueries({ queryKey: ["post", postId] });
+    } finally { setSubmitting(false); }
   };
 
-  if (postLoading) {
-    return (
-      <View style={[styles.center, { backgroundColor: colors.background }]}>
-        <ActivityIndicator color={colors.primary} />
-      </View>
-    );
-  }
+  if (postLoading) return <View style={{ flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: colors.background }}><ActivityIndicator color="#7c3aed" /></View>;
+  if (!post) return <View style={{ flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: colors.background }}><Text style={{ color: colors.mutedForeground }}>Post not found</Text></View>;
 
-  if (!post) {
-    return (
-      <View style={[styles.center, { backgroundColor: colors.background }]}>
-        <Text style={{ color: colors.foreground }}>Post not found</Text>
-      </View>
-    );
-  }
-
-  const mediaUrls: string[] = Array.isArray(post.mediaUrls)
-    ? post.mediaUrls.map(resolveMediaUrl)
-    : [];
-  const mediaType = post.mediaType && post.mediaType !== "null" ? post.mediaType : null;
-  const comments = commentsPage?.items ?? [];
-
-  const PostHeader = (
-    <View>
-      {/* Author row */}
-      <Pressable
-        onPress={() => router.push(`/user/${post.author.id}`)}
-        style={[styles.authorRow, { borderBottomColor: colors.border }]}
-      >
-        <Avatar name={post.author.displayName} avatarUrl={post.author.avatarUrl} size={44} />
-        <View style={{ flex: 1 }}>
-          <Text style={[styles.authorName, { color: colors.foreground }]}>{post.author.displayName}</Text>
-          <Text style={[styles.authorMeta, { color: colors.mutedForeground }]}>
-            @{post.author.username} · {timeAgo(post.createdAt)}
-          </Text>
-        </View>
-        {(post as any).visibility && (post as any).visibility !== "public" && (
-          <View style={[styles.visibilityBadge, { backgroundColor: colors.secondary }]}>
-            <Feather
-              name={(post as any).visibility === "followers" ? "users" : "lock"}
-              size={12}
-              color={colors.mutedForeground}
-            />
-          </View>
-        )}
-      </Pressable>
-
-      {/* Content */}
-      <View style={styles.contentBlock}>
-        <HighlightedText
-          text={post.content}
-          style={[styles.postContent, { color: colors.foreground }]}
-        />
-      </View>
-
-      {/* Media */}
-      {mediaUrls.length > 0 && (
-        <View style={styles.mediaBlock}>
-          {mediaType === "video" ? (
-            <Video
-              source={{ uri: mediaUrls[0] }}
-              style={styles.videoPlayer}
-              resizeMode={ResizeMode.COVER}
-              shouldPlay={false}
-              isLooping={false}
-              useNativeControls
-            />
-          ) : mediaUrls.length === 1 ? (
-            <Image source={{ uri: mediaUrls[0] }} style={styles.singleImage} resizeMode="cover" />
-          ) : (
-            <View style={styles.gridWrap}>
-              {mediaUrls.slice(0, 4).map((url, i) => (
-                <View key={i} style={[styles.gridItem, { backgroundColor: colors.secondary }]}>
-                  <Image source={{ uri: url }} style={StyleSheet.absoluteFill} resizeMode="cover" />
-                  {i === 3 && mediaUrls.length > 4 && (
-                    <View style={styles.moreOverlay}>
-                      <Text style={styles.moreText}>+{mediaUrls.length - 4}</Text>
-                    </View>
-                  )}
-                </View>
-              ))}
-            </View>
-          )}
-        </View>
-      )}
-
-      {/* Stats row */}
-      <View style={[styles.statsRow, { borderColor: colors.border }]}>
-        <View style={styles.statItem}>
-          <Feather name="eye" size={14} color={colors.mutedForeground} />
-          <Text style={[styles.statText, { color: colors.mutedForeground }]}>{formatNum((post as any).viewsCount ?? 0)} views</Text>
-        </View>
-        <View style={styles.statItem}>
-          <Feather name="message-circle" size={14} color={colors.mutedForeground} />
-          <Text style={[styles.statText, { color: colors.mutedForeground }]}>{formatNum(post.commentsCount)} comments</Text>
-        </View>
-        <View style={styles.statItem}>
-          <Feather name="repeat" size={14} color={colors.mutedForeground} />
-          <Text style={[styles.statText, { color: colors.mutedForeground }]}>{formatNum(post.sharesCount ?? 0)} shares</Text>
-        </View>
-      </View>
-
-      {/* Action row */}
-      <View style={[styles.actionsRow, { borderColor: colors.border }]}>
-        <Pressable onPress={handleLike} style={styles.actionBtn} hitSlop={10}>
-          <Feather name="heart" size={22} color={isLiked ? "#ef4444" : colors.mutedForeground} />
-          <Text style={[styles.actionCount, { color: isLiked ? "#ef4444" : colors.mutedForeground }]}>
-            {formatNum(likesCount)}
-          </Text>
-        </Pressable>
-        <Pressable onPress={handleSave} style={styles.actionBtn} hitSlop={10}>
-          <Feather name="bookmark" size={22} color={isSaved ? colors.primary : colors.mutedForeground} />
-        </Pressable>
-        <Pressable style={styles.actionBtn} hitSlop={10}>
-          <Feather name="share-2" size={22} color={colors.mutedForeground} />
-        </Pressable>
-      </View>
-
-      {/* Comments section label */}
-      <View style={[styles.commentsLabel, { borderBottomColor: colors.border }]}>
-        <Text style={[styles.commentsTitle, { color: colors.foreground }]}>Comments</Text>
-        {commentsLoading && <ActivityIndicator size="small" color={colors.primary} />}
-      </View>
-    </View>
-  );
+  const profile = post.profiles as Profile | undefined;
+  const mediaUrls = (post.media_urls ?? []).map(resolveMediaUrl).filter(Boolean);
+  const isVideo = post.media_type === "video";
+  const aspectRatio = post.media_width && post.media_height ? post.media_width / post.media_height : 1;
 
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
-      <Stack.Screen options={{ title: "Post", headerBackTitle: "" }} />
-      <FlatList
-        data={comments}
-        keyExtractor={(c) => c.id}
-        ListHeaderComponent={PostHeader}
-        ListEmptyComponent={
-          !commentsLoading ? (
-            <View style={{ padding: 24, alignItems: "center", gap: 8 }}>
-              <Feather name="message-circle" size={28} color={colors.mutedForeground} />
-              <Text style={{ color: colors.mutedForeground, fontSize: 14 }}>No comments yet. Be the first!</Text>
-            </View>
-          ) : null
-        }
-        renderItem={({ item }) => (
-          <View style={[styles.commentCard, { borderBottomColor: colors.border }]}>
-            <Avatar name={item.author.displayName} avatarUrl={item.author.avatarUrl} size={36} />
-            <View style={styles.commentBody}>
-              <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-                <Text style={[styles.commentAuthor, { color: colors.foreground }]}>{item.author.displayName}</Text>
-                <Text style={[styles.commentTime, { color: colors.mutedForeground }]}>{timeAgo(item.createdAt)}</Text>
-              </View>
-              <HighlightedText
-                text={item.content}
-                style={[styles.commentContent, { color: colors.foreground }]}
-              />
-            </View>
+      <Stack.Screen options={{ headerShown: false }} />
+      <View style={[styles.header, { paddingTop: insets.top + 8, borderBottomColor: colors.border }]}>
+        <Pressable onPress={() => router.back()} hitSlop={8}><Feather name="arrow-left" size={22} color={colors.foreground} /></Pressable>
+        <Text style={[styles.headerTitle, { color: colors.foreground }]}>Post</Text>
+        <View style={{ width: 30 }} />
+      </View>
+
+      <ScrollView contentContainerStyle={{ paddingBottom: insets.bottom + 80 }}>
+        {/* Author */}
+        <View style={styles.authorRow}>
+          <Avatar name={profile?.display_name ?? "U"} avatarUrl={profile?.avatar_url} size={42} />
+          <View style={{ flex: 1, marginLeft: 10 }}>
+            <Text style={[styles.authorName, { color: colors.foreground }]}>{profile?.display_name ?? "User"}</Text>
+            <Text style={[styles.authorMeta, { color: colors.mutedForeground }]}>@{profile?.username} · {timeAgo(post.created_at)}</Text>
+          </View>
+        </View>
+
+        {post.content && <Text style={[styles.content, { color: colors.foreground }]}>{post.content}</Text>}
+
+        {/* Media */}
+        {mediaUrls.length > 0 && (
+          <View style={[styles.media, { aspectRatio: Math.min(Math.max(aspectRatio, 0.5), 2) }]}>
+            {isVideo ? (
+              <Video source={{ uri: mediaUrls[0] }} style={StyleSheet.absoluteFill}
+                resizeMode={ResizeMode.CONTAIN} shouldPlay={false} useNativeControls isLooping />
+            ) : (
+              <Image source={{ uri: mediaUrls[0] }} style={StyleSheet.absoluteFill} resizeMode="contain" />
+            )}
           </View>
         )}
-        showsVerticalScrollIndicator={false}
-        contentContainerStyle={{ paddingBottom: 100 }}
-      />
-      <KeyboardAvoidingView behavior="padding" keyboardVerticalOffset={90}>
-        <View style={[styles.inputRow, { borderTopColor: colors.border, backgroundColor: colors.background, paddingBottom: insets.bottom }]}>
-          <TextInput
-            style={[styles.input, { color: colors.foreground, backgroundColor: colors.secondary }]}
-            placeholder="Add a comment…"
-            placeholderTextColor={colors.mutedForeground}
-            value={commentText}
-            onChangeText={setCommentText}
-            multiline
-            maxLength={500}
-          />
-          <Pressable
-            onPress={handleComment}
-            disabled={!commentText.trim() || createComment.isPending}
-            style={({ pressed }) => [styles.sendBtn, { opacity: !commentText.trim() || createComment.isPending ? 0.4 : pressed ? 0.7 : 1 }]}
-          >
-            <Feather name="send" size={20} color={colors.primary} />
+
+        {/* Actions */}
+        <View style={[styles.actions, { borderColor: colors.border }]}>
+          <Pressable onPress={handleLike} style={styles.actionBtn}>
+            <Feather name="heart" size={22} color={isLiked ? "#ef4444" : colors.mutedForeground} />
+            <Text style={[styles.actionCount, { color: colors.mutedForeground }]}>{formatCount(post.likes_count ?? 0)}</Text>
+          </Pressable>
+          <View style={styles.actionBtn}>
+            <Feather name="message-circle" size={22} color={colors.mutedForeground} />
+            <Text style={[styles.actionCount, { color: colors.mutedForeground }]}>{formatCount(post.comments_count ?? 0)}</Text>
+          </View>
+          <Pressable style={styles.actionBtn}>
+            <Feather name="share-2" size={20} color={colors.mutedForeground} />
+          </Pressable>
+          <Pressable onPress={handleSave} style={{ marginLeft: "auto" }}>
+            <Feather name="bookmark" size={22} color={isSaved ? colors.primary : colors.mutedForeground} />
           </Pressable>
         </View>
-      </KeyboardAvoidingView>
+
+        {/* Comments */}
+        <View style={[styles.commentsSection, { borderTopColor: colors.border }]}>
+          <Text style={[styles.commentsTitle, { color: colors.foreground }]}>Comments</Text>
+          {(comments as Comment[]).map(c => {
+            const cp = c.profiles as Profile | undefined;
+            return (
+              <View key={c.id} style={styles.commentRow}>
+                <Avatar name={cp?.display_name ?? "U"} avatarUrl={cp?.avatar_url} size={32} />
+                <View style={[styles.commentBubble, { backgroundColor: colors.secondary }]}>
+                  <Text style={[styles.commentAuthor, { color: colors.primary }]}>{cp?.username ?? "user"}</Text>
+                  <Text style={[styles.commentText, { color: colors.foreground }]}>{c.content}</Text>
+                  <Text style={[styles.commentTime, { color: colors.mutedForeground }]}>{timeAgo(c.created_at)}</Text>
+                </View>
+              </View>
+            );
+          })}
+          {(comments as Comment[]).length === 0 && (
+            <Text style={{ color: colors.mutedForeground, textAlign: "center", paddingVertical: 20 }}>No comments yet</Text>
+          )}
+        </View>
+      </ScrollView>
+
+      {/* Comment input */}
+      <View style={[styles.commentInputBar, { borderTopColor: colors.border, backgroundColor: colors.background, paddingBottom: insets.bottom + 4 }]}>
+        <TextInput
+          style={[styles.commentInput, { color: colors.foreground, backgroundColor: colors.secondary, borderColor: colors.border }]}
+          placeholder="Add a comment..." placeholderTextColor={colors.mutedForeground}
+          value={commentText} onChangeText={setCommentText}
+        />
+        <Pressable onPress={submitComment} disabled={submitting || !commentText.trim()}
+          style={[styles.sendBtn, { backgroundColor: commentText.trim() ? "#7c3aed" : colors.muted }]}>
+          {submitting ? <ActivityIndicator color="#fff" size="small" /> : <Feather name="send" size={15} color="#fff" />}
+        </Pressable>
+      </View>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
-  center: { flex: 1, alignItems: "center", justifyContent: "center" },
-  authorRow: { flexDirection: "row", alignItems: "center", gap: 12, padding: 16, borderBottomWidth: StyleSheet.hairlineWidth },
+  header: { flexDirection: "row", alignItems: "center", paddingHorizontal: 16, paddingVertical: 12, borderBottomWidth: StyleSheet.hairlineWidth },
+  headerTitle: { flex: 1, textAlign: "center", fontSize: 16, fontWeight: "700" },
+  authorRow: { flexDirection: "row", alignItems: "center", padding: 14 },
   authorName: { fontSize: 15, fontWeight: "700" },
-  authorMeta: { fontSize: 13, marginTop: 1 },
-  visibilityBadge: { padding: 6, borderRadius: 12 },
-  contentBlock: { paddingHorizontal: 16, paddingVertical: 14 },
-  postContent: { fontSize: 17, lineHeight: 26 },
-  mediaBlock: { marginHorizontal: 16, marginBottom: 14, borderRadius: 14, overflow: "hidden" },
-  videoPlayer: { width: "100%", height: 260, borderRadius: 14 },
-  singleImage: { width: "100%", height: 280, borderRadius: 14 },
-  gridWrap: { flexDirection: "row", flexWrap: "wrap", gap: 3 },
-  gridItem: { width: "49%", height: 160, borderRadius: 8, overflow: "hidden", position: "relative" },
-  moreOverlay: { ...StyleSheet.absoluteFillObject, backgroundColor: "rgba(0,0,0,0.55)", alignItems: "center", justifyContent: "center" },
-  moreText: { color: "#fff", fontSize: 22, fontWeight: "700" },
-  statsRow: { flexDirection: "row", paddingHorizontal: 16, paddingVertical: 10, gap: 20, borderTopWidth: StyleSheet.hairlineWidth, borderBottomWidth: StyleSheet.hairlineWidth },
-  statItem: { flexDirection: "row", alignItems: "center", gap: 5 },
-  statText: { fontSize: 13 },
-  actionsRow: { flexDirection: "row", alignItems: "center", paddingHorizontal: 16, paddingVertical: 12, gap: 24, borderBottomWidth: StyleSheet.hairlineWidth },
-  actionBtn: { flexDirection: "row", alignItems: "center", gap: 6 },
-  actionCount: { fontSize: 14, fontWeight: "600" },
-  commentsLabel: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 16, paddingVertical: 12, borderBottomWidth: StyleSheet.hairlineWidth },
-  commentsTitle: { fontSize: 16, fontWeight: "700" },
-  commentCard: { flexDirection: "row", gap: 10, paddingHorizontal: 16, paddingVertical: 12, borderBottomWidth: StyleSheet.hairlineWidth },
-  commentBody: { flex: 1 },
-  commentAuthor: { fontSize: 14, fontWeight: "700" },
-  commentTime: { fontSize: 12 },
-  commentContent: { fontSize: 14, lineHeight: 20, marginTop: 3 },
-  inputRow: { flexDirection: "row", alignItems: "center", paddingHorizontal: 12, paddingTop: 10, borderTopWidth: StyleSheet.hairlineWidth, gap: 8 },
-  input: { flex: 1, borderRadius: 22, paddingHorizontal: 16, paddingVertical: 10, fontSize: 15, maxHeight: 100 },
-  sendBtn: { padding: 10 },
+  authorMeta: { fontSize: 12, marginTop: 1 },
+  content: { paddingHorizontal: 14, paddingBottom: 12, fontSize: 16, lineHeight: 24 },
+  media: { width: "100%", backgroundColor: "#000" },
+  actions: { flexDirection: "row", alignItems: "center", paddingHorizontal: 14, paddingVertical: 12, borderTopWidth: StyleSheet.hairlineWidth, borderBottomWidth: StyleSheet.hairlineWidth },
+  actionBtn: { flexDirection: "row", alignItems: "center", gap: 5, marginRight: 18 },
+  actionCount: { fontSize: 13, fontWeight: "600" },
+  commentsSection: { paddingHorizontal: 14, paddingTop: 14, borderTopWidth: StyleSheet.hairlineWidth },
+  commentsTitle: { fontSize: 16, fontWeight: "700", marginBottom: 14 },
+  commentRow: { flexDirection: "row", gap: 10, marginBottom: 12 },
+  commentBubble: { flex: 1, borderRadius: 14, padding: 10 },
+  commentAuthor: { fontSize: 13, fontWeight: "700", marginBottom: 2 },
+  commentText: { fontSize: 14, lineHeight: 20 },
+  commentTime: { fontSize: 11, marginTop: 4 },
+  commentInputBar: { flexDirection: "row", gap: 10, paddingHorizontal: 12, paddingTop: 10, borderTopWidth: StyleSheet.hairlineWidth },
+  commentInput: { flex: 1, borderWidth: 1.5, borderRadius: 22, paddingHorizontal: 14, paddingVertical: 10, fontSize: 15 },
+  sendBtn: { width: 40, height: 40, borderRadius: 20, alignItems: "center", justifyContent: "center" },
 });

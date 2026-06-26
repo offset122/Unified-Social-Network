@@ -1,17 +1,8 @@
 import React, { useState, useCallback, useRef, useEffect } from "react";
 import {
-  View,
-  Text,
-  StyleSheet,
-  Pressable,
-  FlatList,
-  ActivityIndicator,
-  Platform,
-  Dimensions,
-  StatusBar,
-  Share,
-  Animated,
-  Image,
+  View, Text, StyleSheet, Pressable, FlatList, ActivityIndicator,
+  Platform, Dimensions, StatusBar, Share, Animated, Image, Modal,
+  TextInput, Alert,
 } from "react-native";
 import { Video, ResizeMode, AVPlaybackStatus } from "expo-av";
 import { LinearGradient } from "expo-linear-gradient";
@@ -19,366 +10,283 @@ import { Feather } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { router } from "expo-router";
 import { Link } from "expo-router";
-import {
-  useGetReels,
-  useLikePost,
-  useUnlikePost,
-  getGetReelsQueryKey,
-} from "@workspace/api-client-react";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/lib/auth";
+import { useColors } from "@/hooks/useColors";
+import {
+  fetchReels, likePost, unlikePost, savePost, unsavePost,
+  createComment, fetchComments, resolveMediaUrl, formatCount, timeAgo,
+  type Post, type Comment, type Profile,
+} from "@/lib/db";
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get("window");
 const REEL_HEIGHT = Platform.OS === "web" ? 600 : SCREEN_HEIGHT;
 
-const BASE_URL = process.env.EXPO_PUBLIC_DOMAIN
-  ? `https://${process.env.EXPO_PUBLIC_DOMAIN}`
-  : "";
-
-function resolveMediaUrl(path: string): string {
-  if (!path) return path;
-  if (path.startsWith("http://") || path.startsWith("https://")) return path;
-  const apiPath = path.startsWith("/objects/") ? `/api/storage${path}` : path;
-  return `${BASE_URL}${apiPath}`;
-}
-
-type ReelPost = {
-  id: string;
-  content: string;
-  mediaUrls: string[];
-  mediaType: string | null;
-  likesCount: number;
-  commentsCount: number;
-  sharesCount?: number;
-  isLiked: boolean;
-  isSaved: boolean;
-  author: {
-    id: string;
-    username: string;
-    displayName: string;
-    avatarUrl: string | null;
-  };
-  createdAt: string;
-};
-
-// ─── Avatar ───────────────────────────────────────────────────────────────────
-
-function Avatar({
-  name,
-  avatarUrl,
-  size,
-}: {
-  name: string;
-  avatarUrl?: string | null;
-  size: number;
-}) {
-  const initials = name
-    .split(" ")
-    .map((w) => w[0])
-    .join("")
-    .slice(0, 2)
-    .toUpperCase();
-  const hue =
-    name.split("").reduce((acc, c) => acc + c.charCodeAt(0), 0) % 360;
-  const bg = `hsl(${hue}, 55%, 45%)`;
-
-  if (avatarUrl) {
-    return (
-      <Image
-        source={{ uri: resolveMediaUrl(avatarUrl) }}
-        style={{ width: size, height: size, borderRadius: size / 2 }}
-      />
-    );
+function Avatar({ name, avatarUrl, size }: { name: string; avatarUrl?: string | null; size: number }) {
+  const [err, setErr] = useState(false);
+  const initials = name.split(" ").map(w => w[0]).join("").slice(0, 2).toUpperCase();
+  const hue = name.split("").reduce((a, c) => a + c.charCodeAt(0), 0) % 360;
+  if (avatarUrl && !err) {
+    return <Image source={{ uri: resolveMediaUrl(avatarUrl) }}
+      style={{ width: size, height: size, borderRadius: size / 2 }}
+      onError={() => setErr(true)} />;
   }
   return (
-    <View
-      style={{
-        width: size,
-        height: size,
-        borderRadius: size / 2,
-        backgroundColor: bg,
-        alignItems: "center",
-        justifyContent: "center",
-        borderWidth: 2,
-        borderColor: "rgba(255,255,255,0.6)",
-      }}
-    >
-      <Text
-        style={{ color: "#fff", fontSize: size * 0.36, fontWeight: "700" }}
-      >
-        {initials}
-      </Text>
+    <View style={{ width: size, height: size, borderRadius: size / 2,
+      backgroundColor: `hsl(${hue},55%,45%)`, alignItems: "center", justifyContent: "center",
+      borderWidth: 2, borderColor: "rgba(255,255,255,0.6)" }}>
+      <Text style={{ color: "#fff", fontSize: size * 0.36, fontWeight: "700" }}>{initials}</Text>
     </View>
   );
 }
 
-// ─── Progress Bar ─────────────────────────────────────────────────────────────
-
-function VideoProgress({
-  progress,
-  duration,
-}: {
-  progress: number;
-  duration: number;
-}) {
+function VideoProgress({ progress, duration }: { progress: number; duration: number }) {
   const pct = duration > 0 ? Math.min(progress / duration, 1) : 0;
   return (
-    <View style={styles.progressBar}>
-      <View style={[styles.progressFill, { width: `${pct * 100}%` }]} />
+    <View style={S.progressBar}>
+      <View style={[S.progressFill, { width: `${pct * 100}%` }]} />
     </View>
   );
 }
 
-// ─── Animated Like ────────────────────────────────────────────────────────────
+// ─── Comment Sheet for Reels ──────────────────────────────────────────────────
 
-function AnimatedLike({
-  isLiked,
-  count,
-  onPress,
-}: {
-  isLiked: boolean;
-  count: number;
-  onPress: () => void;
+function ReelComments({ postId, visible, onClose, userId }: {
+  postId: string; visible: boolean; onClose: () => void; userId: string;
 }) {
-  const scale = useRef(new Animated.Value(1)).current;
+  const qc = useQueryClient();
+  const [text, setText] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const { data: comments = [] } = useQuery({
+    queryKey: ["reel-comments", postId],
+    queryFn: () => fetchComments(postId),
+    enabled: visible,
+  });
 
-  const handlePress = () => {
-    Animated.sequence([
-      Animated.spring(scale, { toValue: 1.5, useNativeDriver: true, speed: 80 }),
-      Animated.spring(scale, { toValue: 1, useNativeDriver: true, speed: 80 }),
-    ]).start();
-    onPress();
+  const submit = async () => {
+    if (!text.trim() || !userId) return;
+    setSubmitting(true);
+    try {
+      await createComment(postId, userId, text.trim());
+      setText("");
+      qc.invalidateQueries({ queryKey: ["reel-comments", postId] });
+      qc.invalidateQueries({ queryKey: ["reels"] });
+    } finally { setSubmitting(false); }
   };
 
   return (
-    <Pressable onPress={handlePress} style={styles.sideBtn}>
-      <Animated.View style={{ transform: [{ scale }] }}>
-        <Feather
-          name="heart"
-          size={30}
-          color={isLiked ? "#ff3b5c" : "#fff"}
-          style={isLiked ? styles.likedIcon : styles.actionIcon}
+    <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}>
+      <View style={{ flex: 1, backgroundColor: "#18181b" }}>
+        <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", padding: 16, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: "#3f3f46" }}>
+          <Text style={{ color: "#fff", fontSize: 17, fontWeight: "700" }}>Comments</Text>
+          <Pressable onPress={onClose} hitSlop={8}><Feather name="x" size={20} color="#fff" /></Pressable>
+        </View>
+        <FlatList
+          data={comments as Comment[]}
+          keyExtractor={c => c.id}
+          contentContainerStyle={{ padding: 16, gap: 14 }}
+          renderItem={({ item: c }) => (
+            <View style={{ flexDirection: "row", gap: 10 }}>
+              <Avatar name={c.profiles?.display_name ?? "U"} avatarUrl={c.profiles?.avatar_url} size={34} />
+              <View style={{ flex: 1, backgroundColor: "#27272a", borderRadius: 14, padding: 10 }}>
+                <Text style={{ color: "#a78bfa", fontSize: 13, fontWeight: "700" }}>{c.profiles?.username ?? "user"}</Text>
+                <Text style={{ color: "#fff", fontSize: 14, marginTop: 2 }}>{c.content}</Text>
+                <Text style={{ color: "#71717a", fontSize: 11, marginTop: 4 }}>{timeAgo(c.created_at)}</Text>
+              </View>
+            </View>
+          )}
+          ListEmptyComponent={<Text style={{ textAlign: "center", color: "#71717a", marginTop: 40 }}>No comments yet</Text>}
         />
-      </Animated.View>
-      <Text style={styles.sideCount}>{formatCount(count)}</Text>
-    </Pressable>
+        <View style={{ flexDirection: "row", gap: 10, padding: 12, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: "#3f3f46" }}>
+          <TextInput
+            style={{ flex: 1, backgroundColor: "#27272a", borderRadius: 20, paddingHorizontal: 14, paddingVertical: 10, color: "#fff", fontSize: 14 }}
+            placeholder="Add a comment..." placeholderTextColor="#71717a"
+            value={text} onChangeText={setText}
+          />
+          <Pressable onPress={submit} disabled={submitting || !text.trim()}
+            style={{ width: 38, height: 38, borderRadius: 19, backgroundColor: text.trim() ? "#7c3aed" : "#3f3f46", alignItems: "center", justifyContent: "center" }}>
+            {submitting ? <ActivityIndicator color="#fff" size="small" /> : <Feather name="send" size={15} color="#fff" />}
+          </Pressable>
+        </View>
+      </View>
+    </Modal>
   );
-}
-
-function formatCount(n: number): string {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
-  return String(n);
 }
 
 // ─── Reel Card ────────────────────────────────────────────────────────────────
 
-function ReelCard({
-  item,
-  isVisible,
-  index,
-}: {
-  item: ReelPost;
-  isVisible: boolean;
-  index: number;
-}) {
+function ReelCard({ item, isVisible }: { item: Post; isVisible: boolean }) {
+  const { user } = useAuth();
   const qc = useQueryClient();
-  const likePost = useLikePost();
-  const unlikePost = useUnlikePost();
   const videoRef = useRef<Video>(null);
 
   const [isMuted, setIsMuted] = useState(false);
   const [isPaused, setIsPaused] = useState(false);
   const [position, setPosition] = useState(0);
   const [duration, setDuration] = useState(0);
-  const [isLiked, setIsLiked] = useState(item.isLiked);
-  const [likesCount, setLikesCount] = useState(item.likesCount);
-  const [showPauseIcon, setShowPauseIcon] = useState(false);
+  const [isLiked, setIsLiked] = useState(item.is_liked ?? false);
+  const [likesCount, setLikesCount] = useState(item.likes_count);
+  const [isSaved, setIsSaved] = useState(item.is_saved ?? false);
+  const [commentOpen, setCommentOpen] = useState(false);
+  const [commentsCount, setCommentsCount] = useState(item.comments_count);
   const pauseOpacity = useRef(new Animated.Value(0)).current;
+  const likeScale = useRef(new Animated.Value(1)).current;
 
-  const videoUri =
-    item.mediaUrls.length > 0 ? resolveMediaUrl(item.mediaUrls[0]) : null;
+  const profile = item.profiles as Profile | undefined;
+  const videoUri = item.media_urls?.[0] ? resolveMediaUrl(item.media_urls[0]) : null;
 
-  // Pause/play on visibility
+  // Determine video orientation for aspect ratio
+  const videoAspect = item.media_width && item.media_height
+    ? item.media_width / item.media_height
+    : null;
+  const isPortrait = videoAspect !== null && videoAspect < 1;
+  const isLandscape = videoAspect !== null && videoAspect > 1.4;
+
   useEffect(() => {
     if (!videoRef.current) return;
-    if (isVisible && !isPaused) {
-      videoRef.current.playAsync();
-    } else {
-      videoRef.current.pauseAsync();
-    }
+    if (isVisible && !isPaused) videoRef.current.playAsync();
+    else videoRef.current.pauseAsync();
   }, [isVisible, isPaused]);
 
-  const handlePlaybackStatus = (status: AVPlaybackStatus) => {
-    if (!status.isLoaded) return;
-    setPosition(status.positionMillis ?? 0);
-    setDuration(status.durationMillis ?? 0);
-  };
-
   const handleTap = () => {
-    const newPaused = !isPaused;
-    setIsPaused(newPaused);
-    setShowPauseIcon(true);
+    setIsPaused(p => !p);
     Animated.sequence([
       Animated.timing(pauseOpacity, { toValue: 1, duration: 150, useNativeDriver: true }),
-      Animated.delay(600),
+      Animated.delay(500),
       Animated.timing(pauseOpacity, { toValue: 0, duration: 300, useNativeDriver: true }),
-    ]).start(() => setShowPauseIcon(false));
+    ]).start();
   };
 
   const handleLike = () => {
-    const newLiked = !isLiked;
-    setIsLiked(newLiked);
-    setLikesCount((c) => c + (newLiked ? 1 : -1));
-    const mutation = newLiked ? likePost : unlikePost;
-    mutation.mutate(
-      { postId: item.id },
-      {
-        onError: () => {
-          setIsLiked(!newLiked);
-          setLikesCount((c) => c + (newLiked ? -1 : 1));
-        },
-        onSuccess: () =>
-          qc.invalidateQueries({ queryKey: getGetReelsQueryKey() }),
-      },
-    );
+    if (!user?.id) return;
+    const next = !isLiked;
+    setIsLiked(next);
+    setLikesCount(c => c + (next ? 1 : -1));
+    Animated.sequence([
+      Animated.spring(likeScale, { toValue: 1.5, useNativeDriver: true, speed: 80 }),
+      Animated.spring(likeScale, { toValue: 1, useNativeDriver: true, speed: 80 }),
+    ]).start();
+    const fn = next ? likePost : unlikePost;
+    fn(user.id, item.id).catch(() => { setIsLiked(!next); setLikesCount(c => c + (next ? -1 : 1)); });
+  };
+
+  const handleSave = () => {
+    if (!user?.id) return;
+    const next = !isSaved;
+    setIsSaved(next);
+    const fn = next ? savePost : unsavePost;
+    fn(user.id, item.id).catch(() => setIsSaved(!next));
   };
 
   const handleShare = async () => {
     try {
-      await Share.share({
-        message: `Check out this reel by @${item.author.username}: ${item.content}`,
-        url: `${BASE_URL}/post/${item.id}`,
-      });
+      await Share.share({ message: `Check out this reel by @${profile?.username}: ${item.content}` });
     } catch {}
   };
 
-  const hashtags = item.content
-    .split(/\s+/)
-    .filter((w) => w.startsWith("#"))
-    .slice(0, 5);
-  const captionText = item.content
-    .split(/\s+/)
-    .filter((w) => !w.startsWith("#"))
-    .join(" ");
+  const hashtags = (item.content ?? "").split(/\s+/).filter(w => w.startsWith("#")).slice(0, 5);
+  const caption = (item.content ?? "").split(/\s+/).filter(w => !w.startsWith("#")).join(" ");
+
+  // Video display: letterbox for landscape, fullscreen for portrait/square
+  const videoStyle: any = isLandscape
+    ? { ...StyleSheet.absoluteFillObject, height: undefined, top: "50%", transform: [{ translateY: -SCREEN_WIDTH / videoAspect! / 2 }] }
+    : StyleSheet.absoluteFill;
 
   return (
-    <View style={[styles.reelCard, { width: SCREEN_WIDTH, height: REEL_HEIGHT }]}>
-      {/* Video or fallback */}
+    <View style={[S.reelCard, { width: SCREEN_WIDTH, height: REEL_HEIGHT }]}>
       {videoUri ? (
         <Pressable onPress={handleTap} style={StyleSheet.absoluteFill}>
-          <Video
-            ref={videoRef}
-            source={{ uri: videoUri }}
-            style={StyleSheet.absoluteFill}
-            resizeMode={ResizeMode.COVER}
-            isLooping
-            isMuted={isMuted}
-            shouldPlay={isVisible && !isPaused}
-            onPlaybackStatusUpdate={handlePlaybackStatus}
-            useNativeControls={false}
-          />
+          <View style={StyleSheet.absoluteFill}>
+            <Video ref={videoRef} source={{ uri: videoUri }}
+              style={videoStyle}
+              resizeMode={isLandscape ? ResizeMode.CONTAIN : ResizeMode.COVER}
+              isLooping isMuted={isMuted}
+              shouldPlay={isVisible && !isPaused}
+              onPlaybackStatusUpdate={(s: AVPlaybackStatus) => {
+                if (!s.isLoaded) return;
+                setPosition(s.positionMillis ?? 0);
+                setDuration(s.durationMillis ?? 0);
+              }}
+              useNativeControls={false}
+            />
+          </View>
         </Pressable>
       ) : (
-        <View style={styles.noVideoFallback}>
-          <LinearGradient
-            colors={["#1a0533", "#2d1b69", "#0f0a1e"]}
-            style={StyleSheet.absoluteFill}
-          />
-          <Feather name="film" size={56} color="rgba(255,255,255,0.2)" />
+        <LinearGradient colors={["#1a0533", "#2d1b69", "#0f0a1e"]} style={StyleSheet.absoluteFill}>
+          <View style={{ flex: 1, alignItems: "center", justifyContent: "center" }}>
+            <Feather name="film" size={56} color="rgba(255,255,255,0.2)" />
+          </View>
+        </LinearGradient>
+      )}
+
+      <Animated.View style={[S.pauseOverlay, { opacity: pauseOpacity }]}>
+        <Feather name={isPaused ? "pause" : "play"} size={56} color="#fff" />
+      </Animated.View>
+
+      <LinearGradient colors={["rgba(0,0,0,0.45)", "transparent"]} style={S.topGrad} pointerEvents="none" />
+      <LinearGradient colors={["transparent", "rgba(0,0,0,0.8)"]} style={S.bottomGrad} pointerEvents="none" />
+
+      <VideoProgress progress={position} duration={duration} />
+
+      {/* Orientation badge */}
+      {videoAspect && (
+        <View style={S.orientBadge}>
+          <Feather name={isPortrait ? "smartphone" : "monitor"} size={10} color="rgba(255,255,255,0.6)" />
         </View>
       )}
 
-      {/* Pause overlay */}
-      {showPauseIcon && (
-        <Animated.View style={[styles.pauseOverlay, { opacity: pauseOpacity }]}>
-          <Feather name={isPaused ? "pause" : "play"} size={56} color="#fff" />
-        </Animated.View>
-      )}
-
-      {/* Top gradient */}
-      <LinearGradient
-        colors={["rgba(0,0,0,0.5)", "transparent"]}
-        style={styles.topGradient}
-        pointerEvents="none"
-      />
-
-      {/* Bottom gradient */}
-      <LinearGradient
-        colors={["transparent", "rgba(0,0,0,0.75)"]}
-        style={styles.bottomGradient}
-        pointerEvents="none"
-      />
-
-      {/* Progress bar */}
-      <VideoProgress progress={position} duration={duration} />
-
-      {/* Bottom left — author + caption */}
-      <View style={styles.bottomLeft}>
-        <Link href={`/user/${item.author.id}`} asChild>
-          <Pressable style={styles.authorRow}>
-            <Avatar
-              name={item.author.displayName}
-              avatarUrl={item.author.avatarUrl}
-              size={38}
-            />
+      {/* Bottom info */}
+      <View style={S.bottomLeft}>
+        <Link href={`/user/${item.author_id}` as any} asChild>
+          <Pressable style={S.authorRow}>
+            <Avatar name={profile?.display_name ?? "U"} avatarUrl={profile?.avatar_url} size={40} />
             <View style={{ marginLeft: 8 }}>
-              <Text style={styles.authorName}>{item.author.displayName}</Text>
-              <Text style={styles.authorUsername}>@{item.author.username}</Text>
+              <Text style={S.authorName}>{profile?.display_name ?? "User"}</Text>
+              <Text style={S.authorHandle}>@{profile?.username ?? "user"}</Text>
             </View>
           </Pressable>
         </Link>
-
-        {!!captionText && (
-          <Text style={styles.caption} numberOfLines={3}>
-            {captionText}
-          </Text>
-        )}
-
+        {!!caption && <Text style={S.caption} numberOfLines={3}>{caption}</Text>}
         {hashtags.length > 0 && (
-          <View style={styles.hashtagRow}>
-            {hashtags.map((tag, i) => (
-              <Text key={i} style={styles.hashtag}>
-                {tag}
-              </Text>
-            ))}
+          <View style={S.hashtagRow}>
+            {hashtags.map((t, i) => <Text key={i} style={S.hashtag}>{t}</Text>)}
           </View>
         )}
       </View>
 
-      {/* Right side actions */}
-      <View style={styles.sideActions}>
-        <AnimatedLike
-          isLiked={isLiked}
-          count={likesCount}
-          onPress={handleLike}
-        />
-
-        <Pressable
-          style={styles.sideBtn}
-          onPress={() => router.push(`/post/${item.id}`)}
-        >
-          <Feather name="message-circle" size={30} color="#fff" style={styles.actionIcon} />
-          <Text style={styles.sideCount}>{formatCount(item.commentsCount)}</Text>
+      {/* Right actions */}
+      <View style={S.sideActions}>
+        <Pressable onPress={handleLike} style={S.sideBtn}>
+          <Animated.View style={{ transform: [{ scale: likeScale }] }}>
+            <Feather name="heart" size={30} color={isLiked ? "#ff3b5c" : "#fff"}
+              style={isLiked ? { textShadowColor: "#ff3b5c55", textShadowRadius: 8 } : undefined} />
+          </Animated.View>
+          <Text style={S.sideCount}>{formatCount(likesCount)}</Text>
         </Pressable>
 
-        <Pressable style={styles.sideBtn} onPress={handleShare}>
-          <Feather name="share-2" size={28} color="#fff" style={styles.actionIcon} />
-          <Text style={styles.sideCount}>Share</Text>
+        <Pressable onPress={() => setCommentOpen(true)} style={S.sideBtn}>
+          <Feather name="message-circle" size={30} color="#fff" />
+          <Text style={S.sideCount}>{formatCount(commentsCount)}</Text>
         </Pressable>
 
-        <Pressable
-          style={styles.sideBtn}
-          onPress={() => setIsMuted((m) => !m)}
-        >
-          <Feather
-            name={isMuted ? "volume-x" : "volume-2"}
-            size={26}
-            color="#fff"
-            style={styles.actionIcon}
-          />
+        <Pressable onPress={handleShare} style={S.sideBtn}>
+          <Feather name="share-2" size={28} color="#fff" />
+          <Text style={S.sideCount}>Share</Text>
+        </Pressable>
+
+        <Pressable onPress={handleSave} style={S.sideBtn}>
+          <Feather name="bookmark" size={26} color={isSaved ? "#a78bfa" : "#fff"} />
+          <Text style={S.sideCount}>{isSaved ? "Saved" : "Save"}</Text>
+        </Pressable>
+
+        <Pressable onPress={() => setIsMuted(m => !m)} style={S.sideBtn}>
+          <Feather name={isMuted ? "volume-x" : "volume-2"} size={24} color="#fff" />
         </Pressable>
       </View>
+
+      <ReelComments postId={item.id} visible={commentOpen}
+        onClose={() => { setCommentOpen(false); setCommentsCount(c => c); }}
+        userId={user?.id ?? ""} />
     </View>
   );
 }
@@ -386,72 +294,59 @@ function ReelCard({
 // ─── Reels Screen ─────────────────────────────────────────────────────────────
 
 export default function ReelsScreen() {
-  const { isAuthenticated } = useAuth();
+  const { user, isAuthenticated } = useAuth();
   const insets = useSafeAreaInsets();
   const isWeb = Platform.OS === "web";
   const [visibleIndex, setVisibleIndex] = useState(0);
 
-  const { data, isLoading, refetch } = useGetReels();
-  const reels = (data?.items ?? []) as ReelPost[];
+  const { data = [], isLoading, refetch } = useQuery({
+    queryKey: ["reels"],
+    queryFn: () => fetchReels(user?.id ?? ""),
+    enabled: !!user?.id,
+  });
 
   const onViewableItemsChanged = useCallback(({ viewableItems }: any) => {
     const first = viewableItems.find((v: any) => v.isViewable);
     if (first != null) setVisibleIndex(first.index ?? 0);
   }, []);
 
-  const viewabilityConfigCallbackPairs = useRef([
-    {
-      viewabilityConfig: { itemVisiblePercentThreshold: 60 },
-      onViewableItemsChanged,
-    },
-  ]);
+  const viewabilityConfigCallbackPairs = useRef([{
+    viewabilityConfig: { itemVisiblePercentThreshold: 60 },
+    onViewableItemsChanged,
+  }]);
+
+  if (!isAuthenticated) return null;
 
   return (
-    <View style={styles.container}>
+    <View style={S.container}>
       {Platform.OS !== "web" && <StatusBar barStyle="light-content" translucent backgroundColor="transparent" />}
 
-      {/* Header overlay */}
-      <View style={[styles.header, { paddingTop: isWeb ? 16 : insets.top + 4 }]}>
-        <Text style={styles.headerTitle}>Reels</Text>
-        <Pressable
-          onPress={() => router.push("/create")}
-          style={styles.createBtn}
-        >
+      <View style={[S.header, { paddingTop: isWeb ? 16 : insets.top + 4 }]}>
+        <Text style={S.headerTitle}>Reels</Text>
+        <Pressable onPress={() => router.push("/create" as any)} style={S.createBtn}>
           <Feather name="plus" size={20} color="#fff" />
         </Pressable>
       </View>
 
       {isLoading ? (
-        <View style={styles.center}>
-          <ActivityIndicator color="#7c3aed" size="large" />
-        </View>
-      ) : reels.length === 0 ? (
-        <View style={styles.emptyWrap}>
-          <LinearGradient
-            colors={["#1a0533", "#0f0a1e"]}
-            style={StyleSheet.absoluteFill}
-          />
+        <View style={S.center}><ActivityIndicator color="#7c3aed" size="large" /></View>
+      ) : data.length === 0 ? (
+        <View style={S.emptyWrap}>
+          <LinearGradient colors={["#1a0533", "#0f0a1e"]} style={StyleSheet.absoluteFill} />
           <Feather name="film" size={56} color="rgba(255,255,255,0.3)" />
-          <Text style={styles.emptyTitle}>No Reels Yet</Text>
-          <Text style={styles.emptyDesc}>Be the first to share a reel!</Text>
-          <Pressable
-            onPress={() => router.push("/create")}
-            style={styles.createFirstBtn}
-          >
+          <Text style={S.emptyTitle}>No Reels Yet</Text>
+          <Text style={S.emptyDesc}>Be the first to share a reel!</Text>
+          <Pressable onPress={() => router.push("/create" as any)} style={S.createFirstBtn}>
             <Feather name="plus" size={18} color="#fff" />
-            <Text style={styles.createFirstText}>Create Reel</Text>
+            <Text style={S.createFirstText}>Create Reel</Text>
           </Pressable>
         </View>
       ) : (
         <FlatList
-          data={reels}
-          keyExtractor={(item) => item.id}
+          data={data as Post[]}
+          keyExtractor={item => item.id}
           renderItem={({ item, index }) => (
-            <ReelCard
-              item={item}
-              isVisible={visibleIndex === index}
-              index={index}
-            />
+            <ReelCard item={item} isVisible={visibleIndex === index} />
           )}
           snapToInterval={REEL_HEIGHT}
           decelerationRate="fast"
@@ -461,206 +356,39 @@ export default function ReelsScreen() {
           refreshing={isLoading}
           pagingEnabled={Platform.OS !== "web"}
           viewabilityConfigCallbackPairs={viewabilityConfigCallbackPairs.current}
-          getItemLayout={(_, index) => ({
-            length: REEL_HEIGHT,
-            offset: REEL_HEIGHT * index,
-            index,
-          })}
+          getItemLayout={(_, index) => ({ length: REEL_HEIGHT, offset: REEL_HEIGHT * index, index })}
         />
       )}
     </View>
   );
 }
 
-// ─── Styles ───────────────────────────────────────────────────────────────────
-
-const styles = StyleSheet.create({
+const S = StyleSheet.create({
   container: { flex: 1, backgroundColor: "#000" },
-
-  header: {
-    position: "absolute",
-    top: 0,
-    left: 0,
-    right: 0,
-    zIndex: 20,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    paddingHorizontal: 16,
-    paddingBottom: 8,
-  },
-  headerTitle: {
-    color: "#fff",
-    fontSize: 22,
-    fontWeight: "800",
-    letterSpacing: -0.5,
-    textShadowColor: "rgba(0,0,0,0.5)",
-    textShadowOffset: { width: 0, height: 1 },
-    textShadowRadius: 4,
-  },
-  createBtn: {
-    backgroundColor: "#7c3aed",
-    borderRadius: 20,
-    padding: 8,
-  },
-
+  header: { position: "absolute", top: 0, left: 0, right: 0, zIndex: 20, flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 16, paddingBottom: 8 },
+  headerTitle: { color: "#fff", fontSize: 22, fontWeight: "800", letterSpacing: -0.5, textShadowColor: "rgba(0,0,0,0.5)", textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 4 },
+  createBtn: { backgroundColor: "#7c3aed", borderRadius: 20, padding: 8 },
   center: { flex: 1, alignItems: "center", justifyContent: "center" },
-
-  reelCard: {
-    position: "relative",
-    overflow: "hidden",
-    backgroundColor: "#000",
-  },
-
-  noVideoFallback: {
-    ...StyleSheet.absoluteFillObject,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-
-  pauseOverlay: {
-    ...StyleSheet.absoluteFillObject,
-    alignItems: "center",
-    justifyContent: "center",
-    zIndex: 10,
-  },
-
-  topGradient: {
-    position: "absolute",
-    top: 0,
-    left: 0,
-    right: 0,
-    height: 120,
-    zIndex: 5,
-  },
-  bottomGradient: {
-    position: "absolute",
-    bottom: 0,
-    left: 0,
-    right: 0,
-    height: 300,
-    zIndex: 5,
-  },
-
-  progressBar: {
-    position: "absolute",
-    top: 0,
-    left: 0,
-    right: 0,
-    height: 2.5,
-    backgroundColor: "rgba(255,255,255,0.25)",
-    zIndex: 20,
-  },
-  progressFill: {
-    height: "100%",
-    backgroundColor: "#7c3aed",
-  },
-
-  bottomLeft: {
-    position: "absolute",
-    bottom: 80,
-    left: 16,
-    right: 90,
-    zIndex: 10,
-  },
-  authorRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginBottom: 10,
-  },
-  authorName: {
-    color: "#fff",
-    fontWeight: "700",
-    fontSize: 15,
-    textShadowColor: "rgba(0,0,0,0.6)",
-    textShadowOffset: { width: 0, height: 1 },
-    textShadowRadius: 3,
-  },
-  authorUsername: {
-    color: "rgba(255,255,255,0.65)",
-    fontSize: 12,
-  },
-  caption: {
-    color: "#fff",
-    fontSize: 14,
-    lineHeight: 20,
-    marginBottom: 8,
-    textShadowColor: "rgba(0,0,0,0.5)",
-    textShadowOffset: { width: 0, height: 1 },
-    textShadowRadius: 3,
-  },
-  hashtagRow: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 6,
-  },
-  hashtag: {
-    color: "#a78bfa",
-    fontSize: 13,
-    fontWeight: "600",
-  },
-
-  sideActions: {
-    position: "absolute",
-    right: 12,
-    bottom: 80,
-    alignItems: "center",
-    gap: 20,
-    zIndex: 10,
-  },
-  sideBtn: {
-    alignItems: "center",
-    gap: 4,
-  },
-  sideCount: {
-    color: "#fff",
-    fontSize: 12,
-    fontWeight: "600",
-    textShadowColor: "rgba(0,0,0,0.5)",
-    textShadowOffset: { width: 0, height: 1 },
-    textShadowRadius: 3,
-  },
-  actionIcon: {
-    textShadowColor: "rgba(0,0,0,0.5)",
-    textShadowOffset: { width: 0, height: 1 },
-    textShadowRadius: 4,
-  },
-  likedIcon: {
-    textShadowColor: "rgba(255,59,92,0.4)",
-    textShadowOffset: { width: 0, height: 0 },
-    textShadowRadius: 8,
-  },
-
-  emptyWrap: {
-    flex: 1,
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 12,
-  },
-  emptyTitle: {
-    color: "#fff",
-    fontSize: 22,
-    fontWeight: "800",
-    marginTop: 12,
-  },
-  emptyDesc: {
-    color: "rgba(255,255,255,0.5)",
-    fontSize: 15,
-    textAlign: "center",
-  },
-  createFirstBtn: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    backgroundColor: "#7c3aed",
-    paddingHorizontal: 24,
-    paddingVertical: 12,
-    borderRadius: 24,
-    marginTop: 8,
-  },
-  createFirstText: {
-    color: "#fff",
-    fontWeight: "700",
-    fontSize: 15,
-  },
+  reelCard: { position: "relative", overflow: "hidden", backgroundColor: "#000" },
+  pauseOverlay: { ...StyleSheet.absoluteFillObject, alignItems: "center", justifyContent: "center", zIndex: 10 },
+  topGrad: { position: "absolute", top: 0, left: 0, right: 0, height: 120, zIndex: 5 },
+  bottomGrad: { position: "absolute", bottom: 0, left: 0, right: 0, height: 320, zIndex: 5 },
+  progressBar: { position: "absolute", top: 0, left: 0, right: 0, height: 2.5, backgroundColor: "rgba(255,255,255,0.25)", zIndex: 20 },
+  progressFill: { height: "100%", backgroundColor: "#7c3aed" },
+  orientBadge: { position: "absolute", top: 8, right: 8, zIndex: 25, backgroundColor: "rgba(0,0,0,0.4)", borderRadius: 8, padding: 4 },
+  bottomLeft: { position: "absolute", bottom: 80, left: 16, right: 90, zIndex: 10 },
+  authorRow: { flexDirection: "row", alignItems: "center", marginBottom: 10 },
+  authorName: { color: "#fff", fontWeight: "700", fontSize: 15, textShadowColor: "rgba(0,0,0,0.6)", textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 3 },
+  authorHandle: { color: "rgba(255,255,255,0.65)", fontSize: 12 },
+  caption: { color: "#fff", fontSize: 14, lineHeight: 20, marginBottom: 8, textShadowColor: "rgba(0,0,0,0.5)", textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 3 },
+  hashtagRow: { flexDirection: "row", flexWrap: "wrap", gap: 6 },
+  hashtag: { color: "#a78bfa", fontSize: 13, fontWeight: "600" },
+  sideActions: { position: "absolute", right: 12, bottom: 80, alignItems: "center", gap: 22, zIndex: 10 },
+  sideBtn: { alignItems: "center", gap: 4 },
+  sideCount: { color: "#fff", fontSize: 12, fontWeight: "600", textShadowColor: "rgba(0,0,0,0.5)", textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 3 },
+  emptyWrap: { flex: 1, alignItems: "center", justifyContent: "center", gap: 12 },
+  emptyTitle: { color: "#fff", fontSize: 22, fontWeight: "800", marginTop: 12 },
+  emptyDesc: { color: "rgba(255,255,255,0.5)", fontSize: 15, textAlign: "center" },
+  createFirstBtn: { flexDirection: "row", alignItems: "center", gap: 8, backgroundColor: "#7c3aed", paddingHorizontal: 24, paddingVertical: 12, borderRadius: 24, marginTop: 8 },
+  createFirstText: { color: "#fff", fontWeight: "700", fontSize: 15 },
 });

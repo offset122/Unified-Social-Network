@@ -8,36 +8,19 @@ import {
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Stack } from "expo-router";
 import * as SplashScreen from "expo-splash-screen";
-import * as SecureStore from "expo-secure-store";
 import React, { useEffect } from "react";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { KeyboardProvider } from "react-native-keyboard-controller";
 import { SafeAreaProvider } from "react-native-safe-area-context";
-
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { AuthProvider } from "@/lib/auth";
 import { ThemeProvider } from "@/lib/theme";
-import { setBaseUrl, setAuthTokenGetter } from "@workspace/api-client-react";
 
-// Wire up the API base URL for Expo (uses the public domain env var)
-const domain = process.env.EXPO_PUBLIC_DOMAIN;
-if (domain) {
-  setBaseUrl(`https://${domain}`);
-}
-
-// Wire up the auth token getter so every API call sends the session token
-const AUTH_TOKEN_KEY = "auth_session_token";
-setAuthTokenGetter(() => SecureStore.getItemAsync(AUTH_TOKEN_KEY));
-
-// Prevent the splash screen from auto-hiding before asset loading is complete.
 SplashScreen.preventAutoHideAsync();
 
 const queryClient = new QueryClient({
   defaultOptions: {
-    queries: {
-      staleTime: 60_000,
-      retry: 1,
-    },
+    queries: { staleTime: 30_000, retry: 1 },
   },
 });
 
@@ -46,6 +29,10 @@ function RootLayoutNav() {
     <Stack screenOptions={{ headerBackTitle: "Back" }}>
       <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
       <Stack.Screen name="login" options={{ headerShown: false }} />
+      <Stack.Screen name="chat/[chatId]" options={{ headerShown: false }} />
+      <Stack.Screen name="call/[chatId]" options={{ headerShown: false }} />
+      <Stack.Screen name="post/[postId]" options={{ headerShown: false }} />
+      <Stack.Screen name="user/[userId]" options={{ headerShown: false }} />
       <Stack.Screen name="+not-found" />
     </Stack>
   );
@@ -68,20 +55,20 @@ export default function RootLayout() {
   if (!fontsLoaded && !fontError) return null;
 
   return (
-    <SafeAreaProvider>
-      <ErrorBoundary>
-        <ThemeProvider>
+    <ErrorBoundary>
+      <GestureHandlerRootView style={{ flex: 1 }}>
+        <SafeAreaProvider>
           <QueryClientProvider client={queryClient}>
-            <AuthProvider>
-              <GestureHandlerRootView>
-                <KeyboardProvider>
+            <KeyboardProvider>
+              <ThemeProvider>
+                <AuthProvider>
                   <RootLayoutNav />
-                </KeyboardProvider>
-              </GestureHandlerRootView>
-            </AuthProvider>
+                </AuthProvider>
+              </ThemeProvider>
+            </KeyboardProvider>
           </QueryClientProvider>
-        </ThemeProvider>
-      </ErrorBoundary>
-    </SafeAreaProvider>
+        </SafeAreaProvider>
+      </GestureHandlerRootView>
+    </ErrorBoundary>
   );
 }

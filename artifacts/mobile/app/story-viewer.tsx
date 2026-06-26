@@ -1,198 +1,141 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import {
-  View, Text, StyleSheet, Pressable, Animated,
-  Dimensions, ActivityIndicator, Image,
+  View, Text, StyleSheet, Pressable, Animated, Dimensions, Image, ActivityIndicator,
 } from "react-native";
-import { Stack, useLocalSearchParams, useRouter } from "expo-router";
+import { Stack, useRouter, useLocalSearchParams } from "expo-router";
 import { Feather } from "@expo/vector-icons";
+import { Video, ResizeMode } from "expo-av";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { useGetStories, getGetStoriesQueryKey, useViewStory } from "@workspace/api-client-react";
-import { Avatar } from "@/components/Avatar";
+import { LinearGradient } from "expo-linear-gradient";
+import { useQuery } from "@tanstack/react-query";
+import { useAuth } from "@/lib/auth";
+import { fetchStories, resolveMediaUrl } from "@/lib/db";
+import { supabase } from "@/lib/supabase";
 
-const { width: SCREEN_W } = Dimensions.get("window");
+const { width: W, height: H } = Dimensions.get("window");
 const STORY_DURATION = 5000;
 
-function resolveMediaUrl(path: string): string {
-  if (!path) return "";
-  if (path.startsWith("http")) return path;
-  const domain = process.env.EXPO_PUBLIC_DOMAIN ?? "";
-  if (path.startsWith("/objects/")) return `https://${domain}/api/storage${path}`;
-  return `https://${domain}${path}`;
-}
-
-function timeAgo(dateStr: string): string {
-  const diff = Date.now() - new Date(dateStr).getTime();
-  const mins = Math.floor(diff / 60000);
-  if (mins < 1) return "just now";
-  if (mins < 60) return `${mins}m ago`;
-  const hrs = Math.floor(mins / 60);
-  if (hrs < 24) return `${hrs}h ago`;
-  return `${Math.floor(hrs / 24)}d ago`;
-}
-
 export default function StoryViewerScreen() {
-  const { userId } = useLocalSearchParams<{ userId: string }>();
-  const insets = useSafeAreaInsets();
+  const { user } = useAuth();
   const router = useRouter();
-  const viewStory = useViewStory();
+  const insets = useSafeAreaInsets();
+  const params = useLocalSearchParams<{ storyGroupIndex?: string }>();
+  const groupIndex = parseInt(params.storyGroupIndex ?? "0", 10);
 
-  const { data: storyGroups, isLoading } = useGetStories({
-    query: { queryKey: getGetStoriesQueryKey() },
+  const { data: allStories = [] } = useQuery({
+    queryKey: ["stories"],
+    queryFn: () => fetchStories(user?.id ?? ""),
+    enabled: !!user?.id,
   });
 
-  const group = storyGroups?.find((g) => g.user.id === userId);
-  const stories = group?.stories ?? [];
+  // Group by author
+  const grouped = React.useMemo(() => {
+    const map = new Map<string, any>();
+    for (const s of allStories as any[]) {
+      if (!map.has(s.author_id)) map.set(s.author_id, { user: s.profiles, stories: [] });
+      map.get(s.author_id).stories.push(s);
+    }
+    return Array.from(map.values());
+  }, [allStories]);
 
-  const [currentIdx, setCurrentIdx] = useState(0);
+  const group = grouped[groupIndex];
+  const [storyIdx, setStoryIdx] = useState(0);
   const progress = useRef(new Animated.Value(0)).current;
-  const animRef = useRef<Animated.CompositeAnimation | null>(null);
-  const [paused, setPaused] = useState(false);
-  const current = stories[currentIdx];
+  const anim = useRef<Animated.CompositeAnimation | null>(null);
+
+  const currentStory = group?.stories[storyIdx];
+
+  useEffect(() => {
+    if (!currentStory) return;
+    progress.setValue(0);
+    anim.current = Animated.timing(progress, { toValue: 1, duration: STORY_DURATION, useNativeDriver: false });
+    anim.current.start(({ finished }) => {
+      if (finished) goNext();
+    });
+    // Mark as viewed
+    if (user?.id) supabase.from("story_views").upsert({ story_id: currentStory.id, viewer_id: user.id }).then(() => {});
+    return () => { anim.current?.stop(); };
+  }, [storyIdx, currentStory?.id]);
 
   const goNext = () => {
-    if (currentIdx < stories.length - 1) {
-      setCurrentIdx((i) => i + 1);
-    } else {
-      router.back();
-    }
+    if (!group) return;
+    if (storyIdx < group.stories.length - 1) setStoryIdx(i => i + 1);
+    else if (groupIndex < grouped.length - 1) router.replace({ pathname: "/story-viewer", params: { storyGroupIndex: String(groupIndex + 1) } } as any);
+    else router.back();
   };
 
   const goPrev = () => {
-    if (currentIdx > 0) {
-      setCurrentIdx((i) => i - 1);
-    }
+    if (storyIdx > 0) { setStoryIdx(i => i - 1); }
+    else if (groupIndex > 0) router.replace({ pathname: "/story-viewer", params: { storyGroupIndex: String(groupIndex - 1) } } as any);
   };
 
-  useEffect(() => {
-    if (!current || paused) return;
-    progress.setValue(0);
-    animRef.current = Animated.timing(progress, {
-      toValue: 1,
-      duration: STORY_DURATION,
-      useNativeDriver: false,
-    });
-    animRef.current.start(({ finished }) => {
-      if (finished) goNext();
-    });
-    viewStory.mutate({ storyId: current.id });
-    return () => animRef.current?.stop();
-  }, [currentIdx, current?.id]);
+  if (!group || !currentStory) return (
+    <View style={{ flex: 1, backgroundColor: "#000", alignItems: "center", justifyContent: "center" }}>
+      <Stack.Screen options={{ headerShown: false }} />
+      <ActivityIndicator color="#fff" />
+    </View>
+  );
 
-  if (isLoading) {
-    return (
-      <View style={styles.center}>
-        <Stack.Screen options={{ headerShown: false }} />
-        <ActivityIndicator color="#fff" />
-      </View>
-    );
-  }
-
-  if (!group || stories.length === 0) {
-    return (
-      <View style={styles.center}>
-        <Stack.Screen options={{ headerShown: false }} />
-        <Text style={{ color: "#fff" }}>No stories found.</Text>
-      </View>
-    );
-  }
-
-  const mediaUrl = current ? resolveMediaUrl(current.mediaUrl) : null;
+  const isVideo = currentStory.media_type === "video";
+  const mediaUri = resolveMediaUrl(currentStory.media_url);
+  const authorName = group.user?.display_name ?? "User";
 
   return (
-    <View style={styles.container}>
+    <View style={{ flex: 1, backgroundColor: "#000" }}>
       <Stack.Screen options={{ headerShown: false }} />
-
-      {mediaUrl ? (
-        <Image
-          source={{ uri: mediaUrl }}
-          style={StyleSheet.absoluteFill}
-          resizeMode="cover"
-        />
+      {isVideo ? (
+        <Video source={{ uri: mediaUri }} style={StyleSheet.absoluteFill}
+          resizeMode={ResizeMode.COVER} shouldPlay isLooping={false} isMuted={false} />
       ) : (
-        <View style={[StyleSheet.absoluteFill, { backgroundColor: "#1a1a2e" }]} />
+        <Image source={{ uri: mediaUri }} style={StyleSheet.absoluteFill} resizeMode="cover" />
       )}
-
-      <View style={[StyleSheet.absoluteFill, styles.overlay]} />
-
-      {/* Progress bars */}
-      <View style={[styles.progressRow, { top: insets.top + 8 }]}>
-        {stories.map((_, idx) => (
-          <View key={idx} style={styles.progressTrack}>
-            <Animated.View
-              style={[
-                styles.progressFill,
-                {
-                  width:
-                    idx < currentIdx ? "100%" :
-                    idx === currentIdx
-                      ? progress.interpolate({ inputRange: [0, 1], outputRange: ["0%", "100%"] })
-                      : "0%",
-                },
-              ]}
-            />
+      <LinearGradient colors={["rgba(0,0,0,0.6)", "transparent"]} style={[styles.topGrad, { paddingTop: insets.top + 8 }]}>
+        {/* Progress bars */}
+        <View style={styles.progressRow}>
+          {group.stories.map((_: any, i: number) => (
+            <View key={i} style={styles.progressTrack}>
+              <Animated.View style={[styles.progressFill, {
+                width: i < storyIdx ? "100%" : i === storyIdx
+                  ? progress.interpolate({ inputRange: [0, 1], outputRange: ["0%", "100%"] })
+                  : "0%",
+              }]} />
+            </View>
+          ))}
+        </View>
+        {/* Header */}
+        <View style={styles.storyHeader}>
+          <View style={{ width: 36, height: 36, borderRadius: 18, overflow: "hidden", borderWidth: 2, borderColor: "#fff" }}>
+            {group.user?.avatar_url ? (
+              <Image source={{ uri: resolveMediaUrl(group.user.avatar_url) }} style={{ width: "100%", height: "100%" }} />
+            ) : (
+              <LinearGradient colors={["#7c3aed", "#4f46e5"]} style={{ flex: 1, alignItems: "center", justifyContent: "center" }}>
+                <Text style={{ color: "#fff", fontWeight: "700", fontSize: 14 }}>{authorName[0]}</Text>
+              </LinearGradient>
+            )}
           </View>
-        ))}
-      </View>
-
-      {/* Header */}
-      <View style={[styles.header, { top: insets.top + 24 }]}>
-        <Avatar name={group.user.displayName} avatarUrl={group.user.avatarUrl} size={36} />
-        <View style={{ flex: 1, marginLeft: 10 }}>
-          <Text style={styles.authorName}>{group.user.displayName}</Text>
-          {current && <Text style={styles.timeText}>{timeAgo(current.createdAt)}</Text>}
+          <Text style={styles.storyAuthor}>{authorName}</Text>
+          <Pressable onPress={() => router.back()} hitSlop={8} style={{ marginLeft: "auto" }}>
+            <Feather name="x" size={24} color="#fff" />
+          </Pressable>
         </View>
-        <Pressable onPress={() => router.back()} hitSlop={12}>
-          <Feather name="x" size={24} color="#fff" />
-        </Pressable>
-      </View>
-
+      </LinearGradient>
       {/* Tap zones */}
-      <Pressable
-        style={styles.leftHalf}
-        onPress={goPrev}
-        onLongPress={() => { setPaused(true); animRef.current?.stop(); }}
-        onPressOut={() => { if (paused) setPaused(false); }}
-      />
-      <Pressable
-        style={styles.rightHalf}
-        onPress={goNext}
-        onLongPress={() => { setPaused(true); animRef.current?.stop(); }}
-        onPressOut={() => { if (paused) setPaused(false); }}
-      />
-
-      {paused && (
-        <View style={styles.pausedBadge}>
-          <Feather name="pause" size={20} color="#fff" />
-        </View>
-      )}
+      <View style={styles.tapZones} pointerEvents="box-none">
+        <Pressable style={styles.tapLeft} onPress={goPrev} />
+        <Pressable style={styles.tapRight} onPress={goNext} />
+      </View>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: "#000" },
-  center: { flex: 1, backgroundColor: "#000", alignItems: "center", justifyContent: "center" },
-  overlay: { backgroundColor: "rgba(0,0,0,0.12)" },
-  progressRow: {
-    position: "absolute", left: 12, right: 12,
-    flexDirection: "row", gap: 4, zIndex: 10,
-  },
-  progressTrack: {
-    flex: 1, height: 2.5,
-    backgroundColor: "rgba(255,255,255,0.4)",
-    borderRadius: 2, overflow: "hidden",
-  },
-  progressFill: { height: "100%", backgroundColor: "#fff" },
-  header: {
-    position: "absolute", left: 16, right: 16,
-    flexDirection: "row", alignItems: "center", zIndex: 10,
-  },
-  authorName: { color: "#fff", fontWeight: "700", fontSize: 14 },
-  timeText: { color: "rgba(255,255,255,0.7)", fontSize: 12 },
-  leftHalf: { position: "absolute", left: 0, top: 0, bottom: 0, width: "40%", zIndex: 5 },
-  rightHalf: { position: "absolute", right: 0, top: 0, bottom: 0, width: "60%", zIndex: 5 },
-  pausedBadge: {
-    position: "absolute", alignSelf: "center", top: "45%",
-    backgroundColor: "rgba(0,0,0,0.5)", borderRadius: 40, padding: 16, zIndex: 20,
-  },
+  topGrad: { position: "absolute", top: 0, left: 0, right: 0, paddingHorizontal: 12, paddingBottom: 16, zIndex: 10 },
+  progressRow: { flexDirection: "row", gap: 4, marginBottom: 10 },
+  progressTrack: { flex: 1, height: 2.5, backgroundColor: "rgba(255,255,255,0.35)", borderRadius: 2, overflow: "hidden" },
+  progressFill: { height: "100%", backgroundColor: "#fff", borderRadius: 2 },
+  storyHeader: { flexDirection: "row", alignItems: "center", gap: 10 },
+  storyAuthor: { color: "#fff", fontWeight: "700", fontSize: 14, textShadowColor: "rgba(0,0,0,0.5)", textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 3 },
+  tapZones: { ...StyleSheet.absoluteFillObject, flexDirection: "row", zIndex: 5 },
+  tapLeft: { flex: 1 },
+  tapRight: { flex: 1 },
 });
