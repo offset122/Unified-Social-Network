@@ -209,32 +209,99 @@ export async function searchUsers(query: string): Promise<Profile[]> {
 // ─── Conversations ────────────────────────────────────────────────────────────
 
 export async function fetchConversations(userId: string): Promise<Conversation[]> {
-  const { data: memberRows } = await supabase.from("conversation_members").select("conversation_id, unread_count, conversations(*)").eq("user_id", userId);
-  if (!memberRows) return [];
-  const convos = await Promise.all(memberRows.map(async (row: any) => {
-    const convo = row.conversations as Conversation;
-    if (!convo) return null;
+  const { data: memberRows, error } = await supabase
+    .from("conversation_members")
+    .select("conversation_id, unread_count")
+    .eq("user_id", userId);
+  if (error || !memberRows?.length) return [];
+
+  const convIds = memberRows.map((r: any) => r.conversation_id as string);
+  const unreadMap = new Map<string, number>(memberRows.map((r: any) => [r.conversation_id as string, (r.unread_count as number) ?? 0]));
+
+  const { data: convos } = await supabase
+    .from("conversations")
+    .select("*")
+    .in("id", convIds);
+  if (!convos?.length) return [];
+
+  const enriched = await Promise.all((convos as Conversation[]).map(async (convo) => {
     let otherUser: Profile | undefined;
     if (convo.type === "dm") {
-      const { data: members } = await supabase.from("conversation_members").select("user_id, profiles(*)").eq("conversation_id", convo.id).neq("user_id", userId).limit(1);
+      const { data: members } = await supabase
+        .from("conversation_members")
+        .select("user_id, profiles(*)")
+        .eq("conversation_id", convo.id)
+        .neq("user_id", userId)
+        .limit(1);
       otherUser = (members?.[0] as any)?.profiles ?? undefined;
     }
-    const { data: lastMsgData } = await supabase.from("messages").select("content, created_at, media_type").eq("conversation_id", convo.id).eq("is_deleted", false).order("created_at", { ascending: false }).limit(1).maybeSingle();
-    return { ...convo, unread_count: row.unread_count ?? 0, other_user: otherUser, last_message: lastMsgData?.content, last_message_type: lastMsgData?.media_type, last_message_at: lastMsgData?.created_at ?? convo.last_message_at } as Conversation;
+    const { data: lastMsgData } = await supabase
+      .from("messages")
+      .select("content, created_at, media_type")
+      .eq("conversation_id", convo.id)
+      .eq("is_deleted", false)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    return {
+      ...convo,
+      unread_count: unreadMap.get(convo.id) ?? 0,
+      other_user: otherUser,
+      last_message: lastMsgData?.content,
+      last_message_type: lastMsgData?.media_type,
+      last_message_at: lastMsgData?.created_at ?? convo.last_message_at,
+    } as Conversation;
   }));
-  return convos.filter(Boolean).sort((a, b) => new Date(b!.last_message_at ?? b!.created_at).getTime() - new Date(a!.last_message_at ?? a!.created_at).getTime()) as Conversation[];
+
+  return enriched.sort((a, b) =>
+    new Date(b.last_message_at ?? b.created_at).getTime() -
+    new Date(a.last_message_at ?? a.created_at).getTime()
+  );
 }
 
 export async function getOrCreateDM(userId: string, otherId: string): Promise<string> {
-  const { data: existing } = await supabase.rpc("get_dm_conversation", { user1: userId, user2: otherId });
-  if (existing) return existing;
-  const { data: convo, error } = await supabase.from("conversations").insert({ type: "dm", created_by: userId }).select("id").single();
-  if (error || !convo?.id) throw new Error(error?.message ?? "Failed to create conversation");
+  try {
+    const { data: existing } = await supabase.rpc("get_dm_conversation", { user1: userId, user2: otherId });
+    if (existing) return existing as string;
+  } catch {}
+
+  const { data: myConvos } = await supabase
+    .from("conversation_members")
+    .select("conversation_id")
+    .eq("user_id", userId);
+
+  if (myConvos?.length) {
+    const myIds = (myConvos as any[]).map(r => r.conversation_id as string);
+    const { data: sharedMemberships } = await supabase
+      .from("conversation_members")
+      .select("conversation_id")
+      .eq("user_id", otherId)
+      .in("conversation_id", myIds);
+
+    if (sharedMemberships?.length) {
+      const sharedIds = (sharedMemberships as any[]).map(r => r.conversation_id as string);
+      const { data: dmConvo } = await supabase
+        .from("conversations")
+        .select("id")
+        .eq("type", "dm")
+        .in("id", sharedIds)
+        .limit(1)
+        .maybeSingle();
+      if ((dmConvo as any)?.id) return (dmConvo as any).id as string;
+    }
+  }
+
+  const { data: convo, error } = await supabase
+    .from("conversations")
+    .insert({ type: "dm", created_by: userId })
+    .select("id")
+    .single();
+  if (error || !(convo as any)?.id) throw new Error(error?.message ?? "Failed to create conversation");
   await supabase.from("conversation_members").insert([
-    { conversation_id: convo.id, user_id: userId },
-    { conversation_id: convo.id, user_id: otherId },
+    { conversation_id: (convo as any).id, user_id: userId },
+    { conversation_id: (convo as any).id, user_id: otherId },
   ]);
-  return convo.id;
+  return (convo as any).id as string;
 }
 
 export async function createGroupConversation(creatorId: string, name: string, memberIds: string[]): Promise<string> {

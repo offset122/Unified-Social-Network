@@ -7,6 +7,8 @@ import {
 import { Video, ResizeMode, AVPlaybackStatus } from "expo-av";
 import { LinearGradient } from "expo-linear-gradient";
 import { Feather } from "@expo/vector-icons";
+import { AntDesign } from "@expo/vector-icons";
+import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { router, Link } from "expo-router";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -245,16 +247,16 @@ function ReelCard({ item, isVisible }: { item: Post; isVisible: boolean }) {
       )}
 
       {/* Double-tap heart */}
-      <Animated.View style={[S.doubleTapHeart, { opacity: doubleTapAnim, transform: [{ scale: doubleTapAnim.interpolate({ inputRange: [0, 0.5, 1], outputRange: [0.5, 1.3, 1] }) }] }]} pointerEvents="none">
-        <Feather name="heart" size={80} color="#ff3b5c" />
+      <Animated.View style={[S.doubleTapHeart, { opacity: doubleTapAnim, transform: [{ scale: doubleTapAnim.interpolate({ inputRange: [0, 0.5, 1], outputRange: [0.5, 1.3, 1] }) }], pointerEvents: "none" } as any]}>
+        <AntDesign name="heart" size={80} color="#ff3b5c" />
       </Animated.View>
 
-      <Animated.View style={[S.pauseOverlay, { opacity: pauseOpacity }]} pointerEvents="none">
+      <Animated.View style={[S.pauseOverlay, { opacity: pauseOpacity, pointerEvents: "none" } as any]}>
         <Feather name={isPaused ? "play" : "pause"} size={56} color="#fff" />
       </Animated.View>
 
-      <LinearGradient colors={["rgba(0,0,0,0.5)", "transparent"]} style={S.topGrad} pointerEvents="none" />
-      <LinearGradient colors={["transparent", "rgba(0,0,0,0.85)"]} style={S.bottomGrad} pointerEvents="none" />
+      <LinearGradient colors={["rgba(0,0,0,0.5)", "transparent"]} style={[S.topGrad, { pointerEvents: "none" } as any]} />
+      <LinearGradient colors={["transparent", "rgba(0,0,0,0.85)"]} style={[S.bottomGrad, { pointerEvents: "none" } as any]} />
 
       <VideoProgress progress={position} duration={duration} />
 
@@ -288,30 +290,37 @@ function ReelCard({ item, isVisible }: { item: Post; isVisible: boolean }) {
       {/* Right actions */}
       <View style={S.sideActions}>
         <Pressable onPress={handleLike} style={S.sideBtn}>
-          <Animated.View style={{ transform: [{ scale: likeScale }] }}>
-            <Feather name={isLiked ? "heart" : "heart"} size={30} color={isLiked ? "#ff3b5c" : "#fff"} />
+          <Animated.View style={[S.sideBtnCircle, isLiked && S.sideBtnCircleActive, { transform: [{ scale: likeScale }] }]}>
+            <AntDesign name={isLiked ? "heart" : "hearto"} size={24} color={isLiked ? "#ff3b5c" : "#fff"} />
           </Animated.View>
-          <Text style={S.sideCount}>{formatCount(likesCount)}</Text>
+          <Text style={[S.sideCount, isLiked && { color: "#ff3b5c" }]}>{formatCount(likesCount)}</Text>
         </Pressable>
 
         <Pressable onPress={() => setCommentOpen(true)} style={S.sideBtn}>
-          <Feather name="message-circle" size={28} color="#fff" />
+          <View style={S.sideBtnCircle}>
+            <Feather name="message-circle" size={24} color="#fff" />
+          </View>
           <Text style={S.sideCount}>{formatCount(commentsCount)}</Text>
         </Pressable>
 
         <Pressable onPress={handleShare} style={S.sideBtn}>
-          <Feather name="share-2" size={26} color="#fff" />
+          <View style={S.sideBtnCircle}>
+            <Feather name="share-2" size={22} color="#fff" />
+          </View>
           <Text style={S.sideCount}>{formatCount(sharesCount)}</Text>
         </Pressable>
 
         <Pressable onPress={handleSave} style={S.sideBtn}>
-          <Feather name="bookmark" size={26} color={isSaved ? "#a78bfa" : "#fff"}
-            style={isSaved ? { textShadowColor: "#a78bfa55", textShadowRadius: 8 } : undefined} />
+          <View style={[S.sideBtnCircle, isSaved && { backgroundColor: "#a78bfa33" }]}>
+            <Ionicons name={isSaved ? "bookmark" : "bookmark-outline"} size={22} color={isSaved ? "#a78bfa" : "#fff"} />
+          </View>
           <Text style={[S.sideCount, isSaved && { color: "#a78bfa" }]}>{isSaved ? "Saved" : "Save"}</Text>
         </Pressable>
 
         <Pressable onPress={() => setIsMuted(m => !m)} style={S.sideBtn}>
-          <Feather name={isMuted ? "volume-x" : "volume-2"} size={22} color="#fff" />
+          <View style={S.sideBtnCircle}>
+            <Feather name={isMuted ? "volume-x" : "volume-2"} size={20} color="#fff" />
+          </View>
         </Pressable>
       </View>
 
@@ -414,9 +423,20 @@ const S = StyleSheet.create({
   caption: { color: "#fff", fontSize: 14, lineHeight: 20, marginBottom: 8, textShadowColor: "rgba(0,0,0,0.5)", textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 3 },
   hashtagRow: { flexDirection: "row", flexWrap: "wrap", gap: 6 },
   hashtag: { color: "#a78bfa", fontSize: 13, fontWeight: "600" },
-  sideActions: { position: "absolute", right: 12, bottom: 90, alignItems: "center", gap: 20, zIndex: 10 },
-  sideBtn: { alignItems: "center", gap: 4 },
-  sideCount: { color: "#fff", fontSize: 12, fontWeight: "600", textShadowColor: "rgba(0,0,0,0.6)", textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 3 },
+  sideActions: { position: "absolute", right: 12, bottom: 100, alignItems: "center", gap: 22, zIndex: 10 },
+  sideBtn: { alignItems: "center", gap: 5 },
+  sideBtnCircle: {
+    width: 50, height: 50, borderRadius: 25,
+    backgroundColor: "rgba(0,0,0,0.45)",
+    alignItems: "center", justifyContent: "center",
+    borderWidth: 1, borderColor: "rgba(255,255,255,0.18)",
+  },
+  sideBtnCircleActive: { backgroundColor: "rgba(255,59,92,0.18)", borderColor: "rgba(255,59,92,0.4)" },
+  sideCount: {
+    color: "#fff", fontSize: 12, fontWeight: "700",
+    textShadowColor: "rgba(0,0,0,0.7)",
+    textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 3,
+  },
   emptyWrap: { flex: 1, alignItems: "center", justifyContent: "center", gap: 12 },
   emptyTitle: { color: "#fff", fontSize: 24, fontWeight: "800", marginTop: 16 },
   emptyDesc: { color: "rgba(255,255,255,0.5)", fontSize: 15, textAlign: "center" },

@@ -7,3 +7,7 @@
 - [Shared Avatar component](avatar-component.md) — Avatar lives at `artifacts/mobile/components/Avatar.tsx`; was previously inline-only in index.tsx.
 - [resolveMediaUrl pattern](resolve-media-url.md) — defined inline per-file (no shared lib); `/objects/` path → prepend `/api/storage`; always prepend `https://${EXPO_PUBLIC_DOMAIN}`.
 - [ThemeProvider placement](theme-provider.md) — ThemeProvider wraps QueryClientProvider in `_layout.tsx`; `useTheme()` returns `{ colorScheme, toggleTheme }`; persists via AsyncStorage.
+- [Supabase join 500 fix](supabase-join-fix.md) — `conversations(*)` PostgREST join in conversation_members fails with 500; fix: two-step query (members first, then conversations.in(ids)).
+- [getOrCreateDM fallback](get-or-create-dm.md) — `get_dm_conversation` RPC may not exist; always wrap in try/catch and manually lookup shared DM conversations as fallback.
+- [Icon sets for filled icons](icon-sets.md) — Feather is outline-only; use AntDesign (heart/hearto) for hearts, Ionicons (bookmark/bookmark-outline) for bookmarks in React Native.
+- [expo-camera dynamic import](expo-camera-dynamic.md) — Import expo-camera dynamically at runtime inside useEffect to avoid web crash; check Platform.OS !== "web" before requesting permissions.

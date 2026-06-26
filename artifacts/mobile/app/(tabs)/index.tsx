@@ -8,6 +8,8 @@ import * as ImagePicker from "expo-image-picker";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Link, Redirect, useRouter } from "expo-router";
 import { Feather } from "@expo/vector-icons";
+import { AntDesign } from "@expo/vector-icons";
+import { Ionicons } from "@expo/vector-icons";
 import { Video, ResizeMode } from "expo-av";
 import { LinearGradient } from "expo-linear-gradient";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -161,17 +163,16 @@ function CommentSheet({ postId, visible, onClose, userId, colors }: {
 // ─── Post Card ────────────────────────────────────────────────────────────────
 
 function PostCard({ post, userId, colors, onRequireAuth }: { post: Post; userId: string; colors: any; onRequireAuth?: () => void }) {
-  const qc = useQueryClient();
   const [liked, setLiked] = useState(post.is_liked ?? false);
   const [likes, setLikes] = useState(post.likes_count);
   const [saved, setSaved] = useState(post.is_saved ?? false);
   const [commentOpen, setCommentOpen] = useState(false);
   const [imgIdx, setImgIdx] = useState(0);
   const likeScale = useRef(new Animated.Value(1)).current;
+  const likeOpacity = useRef(new Animated.Value(0)).current;
 
   const mediaUrls = (post.media_urls ?? []).map(resolveMediaUrl).filter(Boolean);
   const isVideo = post.media_type === "video";
-
   const aspectRatio = post.media_width && post.media_height
     ? post.media_width / post.media_height
     : 1;
@@ -181,10 +182,18 @@ function PostCard({ post, userId, colors, onRequireAuth }: { post: Post; userId:
     const next = !liked;
     setLiked(next);
     setLikes(l => l + (next ? 1 : -1));
-    Animated.sequence([
-      Animated.spring(likeScale, { toValue: 1.4, useNativeDriver: true, speed: 100 }),
-      Animated.spring(likeScale, { toValue: 1, useNativeDriver: true, speed: 100 }),
-    ]).start();
+    if (next) {
+      likeOpacity.setValue(0);
+      Animated.sequence([
+        Animated.parallel([
+          Animated.spring(likeScale, { toValue: 1.5, useNativeDriver: true, speed: 80, bounciness: 14 }),
+          Animated.timing(likeOpacity, { toValue: 1, duration: 100, useNativeDriver: true }),
+        ]),
+        Animated.spring(likeScale, { toValue: 1, useNativeDriver: true, speed: 80 }),
+      ]).start();
+    } else {
+      Animated.spring(likeScale, { toValue: 1, useNativeDriver: true, speed: 100 }).start();
+    }
     const fn = next ? likePost : unlikePost;
     fn(userId, post.id).catch(() => { setLiked(!next); setLikes(l => l + (next ? -1 : 1)); });
   };
@@ -203,43 +212,74 @@ function PostCard({ post, userId, colors, onRequireAuth }: { post: Post; userId:
 
   return (
     <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]}>
-      {/* Author */}
+      {/* Author header */}
       <View style={styles.cardHeader}>
         <Link href={`/user/${post.author_id}` as any} asChild>
           <Pressable style={styles.authorRow}>
-            <Avatar name={displayName} avatarUrl={profile?.avatar_url} size={40} />
-            <View style={{ marginLeft: 10 }}>
+            <View style={styles.avatarWrap}>
+              <Avatar name={displayName} avatarUrl={profile?.avatar_url} size={42} />
+            </View>
+            <View style={{ marginLeft: 10, flex: 1 }}>
               <Text style={[styles.authorName, { color: colors.foreground }]}>{displayName}</Text>
-              <Text style={[styles.authorMeta, { color: colors.mutedForeground }]}>@{username} · {timeAgo(post.created_at)}</Text>
+              <Text style={[styles.authorMeta, { color: colors.mutedForeground }]}>
+                {"@" + username + " · " + timeAgo(post.created_at)}
+              </Text>
             </View>
           </Pressable>
         </Link>
-        <Pressable hitSlop={8}><Feather name="more-horizontal" size={20} color={colors.mutedForeground} /></Pressable>
+        <Pressable hitSlop={10} style={styles.moreBtn}>
+          <Feather name="more-horizontal" size={20} color={colors.mutedForeground} />
+        </Pressable>
       </View>
 
       {/* Content */}
       {!!post.content && (
-        <Text style={[styles.postContent, { color: colors.foreground }]}>{post.content}</Text>
+        <Text style={[styles.postContent, { color: colors.foreground }]}>
+          {post.content}
+        </Text>
       )}
 
       {/* Media */}
       {mediaUrls.length > 0 && (
-        <View style={[styles.mediaWrap, { aspectRatio: Math.min(Math.max(aspectRatio, 0.5), 2) }]}>
+        <View style={[styles.mediaWrap, { aspectRatio: Math.min(Math.max(aspectRatio, 0.5625), 1.91) }]}>
           {isVideo ? (
-            <Video source={{ uri: mediaUrls[0] }} style={StyleSheet.absoluteFill}
-              resizeMode={ResizeMode.CONTAIN} shouldPlay={false} isLooping useNativeControls />
+            <Video
+              source={{ uri: mediaUrls[0] }}
+              style={StyleSheet.absoluteFill}
+              resizeMode={ResizeMode.CONTAIN}
+              shouldPlay={false}
+              isLooping
+              useNativeControls
+            />
           ) : (
             <>
-              <ScrollView horizontal pagingEnabled showsHorizontalScrollIndicator={false}
-                onMomentumScrollEnd={e => setImgIdx(Math.round(e.nativeEvent.contentOffset.x / SCREEN_WIDTH))}>
+              <ScrollView
+                horizontal
+                pagingEnabled
+                showsHorizontalScrollIndicator={false}
+                onMomentumScrollEnd={e => setImgIdx(Math.round(e.nativeEvent.contentOffset.x / (SCREEN_WIDTH - 24)))}
+              >
                 {mediaUrls.map((url, i) => (
-                  <Image key={i} source={{ uri: url }} style={{ width: SCREEN_WIDTH, height: "100%" }} resizeMode="contain" />
+                  <Image
+                    key={i}
+                    source={{ uri: url }}
+                    style={{ width: SCREEN_WIDTH - 24, height: "100%" }}
+                    resizeMode="cover"
+                  />
                 ))}
               </ScrollView>
               {mediaUrls.length > 1 && (
                 <View style={styles.dots}>
                   {mediaUrls.map((_, i) => (
-                    <View key={i} style={[styles.dot, { backgroundColor: i === imgIdx ? "#fff" : "rgba(255,255,255,0.4)" }]} />
+                    <View
+                      key={i}
+                      style={[
+                        styles.dot,
+                        i === imgIdx
+                          ? { width: 18, backgroundColor: "#fff" }
+                          : { width: 6, backgroundColor: "rgba(255,255,255,0.45)" },
+                      ]}
+                    />
                   ))}
                 </View>
               )}
@@ -249,32 +289,60 @@ function PostCard({ post, userId, colors, onRequireAuth }: { post: Post; userId:
       )}
 
       {/* Actions */}
-      <View style={styles.actions}>
+      <View style={[styles.actions, { borderTopColor: colors.border }]}>
         <View style={styles.leftActions}>
+          {/* Like */}
           <Pressable onPress={handleLike} style={styles.actionBtn}>
             <Animated.View style={{ transform: [{ scale: likeScale }] }}>
-              <Feather name={liked ? "heart" : "heart"} size={22}
+              <AntDesign
+                name={liked ? "heart" : "hearto"}
+                size={22}
                 color={liked ? "#ff3b5c" : colors.mutedForeground}
-                style={liked ? { textShadowColor: "#ff3b5c55", textShadowRadius: 8 } : undefined} />
+              />
             </Animated.View>
-            <Text style={[styles.actionCount, { color: colors.mutedForeground }]}>{formatCount(likes)}</Text>
+            <Text style={[styles.actionCount, { color: liked ? "#ff3b5c" : colors.mutedForeground }]}>
+              {formatCount(likes)}
+            </Text>
           </Pressable>
+
+          {/* Comment */}
           <Pressable onPress={() => setCommentOpen(true)} style={styles.actionBtn}>
             <Feather name="message-circle" size={22} color={colors.mutedForeground} />
-            <Text style={[styles.actionCount, { color: colors.mutedForeground }]}>{formatCount(post.comments_count)}</Text>
+            <Text style={[styles.actionCount, { color: colors.mutedForeground }]}>
+              {formatCount(post.comments_count)}
+            </Text>
           </Pressable>
+
+          {/* Share */}
           <Pressable style={styles.actionBtn}>
             <Feather name="share-2" size={20} color={colors.mutedForeground} />
           </Pressable>
         </View>
-        <Pressable onPress={handleSave}>
-          <Feather name={saved ? "bookmark" : "bookmark"} size={22}
-            color={saved ? colors.primary : colors.mutedForeground} />
+
+        {/* Bookmark */}
+        <Pressable onPress={handleSave} style={styles.actionBtn}>
+          <Ionicons
+            name={saved ? "bookmark" : "bookmark-outline"}
+            size={22}
+            color={saved ? "#7c3aed" : colors.mutedForeground}
+          />
         </Pressable>
       </View>
 
-      <CommentSheet postId={post.id} visible={commentOpen} onClose={() => setCommentOpen(false)}
-        userId={userId} colors={colors} />
+      {/* Like count label */}
+      {likes > 0 && (
+        <Text style={[styles.likeLabel, { color: colors.foreground }]}>
+          {formatCount(likes) + " " + (likes === 1 ? "like" : "likes")}
+        </Text>
+      )}
+
+      <CommentSheet
+        postId={post.id}
+        visible={commentOpen}
+        onClose={() => setCommentOpen(false)}
+        userId={userId}
+        colors={colors}
+      />
     </View>
   );
 }
@@ -388,49 +456,87 @@ export default function HomeScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
-  header: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 16, paddingBottom: 10, borderBottomWidth: StyleSheet.hairlineWidth },
-  headerTitle: { fontSize: 22, fontWeight: "800", letterSpacing: -0.5 },
-  headerActions: { flexDirection: "row", gap: 8 },
-  iconBtn: { width: 38, height: 38, alignItems: "center", justifyContent: "center" },
-  badge: { position: "absolute", top: 2, right: 2, backgroundColor: "#ef4444", borderRadius: 8, minWidth: 16, height: 16, alignItems: "center", justifyContent: "center", paddingHorizontal: 3 },
+  header: {
+    flexDirection: "row", alignItems: "center", justifyContent: "space-between",
+    paddingHorizontal: 16, paddingBottom: 10, borderBottomWidth: StyleSheet.hairlineWidth,
+  },
+  headerTitle: { fontSize: 24, fontWeight: "800", letterSpacing: -0.8 },
+  headerActions: { flexDirection: "row", gap: 6 },
+  iconBtn: { width: 40, height: 40, alignItems: "center", justifyContent: "center" },
+  badge: {
+    position: "absolute", top: 4, right: 4, backgroundColor: "#ef4444",
+    borderRadius: 8, minWidth: 16, height: 16, alignItems: "center",
+    justifyContent: "center", paddingHorizontal: 3,
+  },
   badgeText: { color: "#fff", fontSize: 9, fontWeight: "800" },
 
   storyBar: { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: "#e4e4e7" },
-  storyScroll: { paddingHorizontal: 12, paddingVertical: 12, gap: 14 },
+  storyScroll: { paddingHorizontal: 14, paddingVertical: 12, gap: 16 },
   addStoryBtn: { alignItems: "center", gap: 5 },
-  addStoryCircle: { width: 58, height: 58, borderRadius: 29, alignItems: "center", justifyContent: "center" },
-  addStoryLabel: { fontSize: 11, color: "#71717a", maxWidth: 58, textAlign: "center" },
+  addStoryCircle: { width: 60, height: 60, borderRadius: 30, alignItems: "center", justifyContent: "center" },
+  addStoryLabel: { fontSize: 11, color: "#71717a", maxWidth: 62, textAlign: "center" },
   storyItem: { alignItems: "center", gap: 5 },
-  storyRing: { width: 62, height: 62, borderRadius: 31, alignItems: "center", justifyContent: "center", padding: 2 },
-  storyAvatarWrap: { width: 56, height: 56, borderRadius: 28, borderWidth: 2, borderColor: "#fff", overflow: "hidden" },
-  storyName: { fontSize: 11, color: "#71717a", maxWidth: 62, textAlign: "center" },
+  storyRing: { width: 64, height: 64, borderRadius: 32, alignItems: "center", justifyContent: "center", padding: 2.5 },
+  storyAvatarWrap: { width: 57, height: 57, borderRadius: 28.5, borderWidth: 2.5, borderColor: "#fff", overflow: "hidden" },
+  storyName: { fontSize: 11, color: "#71717a", maxWidth: 64, textAlign: "center" },
 
-  card: { marginHorizontal: 12, borderRadius: 16, borderWidth: StyleSheet.hairlineWidth, overflow: "hidden" },
-  cardHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", padding: 12 },
+  card: {
+    marginHorizontal: 12, borderRadius: 18,
+    borderWidth: StyleSheet.hairlineWidth, overflow: "hidden",
+    shadowColor: "#000", shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.06, shadowRadius: 8, elevation: 2,
+  },
+  cardHeader: {
+    flexDirection: "row", alignItems: "center",
+    justifyContent: "space-between", padding: 14,
+  },
   authorRow: { flexDirection: "row", alignItems: "center", flex: 1 },
-  authorName: { fontSize: 15, fontWeight: "700" },
-  authorMeta: { fontSize: 12, marginTop: 1 },
-  postContent: { paddingHorizontal: 14, paddingBottom: 12, fontSize: 15, lineHeight: 22 },
+  avatarWrap: {
+    borderRadius: 23, overflow: "hidden",
+    shadowColor: "#7c3aed", shadowOpacity: 0.2,
+    shadowOffset: { width: 0, height: 2 }, shadowRadius: 6,
+  },
+  authorName: { fontSize: 15, fontWeight: "700", letterSpacing: -0.2 },
+  authorMeta: { fontSize: 12, marginTop: 1.5 },
+  moreBtn: { padding: 4 },
+  postContent: { paddingHorizontal: 14, paddingBottom: 13, fontSize: 15, lineHeight: 23 },
   mediaWrap: { width: "100%", overflow: "hidden", backgroundColor: "#000" },
-  dots: { position: "absolute", bottom: 10, left: 0, right: 0, flexDirection: "row", justifyContent: "center", gap: 5 },
-  dot: { width: 6, height: 6, borderRadius: 3 },
-  actions: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 14, paddingVertical: 10 },
-  leftActions: { flexDirection: "row", gap: 16 },
-  actionBtn: { flexDirection: "row", alignItems: "center", gap: 5 },
+  dots: {
+    position: "absolute", bottom: 12, left: 0, right: 0,
+    flexDirection: "row", justifyContent: "center", gap: 4, alignItems: "center",
+  },
+  dot: { height: 6, borderRadius: 3 },
+  actions: {
+    flexDirection: "row", alignItems: "center", justifyContent: "space-between",
+    paddingHorizontal: 14, paddingVertical: 11,
+    borderTopWidth: StyleSheet.hairlineWidth,
+  },
+  leftActions: { flexDirection: "row", gap: 18 },
+  actionBtn: { flexDirection: "row", alignItems: "center", gap: 6 },
   actionCount: { fontSize: 13, fontWeight: "600" },
+  likeLabel: { paddingHorizontal: 14, paddingBottom: 10, fontSize: 13, fontWeight: "700" },
 
-  commentHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", padding: 16, borderBottomWidth: StyleSheet.hairlineWidth },
+  commentHeader: {
+    flexDirection: "row", alignItems: "center", justifyContent: "space-between",
+    padding: 16, borderBottomWidth: StyleSheet.hairlineWidth,
+  },
   commentTitle: { fontSize: 17, fontWeight: "700" },
   commentRow: { flexDirection: "row", gap: 10, alignItems: "flex-start" },
-  commentBubble: { flex: 1, borderRadius: 14, padding: 10 },
-  commentAuthor: { fontSize: 13, fontWeight: "700", marginBottom: 2 },
+  commentBubble: { flex: 1, borderRadius: 16, padding: 11 },
+  commentAuthor: { fontSize: 13, fontWeight: "700", marginBottom: 3 },
   commentContent: { fontSize: 14, lineHeight: 20 },
-  commentTime: { fontSize: 11, marginTop: 4 },
-  commentInput: { flexDirection: "row", alignItems: "flex-end", padding: 12, gap: 10, borderTopWidth: StyleSheet.hairlineWidth },
-  commentTextInput: { flex: 1, borderWidth: 1.5, borderRadius: 20, paddingHorizontal: 14, paddingVertical: 10, fontSize: 15, maxHeight: 100 },
-  sendBtn: { width: 38, height: 38, borderRadius: 19, alignItems: "center", justifyContent: "center" },
+  commentTime: { fontSize: 11, marginTop: 5 },
+  commentInput: {
+    flexDirection: "row", alignItems: "flex-end",
+    padding: 12, gap: 10, borderTopWidth: StyleSheet.hairlineWidth,
+  },
+  commentTextInput: {
+    flex: 1, borderWidth: 1.5, borderRadius: 22,
+    paddingHorizontal: 15, paddingVertical: 10, fontSize: 15, maxHeight: 100,
+  },
+  sendBtn: { width: 40, height: 40, borderRadius: 20, alignItems: "center", justifyContent: "center" },
 
   empty: { alignItems: "center", paddingVertical: 80, gap: 12 },
-  emptyTitle: { fontSize: 18, fontWeight: "700" },
-  emptyDesc: { fontSize: 14, textAlign: "center" },
+  emptyTitle: { fontSize: 20, fontWeight: "800" },
+  emptyDesc: { fontSize: 14, textAlign: "center", lineHeight: 22 },
 });
