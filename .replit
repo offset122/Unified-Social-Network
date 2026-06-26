@@ -33,7 +33,7 @@ args = "cd artifacts/mobile && PORT=8081 pnpm dev"
 waitForPort = 8081
 
 [agent]
-stack = "PNPM_WORKSPACE"
+stack = "BEST_EFFORT_FALLBACK"
 expertMode = true
 
 [postMerge]

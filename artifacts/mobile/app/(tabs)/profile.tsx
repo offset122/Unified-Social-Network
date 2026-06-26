@@ -1,17 +1,20 @@
 import React, { useState } from "react";
 import {
   View, Text, StyleSheet, Pressable, FlatList, ActivityIndicator,
-  Platform, Alert, Image, Modal, Switch, ScrollView, StatusBar, Dimensions,
+  Platform, Alert, Image, Modal, ScrollView, StatusBar, Dimensions,
 } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
 import { Feather } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Link, Redirect, useRouter } from "expo-router";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/lib/auth";
 import { useColors } from "@/hooks/useColors";
 import { useColorScheme } from "react-native";
-import { fetchProfile, fetchUserPosts, resolveMediaUrl, formatCount, timeAgo, type Post, type Profile } from "@/lib/db";
+import {
+  fetchProfile, fetchUserPosts, fetchSavedPosts, resolveMediaUrl,
+  formatCount, timeAgo, deletePost, type Post, type Profile,
+} from "@/lib/db";
 
 const { width: SCREEN_WIDTH } = Dimensions.get("window");
 const GRID_SIZE = (SCREEN_WIDTH - 4) / 3;
@@ -21,33 +24,34 @@ function Avatar({ name, size, avatarUrl }: { name: string; size: number; avatarU
   const initials = name.split(" ").map(w => w[0]).join("").slice(0, 2).toUpperCase();
   if (avatarUrl && !err) {
     return (
-      <View style={{ width: size, height: size, borderRadius: size / 2, borderWidth: 3, borderColor: "#fff", overflow: "hidden", shadowColor: "#000", shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.25, shadowRadius: 8, elevation: 6 }}>
-        <Image source={{ uri: resolveMediaUrl(avatarUrl) }} style={{ width: "100%", height: "100%" }}
-          onError={() => setErr(true)} resizeMode="cover" />
+      <View style={{ width: size, height: size, borderRadius: size / 2, borderWidth: 3, borderColor: "#fff", overflow: "hidden", elevation: 6 }}>
+        <Image source={{ uri: resolveMediaUrl(avatarUrl) }} style={{ width: "100%", height: "100%" }} onError={() => setErr(true)} resizeMode="cover" />
       </View>
     );
   }
   return (
     <LinearGradient colors={["#7c3aed", "#4f46e5"]}
-      style={{ width: size, height: size, borderRadius: size / 2, alignItems: "center", justifyContent: "center", borderWidth: 3, borderColor: "#fff", shadowColor: "#7c3aed", shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.4, shadowRadius: 8, elevation: 6 }}>
+      style={{ width: size, height: size, borderRadius: size / 2, alignItems: "center", justifyContent: "center", borderWidth: 3, borderColor: "#fff", elevation: 6 }}>
       <Text style={{ color: "#fff", fontSize: size * 0.35, fontWeight: "800", letterSpacing: 1 }}>{initials}</Text>
     </LinearGradient>
   );
 }
 
-function StatBlock({ value, label, colors }: { value: number; label: string; colors: any }) {
+function StatBlock({ value, label, onPress, colors }: { value: number; label: string; onPress?: () => void; colors: any }) {
   const display = value >= 1_000_000 ? `${(value / 1_000_000).toFixed(1)}M` : value >= 1000 ? `${(value / 1000).toFixed(1)}k` : String(value);
   return (
-    <View style={styles.statBlock}>
+    <Pressable style={styles.statBlock} onPress={onPress}>
       <Text style={[styles.statValue, { color: colors.foreground }]}>{display}</Text>
       <Text style={[styles.statLabel, { color: colors.mutedForeground }]}>{label}</Text>
-    </View>
+    </Pressable>
   );
 }
 
 type ViewMode = "grid" | "list";
+type PostTab = "posts" | "reels" | "saved";
 
-function PostGrid({ posts, colors, viewMode }: { posts: Post[]; colors: any; viewMode: ViewMode }) {
+function PostGrid({ posts, colors, viewMode, onDelete, isOwn }: { posts: Post[]; colors: any; viewMode: ViewMode; onDelete?: (id: string) => void; isOwn: boolean }) {
+  const router = useRouter();
   if (viewMode === "grid") {
     return (
       <View style={styles.gridWrap}>
@@ -55,28 +59,44 @@ function PostGrid({ posts, colors, viewMode }: { posts: Post[]; colors: any; vie
           const media = p.media_urls?.[0] ? resolveMediaUrl(p.media_urls[0]) : null;
           const isVideo = p.media_type === "video";
           return (
-            <Link key={p.id} href={`/post/${p.id}` as any} asChild>
-              <Pressable style={({ pressed }) => [styles.gridItem, { opacity: pressed ? 0.8 : 1 }]}>
-                {media ? (
-                  <Image source={{ uri: media }} style={styles.gridImg} resizeMode="cover" />
-                ) : (
-                  <View style={[styles.gridImg, { backgroundColor: colors.secondary, alignItems: "center", justifyContent: "center" }]}>
-                    <Feather name="file-text" size={22} color={colors.mutedForeground} />
-                  </View>
-                )}
-                {isVideo && (
-                  <View style={styles.gridVideoIcon}>
-                    <Feather name="play" size={12} color="#fff" />
-                  </View>
-                )}
-                <LinearGradient colors={["transparent", "rgba(0,0,0,0.55)"]} style={styles.gridOverlay}>
-                  <View style={styles.gridStats}>
-                    <Feather name="heart" size={11} color="#fff" />
-                    <Text style={styles.gridStatText}>{formatCount(p.likes_count)}</Text>
-                  </View>
-                </LinearGradient>
-              </Pressable>
-            </Link>
+            <Pressable
+              key={p.id}
+              onPress={() => router.push(`/post/${p.id}` as any)}
+              onLongPress={() => {
+                if (isOwn && onDelete) {
+                  Alert.alert("Delete Post", "Are you sure you want to delete this post?", [
+                    { text: "Cancel", style: "cancel" },
+                    { text: "Delete", style: "destructive", onPress: () => onDelete(p.id) },
+                  ]);
+                }
+              }}
+              style={({ pressed }) => [styles.gridItem, { opacity: pressed ? 0.85 : 1 }]}
+            >
+              {media ? (
+                <Image source={{ uri: media }} style={styles.gridImg} resizeMode="cover" />
+              ) : (
+                <View style={[styles.gridImg, { backgroundColor: colors.secondary, alignItems: "center", justifyContent: "center" }]}>
+                  <Feather name="file-text" size={22} color={colors.mutedForeground} />
+                </View>
+              )}
+              {isVideo && (
+                <View style={styles.gridVideoIcon}>
+                  <Feather name="play" size={10} color="#fff" />
+                </View>
+              )}
+              <LinearGradient colors={["transparent", "rgba(0,0,0,0.6)"]} style={styles.gridOverlay}>
+                <View style={styles.gridStats}>
+                  <Feather name="heart" size={10} color="#fff" />
+                  <Text style={styles.gridStatText}>{formatCount(p.likes_count)}</Text>
+                  {p.views_count > 0 && (
+                    <>
+                      <Feather name="eye" size={10} color="#fff" style={{ marginLeft: 6 }} />
+                      <Text style={styles.gridStatText}>{formatCount(p.views_count)}</Text>
+                    </>
+                  )}
+                </View>
+              </LinearGradient>
+            </Pressable>
           );
         })}
       </View>
@@ -87,25 +107,37 @@ function PostGrid({ posts, colors, viewMode }: { posts: Post[]; colors: any; vie
     <View>
       {posts.map(p => {
         const media = p.media_urls?.[0] ? resolveMediaUrl(p.media_urls[0]) : null;
-        const aspectRatio = p.media_width && p.media_height ? p.media_width / p.media_height : 1;
+        const aspectRatio = p.media_width && p.media_height ? p.media_width / p.media_height : null;
         return (
-          <Link key={p.id} href={`/post/${p.id}` as any} asChild>
-            <Pressable style={[styles.listCard, { borderBottomColor: colors.border }]}>
-              {media && (
-                <Image source={{ uri: media }}
-                  style={[styles.listCardImg, { aspectRatio: Math.min(Math.max(aspectRatio, 0.5), 2) }]}
-                  resizeMode="contain" />
-              )}
-              {!!p.content && <Text style={[styles.listCardContent, { color: colors.foreground }]} numberOfLines={4}>{p.content}</Text>}
-              <View style={styles.listCardMeta}>
-                <Text style={[styles.listCardTime, { color: colors.mutedForeground }]}>{timeAgo(p.created_at)}</Text>
-                <View style={styles.listCardStats}>
-                  <View style={styles.listStat}><Feather name="heart" size={12} color={colors.mutedForeground} /><Text style={[styles.listStatText, { color: colors.mutedForeground }]}>{formatCount(p.likes_count)}</Text></View>
-                  <View style={styles.listStat}><Feather name="message-circle" size={12} color={colors.mutedForeground} /><Text style={[styles.listStatText, { color: colors.mutedForeground }]}>{formatCount(p.comments_count)}</Text></View>
-                </View>
+          <Pressable
+            key={p.id}
+            onPress={() => router.push(`/post/${p.id}` as any)}
+            onLongPress={() => {
+              if (isOwn && onDelete) {
+                Alert.alert("Delete Post", "Are you sure?", [
+                  { text: "Cancel", style: "cancel" },
+                  { text: "Delete", style: "destructive", onPress: () => onDelete(p.id) },
+                ]);
+              }
+            }}
+            style={[styles.listCard, { borderBottomColor: colors.border }]}
+          >
+            {media && aspectRatio && (
+              <Image source={{ uri: media }}
+                style={[styles.listCardImg, { aspectRatio: Math.min(Math.max(aspectRatio, 0.4), 2.5) }]}
+                resizeMode="contain" />
+            )}
+            {media && !aspectRatio && <Image source={{ uri: media }} style={[styles.listCardImg, { aspectRatio: 1 }]} resizeMode="cover" />}
+            {!!p.content && <Text style={[styles.listCardContent, { color: colors.foreground }]} numberOfLines={4}>{p.content}</Text>}
+            <View style={styles.listCardMeta}>
+              <Text style={[styles.listCardTime, { color: colors.mutedForeground }]}>{timeAgo(p.created_at)}</Text>
+              <View style={styles.listCardStats}>
+                <View style={styles.listStat}><Feather name="heart" size={12} color={colors.mutedForeground} /><Text style={[styles.listStatText, { color: colors.mutedForeground }]}>{formatCount(p.likes_count)}</Text></View>
+                <View style={styles.listStat}><Feather name="message-circle" size={12} color={colors.mutedForeground} /><Text style={[styles.listStatText, { color: colors.mutedForeground }]}>{formatCount(p.comments_count)}</Text></View>
+                <View style={styles.listStat}><Feather name="eye" size={12} color={colors.mutedForeground} /><Text style={[styles.listStatText, { color: colors.mutedForeground }]}>{formatCount(p.views_count)}</Text></View>
               </View>
-            </Pressable>
-          </Link>
+            </View>
+          </Pressable>
         );
       })}
     </View>
@@ -118,22 +150,24 @@ function SettingsSheet({ visible, onClose, onLogout, colors, colorScheme }: {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const isDark = colorScheme === "dark";
-
   const sections = [
     { title: "Account", items: [
-      { icon: "user" as const, label: "Edit Profile", onPress: () => { onClose(); router.push("/edit-profile" as any); }, chevron: true },
-      { icon: "lock" as const, label: "Change Password", onPress: () => { onClose(); router.push("/change-password" as any); }, chevron: true },
+      { icon: "user" as const, label: "Edit Profile", onPress: () => { onClose(); router.push("/edit-profile" as any); } },
+      { icon: "lock" as const, label: "Change Password", onPress: () => { onClose(); router.push("/change-password" as any); } },
     ]},
     { title: "Privacy & Safety", items: [
-      { icon: "eye-off" as const, label: "Blocked Users", onPress: () => {}, chevron: true },
-      { icon: "bell" as const, label: "Notifications", onPress: () => { onClose(); router.push("/notifications" as any); }, chevron: true },
+      { icon: "eye-off" as const, label: "Blocked Users", onPress: () => {} },
+      { icon: "bell" as const, label: "Notifications", onPress: () => { onClose(); router.push("/notifications" as any); } },
+    ]},
+    { title: "Content", items: [
+      { icon: "film" as const, label: "Your Reels", onPress: () => { onClose(); } },
+      { icon: "bookmark" as const, label: "Saved Posts", onPress: () => { onClose(); } },
     ]},
     { title: "Support", items: [
-      { icon: "help-circle" as const, label: "Help & FAQ", onPress: () => {}, chevron: true },
-      { icon: "info" as const, label: "About", onPress: () => {}, chevron: true, detail: "v2.0.0" },
+      { icon: "help-circle" as const, label: "Help & FAQ", onPress: () => {} },
+      { icon: "info" as const, label: "About", onPress: () => {}, detail: "v2.0.0" },
     ]},
   ];
-
   return (
     <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}>
       <View style={{ flex: 1, backgroundColor: colors.background }}>
@@ -151,8 +185,8 @@ function SettingsSheet({ visible, onClose, onLogout, colors, colorScheme }: {
                     style={({ pressed }) => [styles.settingsRow, i < section.items.length - 1 && { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border }, pressed && { opacity: 0.6 }]}>
                     <View style={styles.settingsIconWrap}><Feather name={item.icon} size={15} color="#7c3aed" /></View>
                     <Text style={[styles.settingsLabel, { color: colors.foreground }]}>{item.label}</Text>
-                    {"detail" in item && item.detail ? <Text style={{ color: colors.mutedForeground, fontSize: 13, marginRight: 4 }}>{item.detail}</Text> : null}
-                    {("chevron" in item && item.chevron) ? <Feather name="chevron-right" size={16} color={colors.mutedForeground} /> : null}
+                    {"detail" in item && item.detail ? <Text style={{ color: colors.mutedForeground, fontSize: 13, marginRight: 4 }}>{(item as any).detail}</Text> : null}
+                    <Feather name="chevron-right" size={16} color={colors.mutedForeground} />
                   </Pressable>
                 ))}
               </View>
@@ -177,9 +211,10 @@ export default function ProfileScreen() {
   const isWeb = Platform.OS === "web";
   const isDark = colorScheme === "dark";
   const router = useRouter();
+  const qc = useQueryClient();
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [viewMode, setViewMode] = useState<ViewMode>("grid");
-  const [postTab, setPostTab] = useState<"posts" | "reels">("posts");
+  const [postTab, setPostTab] = useState<PostTab>("posts");
 
   const { data: profile, isLoading: profileLoading } = useQuery({
     queryKey: ["my-profile", user?.id],
@@ -189,9 +224,21 @@ export default function ProfileScreen() {
 
   const { data: posts = [], isLoading: postsLoading } = useQuery({
     queryKey: ["my-posts", user?.id, postTab],
-    queryFn: () => fetchUserPosts(user?.id ?? "", postTab === "reels"),
+    queryFn: () => {
+      if (postTab === "saved") return fetchSavedPosts(user?.id ?? "");
+      return fetchUserPosts(user?.id ?? "", postTab === "reels");
+    },
     enabled: !!user?.id,
   });
+
+  const handleDelete = async (postId: string) => {
+    if (!user?.id) return;
+    try {
+      await deletePost(postId, user.id);
+      qc.invalidateQueries({ queryKey: ["my-posts"] });
+      qc.invalidateQueries({ queryKey: ["feed"] });
+    } catch { Alert.alert("Error", "Could not delete post"); }
+  };
 
   if (authLoading) return null;
   if (!isAuthenticated) return <Redirect href="/login" />;
@@ -200,37 +247,31 @@ export default function ProfileScreen() {
   const displayName = profile?.display_name ?? [user?.firstName, user?.lastName].filter(Boolean).join(" ") ?? "User";
   const avatarUrl = profile?.avatar_url ?? user?.profileImageUrl ?? null;
 
-  const handleLogout = () => {
-    Alert.alert("Log Out", "Are you sure?", [
-      { text: "Cancel", style: "cancel" },
-      { text: "Log Out", style: "destructive", onPress: logout },
-    ]);
-  };
+  const handleLogout = () => Alert.alert("Log Out", "Are you sure?", [
+    { text: "Cancel", style: "cancel" },
+    { text: "Log Out", style: "destructive", onPress: logout },
+  ]);
+
+  const tabs: { key: PostTab; icon: any; label: string }[] = [
+    { key: "posts", icon: "grid", label: "Posts" },
+    { key: "reels", icon: "film", label: "Reels" },
+    { key: "saved", icon: "bookmark", label: "Saved" },
+  ];
 
   return (
     <>
       <StatusBar barStyle={isDark ? "light-content" : "dark-content"} />
-      <SettingsSheet visible={settingsOpen} onClose={() => setSettingsOpen(false)}
-        onLogout={handleLogout} colors={colors} colorScheme={colorScheme} />
-
-      <ScrollView style={{ backgroundColor: colors.background }}
-        contentContainerStyle={{ paddingBottom: insets.bottom + 80 }}>
-        {/* Cover + settings */}
-        <LinearGradient
-          colors={isDark ? ["#1e1b4b", "#2d1b69", "#1e1b4b"] : ["#ede9fe", "#ddd6fe", "#c4b5fd"]}
-          start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}
-          style={[styles.coverGradient, { paddingTop: isWeb ? 67 : insets.top + 12 }]}>
-          {profile?.cover_url && (
-            <Image source={{ uri: resolveMediaUrl(profile.cover_url) }} style={StyleSheet.absoluteFill} resizeMode="cover" />
-          )}
-          <Pressable onPress={() => setSettingsOpen(true)}
-            style={[styles.settingsBtn, { backgroundColor: isDark ? "#ffffff18" : "#00000012" }]} hitSlop={8}>
+      <SettingsSheet visible={settingsOpen} onClose={() => setSettingsOpen(false)} onLogout={handleLogout} colors={colors} colorScheme={colorScheme} />
+      <ScrollView style={{ backgroundColor: colors.background }} contentContainerStyle={{ paddingBottom: insets.bottom + 80 }}>
+        {/* Cover */}
+        <View style={[styles.coverWrap, { paddingTop: isWeb ? 67 : insets.top }]}>
+          <LinearGradient colors={isDark ? ["#1e1b4b", "#2d1b69", "#1e1b4b"] : ["#ede9fe", "#ddd6fe", "#c4b5fd"]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={StyleSheet.absoluteFill} />
+          {profile?.cover_url && <Image source={{ uri: resolveMediaUrl(profile.cover_url) }} style={StyleSheet.absoluteFill} resizeMode="cover" />}
+          <Pressable onPress={() => setSettingsOpen(true)} style={[styles.settingsBtn, { backgroundColor: isDark ? "#ffffff18" : "#00000012" }]} hitSlop={8}>
             <Feather name="settings" size={18} color={isDark ? "#e2d9f3" : "#4c1d95"} />
           </Pressable>
-          <View style={styles.avatarRow}>
-            <Avatar name={displayName} size={92} avatarUrl={avatarUrl} />
-          </View>
-        </LinearGradient>
+          <View style={styles.avatarRow}><Avatar name={displayName} size={92} avatarUrl={avatarUrl} /></View>
+        </View>
 
         {/* Profile info */}
         <View style={[styles.profileInfo, { borderBottomColor: colors.border }]}>
@@ -262,13 +303,11 @@ export default function ProfileScreen() {
 
           {/* Quick actions */}
           <View style={styles.quickActions}>
-            <Pressable onPress={() => router.push("/(tabs)/messages" as any)}
-              style={[styles.quickBtn, { backgroundColor: colors.primary }]}>
+            <Pressable onPress={() => router.push("/(tabs)/messages" as any)} style={[styles.quickBtn, { backgroundColor: colors.primary }]}>
               <Feather name="message-circle" size={15} color="#fff" />
               <Text style={styles.quickBtnText}>Message</Text>
             </Pressable>
-            <Pressable onPress={() => router.push("/live-sessions" as any)}
-              style={[styles.quickBtn, { backgroundColor: "#ef4444" }]}>
+            <Pressable onPress={() => router.push("/live-sessions" as any)} style={[styles.quickBtn, { backgroundColor: "#ef4444" }]}>
               <Feather name="radio" size={15} color="#fff" />
               <Text style={styles.quickBtnText}>Go Live</Text>
             </Pressable>
@@ -277,23 +316,19 @@ export default function ProfileScreen() {
 
         {/* Tab bar */}
         <View style={[styles.tabBar, { borderBottomColor: colors.border }]}>
-          {(["posts", "reels"] as const).map(tab => (
-            <Pressable key={tab} onPress={() => setPostTab(tab)} style={styles.tabBtn}>
-              <Feather name={tab === "posts" ? "grid" : "film"} size={17}
-                color={postTab === tab ? colors.primary : colors.mutedForeground} />
-              <Text style={[styles.tabLabel, { color: postTab === tab ? colors.primary : colors.mutedForeground },
-                postTab === tab && styles.tabLabelActive]}>{tab === "posts" ? "Posts" : "Reels"}</Text>
-              {postTab === tab && <View style={[styles.tabIndicator, { backgroundColor: colors.primary }]} />}
+          {tabs.map(tab => (
+            <Pressable key={tab.key} onPress={() => setPostTab(tab.key)} style={styles.tabBtn}>
+              <Feather name={tab.icon} size={16} color={postTab === tab.key ? colors.primary : colors.mutedForeground} />
+              <Text style={[styles.tabLabel, { color: postTab === tab.key ? colors.primary : colors.mutedForeground }, postTab === tab.key && styles.tabLabelActive]}>{tab.label}</Text>
+              {postTab === tab.key && <View style={[styles.tabIndicator, { backgroundColor: colors.primary }]} />}
             </Pressable>
           ))}
           <View style={{ flex: 1 }} />
           <View style={styles.viewToggle}>
-            <Pressable onPress={() => setViewMode("grid")} hitSlop={8}
-              style={[styles.viewBtn, viewMode === "grid" && { backgroundColor: colors.primary + "22" }]}>
+            <Pressable onPress={() => setViewMode("grid")} hitSlop={8} style={[styles.viewBtn, viewMode === "grid" && { backgroundColor: colors.primary + "22" }]}>
               <Feather name="grid" size={16} color={viewMode === "grid" ? colors.primary : colors.mutedForeground} />
             </Pressable>
-            <Pressable onPress={() => setViewMode("list")} hitSlop={8}
-              style={[styles.viewBtn, viewMode === "list" && { backgroundColor: colors.primary + "22" }]}>
+            <Pressable onPress={() => setViewMode("list")} hitSlop={8} style={[styles.viewBtn, viewMode === "list" && { backgroundColor: colors.primary + "22" }]}>
               <Feather name="list" size={16} color={viewMode === "list" ? colors.primary : colors.mutedForeground} />
             </Pressable>
           </View>
@@ -304,16 +339,22 @@ export default function ProfileScreen() {
         ) : posts.length === 0 ? (
           <View style={styles.emptyPosts}>
             <View style={[styles.emptyIconWrap, { backgroundColor: isDark ? "#ffffff0a" : "#7c3aed0a" }]}>
-              <Feather name={postTab === "posts" ? "grid" : "film"} size={32} color="#7c3aed" />
+              <Feather name={postTab === "saved" ? "bookmark" : postTab === "posts" ? "grid" : "film"} size={32} color="#7c3aed" />
             </View>
-            <Text style={[styles.emptyTitle, { color: colors.foreground }]}>No {postTab} yet</Text>
-            <Text style={[styles.emptyDesc, { color: colors.mutedForeground }]}>Share your first {postTab === "posts" ? "post" : "reel"} to get started</Text>
-            <Link href="/create" asChild>
-              <Pressable style={styles.emptyAction}><Text style={styles.emptyActionText}>Create {postTab === "posts" ? "Post" : "Reel"}</Text></Pressable>
-            </Link>
+            <Text style={[styles.emptyTitle, { color: colors.foreground }]}>
+              {postTab === "saved" ? "No saved posts" : `No ${postTab} yet`}
+            </Text>
+            <Text style={[styles.emptyDesc, { color: colors.mutedForeground }]}>
+              {postTab === "saved" ? "Posts you save will appear here" : `Share your first ${postTab === "posts" ? "post" : "reel"} to get started`}
+            </Text>
+            {postTab !== "saved" && (
+              <Link href="/create" asChild>
+                <Pressable style={styles.emptyAction}><Text style={styles.emptyActionText}>Create {postTab === "posts" ? "Post" : "Reel"}</Text></Pressable>
+              </Link>
+            )}
           </View>
         ) : (
-          <PostGrid posts={posts as Post[]} colors={colors} viewMode={viewMode} />
+          <PostGrid posts={posts as Post[]} colors={colors} viewMode={viewMode} onDelete={handleDelete} isOwn={true} />
         )}
       </ScrollView>
     </>
@@ -321,7 +362,7 @@ export default function ProfileScreen() {
 }
 
 const styles = StyleSheet.create({
-  coverGradient: { paddingBottom: 0, position: "relative", height: 160 },
+  coverWrap: { height: 200, position: "relative" },
   settingsBtn: { position: "absolute", top: 16, right: 16, width: 38, height: 38, borderRadius: 19, alignItems: "center", justifyContent: "center" },
   avatarRow: { position: "absolute", bottom: -46, left: 18 },
   profileInfo: { paddingHorizontal: 18, paddingTop: 56, paddingBottom: 14, borderBottomWidth: StyleSheet.hairlineWidth },
@@ -339,9 +380,9 @@ const styles = StyleSheet.create({
   quickActions: { flexDirection: "row", gap: 10, marginTop: 4 },
   quickBtn: { flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, paddingVertical: 10, borderRadius: 12 },
   quickBtnText: { color: "#fff", fontWeight: "700", fontSize: 14 },
-  tabBar: { flexDirection: "row", alignItems: "center", paddingHorizontal: 18, borderBottomWidth: StyleSheet.hairlineWidth },
-  tabBtn: { flexDirection: "row", alignItems: "center", gap: 6, paddingVertical: 12, paddingRight: 20, position: "relative" },
-  tabLabel: { fontSize: 14, fontWeight: "500" },
+  tabBar: { flexDirection: "row", alignItems: "center", paddingHorizontal: 14, borderBottomWidth: StyleSheet.hairlineWidth },
+  tabBtn: { flexDirection: "row", alignItems: "center", gap: 5, paddingVertical: 12, paddingRight: 16, position: "relative" },
+  tabLabel: { fontSize: 13, fontWeight: "500" },
   tabLabelActive: { fontWeight: "700" },
   tabIndicator: { position: "absolute", bottom: 0, left: 0, right: 0, height: 2, borderRadius: 2 },
   viewToggle: { flexDirection: "row", gap: 4 },
@@ -349,18 +390,18 @@ const styles = StyleSheet.create({
   gridWrap: { flexDirection: "row", flexWrap: "wrap", gap: 2, padding: 2 },
   gridItem: { width: GRID_SIZE, height: GRID_SIZE, position: "relative", overflow: "hidden" },
   gridImg: { width: "100%", height: "100%" },
-  gridVideoIcon: { position: "absolute", top: 6, right: 6, backgroundColor: "rgba(0,0,0,0.5)", borderRadius: 8, padding: 3 },
-  gridOverlay: { position: "absolute", bottom: 0, left: 0, right: 0, height: 40, flexDirection: "row", alignItems: "flex-end", paddingHorizontal: 6, paddingBottom: 5 },
+  gridVideoIcon: { position: "absolute", top: 6, right: 6, backgroundColor: "rgba(0,0,0,0.55)", borderRadius: 8, padding: 3 },
+  gridOverlay: { position: "absolute", bottom: 0, left: 0, right: 0, height: 44, flexDirection: "row", alignItems: "flex-end", paddingHorizontal: 5, paddingBottom: 5 },
   gridStats: { flexDirection: "row", alignItems: "center", gap: 3 },
-  gridStatText: { color: "#fff", fontSize: 11, fontWeight: "600" },
+  gridStatText: { color: "#fff", fontSize: 10, fontWeight: "600" },
   listCard: { paddingHorizontal: 16, paddingVertical: 14, borderBottomWidth: StyleSheet.hairlineWidth },
   listCardImg: { width: "100%", borderRadius: 12, marginBottom: 10, backgroundColor: "#000" },
   listCardContent: { fontSize: 15, lineHeight: 22, marginBottom: 10 },
   listCardMeta: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
   listCardTime: { fontSize: 12 },
-  listCardStats: { flexDirection: "row", gap: 14 },
+  listCardStats: { flexDirection: "row", gap: 12 },
   listStat: { flexDirection: "row", alignItems: "center", gap: 4 },
-  listStatText: { fontSize: 13 },
+  listStatText: { fontSize: 12 },
   emptyPosts: { alignItems: "center", paddingVertical: 56, paddingHorizontal: 40, gap: 8 },
   emptyIconWrap: { width: 72, height: 72, borderRadius: 36, alignItems: "center", justifyContent: "center", marginBottom: 8 },
   emptyTitle: { fontSize: 17, fontWeight: "700", marginTop: 4 },

@@ -123,7 +123,7 @@ export default function CreateScreen() {
       setContent("");
       setMedia([]);
       Alert.alert("Posted!", `Your ${mode} is now live.`, [
-        { text: "OK", onPress: () => router.replace(mode === "reel" ? "/(tabs)/reels" : "/(tabs)/") }
+        { text: "OK", onPress: () => router.replace(mode === "reel" ? "/(tabs)/reels" as any : "/(tabs)" as any) }
       ]);
     } catch (e: any) {
       Alert.alert("Error", e.message ?? "Failed to post. Try again.");
