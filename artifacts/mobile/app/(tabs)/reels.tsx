@@ -10,8 +10,8 @@ import { Feather } from "@expo/vector-icons";
 import { AntDesign } from "@expo/vector-icons";
 import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { router, Link } from "expo-router";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useFocusEffect, router, Link } from "expo-router";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/lib/auth";
 import AuthPromptModal from "@/components/AuthPromptModal";
 import { useColors } from "@/hooks/useColors";
@@ -22,7 +22,7 @@ import {
 } from "@/lib/db";
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get("window");
-const REEL_HEIGHT = Platform.OS === "web" ? 620 : SCREEN_HEIGHT;
+const REEL_HEIGHT = Platform.OS === "web" ? Math.min(640, SCREEN_HEIGHT - 100) : SCREEN_HEIGHT;
 
 function Avatar({ name, avatarUrl, size }: { name: string; avatarUrl?: string | null; size: number }) {
   const [err, setErr] = useState(false);
@@ -132,10 +132,14 @@ function ReelCard({ item, isVisible }: { item: Post; isVisible: boolean }) {
   const isPortrait = videoAspect !== null && videoAspect < 1;
   const isLandscape = videoAspect !== null && videoAspect > 1.3;
 
+  // Play/pause based on visibility
   useEffect(() => {
     if (!videoRef.current) return;
-    if (isVisible && !isPaused) videoRef.current.playAsync().catch(() => {});
-    else videoRef.current.pauseAsync().catch(() => {});
+    if (isVisible && !isPaused) {
+      videoRef.current.playAsync().catch(() => {});
+    } else {
+      videoRef.current.pauseAsync().catch(() => {});
+    }
   }, [isVisible, isPaused]);
 
   useEffect(() => {
@@ -160,8 +164,7 @@ function ReelCard({ item, isVisible }: { item: Post; isVisible: boolean }) {
 
   const handleTap = () => {
     const now = Date.now();
-    if (now - lastTap.current < 300) {
-      // Double tap = like
+    if (now - lastTap.current < 280) {
       if (!isLiked) {
         setIsLiked(true);
         setLikesCount(c => c + 1);
@@ -172,7 +175,6 @@ function ReelCard({ item, isVisible }: { item: Post; isVisible: boolean }) {
         animateDoubleTapHeart();
       }
     } else {
-      // Single tap = pause
       setIsPaused(p => !p);
       Animated.sequence([
         Animated.timing(pauseOpacity, { toValue: 1, duration: 150, useNativeDriver: true }),
@@ -211,7 +213,6 @@ function ReelCard({ item, isVisible }: { item: Post; isVisible: boolean }) {
   const hashtags = (item.content ?? "").split(/\s+/).filter(w => w.startsWith("#")).slice(0, 5);
   const caption = (item.content ?? "").split(/\s+/).filter(w => !w.startsWith("#")).join(" ");
 
-  // Determine video resize mode and container
   const getVideoStyle = (): any => {
     if (isLandscape) {
       return { position: "absolute", left: 0, right: 0, top: "50%", aspectRatio: videoAspect!, transform: [{ translateY: -(SCREEN_WIDTH / videoAspect!) / 2 }] };
@@ -252,23 +253,27 @@ function ReelCard({ item, isVisible }: { item: Post; isVisible: boolean }) {
       </Animated.View>
 
       <Animated.View style={[S.pauseOverlay, { opacity: pauseOpacity, pointerEvents: "none" } as any]}>
-        <Feather name={isPaused ? "play" : "pause"} size={56} color="#fff" />
+        <View style={S.pauseIcon}>
+          <Feather name={isPaused ? "play" : "pause"} size={36} color="#fff" />
+        </View>
       </Animated.View>
 
-      <LinearGradient colors={["rgba(0,0,0,0.5)", "transparent"]} style={[S.topGrad, { pointerEvents: "none" } as any]} />
-      <LinearGradient colors={["transparent", "rgba(0,0,0,0.85)"]} style={[S.bottomGrad, { pointerEvents: "none" } as any]} />
+      <LinearGradient colors={["rgba(0,0,0,0.55)", "transparent"]} style={[S.topGrad, { pointerEvents: "none" } as any]} />
+      <LinearGradient colors={["transparent", "rgba(0,0,0,0.9)"]} style={[S.bottomGrad, { pointerEvents: "none" } as any]} />
 
       <VideoProgress progress={position} duration={duration} />
 
-      {/* Aspect ratio indicator */}
+      {/* Aspect badge */}
       {videoAspect !== null && (
         <View style={S.orientBadge}>
           <Feather name={isPortrait ? "smartphone" : "monitor"} size={9} color="rgba(255,255,255,0.7)" />
-          {videoAspect !== null && <Text style={{ color: "rgba(255,255,255,0.6)", fontSize: 9, marginLeft: 2 }}>{isPortrait ? "9:16" : isLandscape ? "16:9" : "1:1"}</Text>}
+          <Text style={{ color: "rgba(255,255,255,0.6)", fontSize: 9, marginLeft: 2 }}>
+            {isPortrait ? "9:16" : isLandscape ? "16:9" : "1:1"}
+          </Text>
         </View>
       )}
 
-      {/* Bottom info */}
+      {/* Bottom left info */}
       <View style={S.bottomLeft}>
         <Link href={`/user/${item.author_id}` as any} asChild>
           <Pressable style={S.authorRow}>
@@ -311,7 +316,7 @@ function ReelCard({ item, isVisible }: { item: Post; isVisible: boolean }) {
         </Pressable>
 
         <Pressable onPress={handleSave} style={S.sideBtn}>
-          <View style={[S.sideBtnCircle, isSaved && { backgroundColor: "#a78bfa33" }]}>
+          <View style={[S.sideBtnCircle, isSaved && { backgroundColor: "rgba(167,139,250,0.25)", borderColor: "rgba(167,139,250,0.5)" }]}>
             <Ionicons name={isSaved ? "bookmark" : "bookmark-outline"} size={22} color={isSaved ? "#a78bfa" : "#fff"} />
           </View>
           <Text style={[S.sideCount, isSaved && { color: "#a78bfa" }]}>{isSaved ? "Saved" : "Save"}</Text>
@@ -324,12 +329,7 @@ function ReelCard({ item, isVisible }: { item: Post; isVisible: boolean }) {
         </Pressable>
       </View>
 
-      <ReelComments
-        postId={item.id} visible={commentOpen}
-        onClose={() => setCommentOpen(false)}
-        userId={user?.id ?? ""}
-        onCountChange={setCommentsCount}
-      />
+      <ReelComments postId={item.id} visible={commentOpen} onClose={() => setCommentOpen(false)} userId={user?.id ?? ""} onCountChange={setCommentsCount} />
     </View>
   );
 }
@@ -339,6 +339,18 @@ export default function ReelsScreen() {
   const insets = useSafeAreaInsets();
   const isWeb = Platform.OS === "web";
   const [visibleIndex, setVisibleIndex] = useState(0);
+  const [tabFocused, setTabFocused] = useState(true);
+
+  // Stop all videos when navigating away from this tab
+  useFocusEffect(
+    useCallback(() => {
+      setTabFocused(true);
+      return () => {
+        setTabFocused(false);
+        setVisibleIndex(-1); // force all videos to pause
+      };
+    }, [])
+  );
 
   const { data = [], isLoading, refetch } = useQuery({
     queryKey: ["reels"],
@@ -347,21 +359,21 @@ export default function ReelsScreen() {
   });
 
   const onViewableItemsChanged = useCallback(({ viewableItems }: any) => {
+    if (!tabFocused) return;
     const first = viewableItems.find((v: any) => v.isViewable);
     if (first != null) setVisibleIndex(first.index ?? 0);
-  }, []);
+  }, [tabFocused]);
 
   const viewabilityConfigCallbackPairs = useRef([{
-    viewabilityConfig: { itemVisiblePercentThreshold: 60 },
+    viewabilityConfig: { itemVisiblePercentThreshold: 65 },
     onViewableItemsChanged,
   }]);
-
-
 
   return (
     <View style={S.container}>
       {Platform.OS !== "web" && <StatusBar barStyle="light-content" translucent backgroundColor="transparent" />}
 
+      {/* Floating header */}
       <View style={[S.header, { paddingTop: isWeb ? 16 : insets.top + 4 }]}>
         <Text style={S.headerTitle}>Reels</Text>
         <Pressable onPress={() => router.push("/(tabs)/create" as any)} style={S.createBtn}>
@@ -386,9 +398,11 @@ export default function ReelsScreen() {
         <FlatList
           data={data as Post[]}
           keyExtractor={item => item.id}
-          renderItem={({ item, index }) => <ReelCard item={item} isVisible={visibleIndex === index} />}
+          renderItem={({ item, index }) => (
+            <ReelCard item={item} isVisible={tabFocused && visibleIndex === index} />
+          )}
           snapToInterval={REEL_HEIGHT}
-          decelerationRate="fast"
+          decelerationRate={Platform.OS === "ios" ? 0.992 : "fast"}
           snapToAlignment="start"
           showsVerticalScrollIndicator={false}
           onRefresh={refetch}
@@ -396,6 +410,11 @@ export default function ReelsScreen() {
           pagingEnabled={Platform.OS !== "web"}
           viewabilityConfigCallbackPairs={viewabilityConfigCallbackPairs.current}
           getItemLayout={(_, index) => ({ length: REEL_HEIGHT, offset: REEL_HEIGHT * index, index })}
+          removeClippedSubviews={Platform.OS !== "web"}
+          maxToRenderPerBatch={3}
+          windowSize={5}
+          initialNumToRender={2}
+          scrollEventThrottle={16}
         />
       )}
     </View>
@@ -404,26 +423,49 @@ export default function ReelsScreen() {
 
 const S = StyleSheet.create({
   container: { flex: 1, backgroundColor: "#000" },
-  header: { position: "absolute", top: 0, left: 0, right: 0, zIndex: 20, flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 16, paddingBottom: 8 },
-  headerTitle: { color: "#fff", fontSize: 22, fontWeight: "800", letterSpacing: -0.5, textShadowColor: "rgba(0,0,0,0.5)", textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 4 },
+  header: {
+    position: "absolute", top: 0, left: 0, right: 0, zIndex: 20,
+    flexDirection: "row", alignItems: "center", justifyContent: "space-between",
+    paddingHorizontal: 16, paddingBottom: 8,
+  },
+  headerTitle: {
+    color: "#fff", fontSize: 22, fontWeight: "800", letterSpacing: -0.5,
+    textShadowColor: "rgba(0,0,0,0.5)", textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 4,
+  },
   createBtn: { backgroundColor: "#7c3aed", borderRadius: 20, padding: 8 },
   center: { flex: 1, alignItems: "center", justifyContent: "center" },
   reelCard: { position: "relative", overflow: "hidden", backgroundColor: "#000" },
   pauseOverlay: { ...StyleSheet.absoluteFillObject, alignItems: "center", justifyContent: "center", zIndex: 10 },
+  pauseIcon: {
+    width: 72, height: 72, borderRadius: 36,
+    backgroundColor: "rgba(0,0,0,0.45)",
+    alignItems: "center", justifyContent: "center",
+    borderWidth: 1, borderColor: "rgba(255,255,255,0.25)",
+  },
   doubleTapHeart: { position: "absolute", top: "40%", left: "50%", marginLeft: -40, zIndex: 30 },
   topGrad: { position: "absolute", top: 0, left: 0, right: 0, height: 130, zIndex: 5 },
-  bottomGrad: { position: "absolute", bottom: 0, left: 0, right: 0, height: 340, zIndex: 5 },
-  progressBar: { position: "absolute", top: 0, left: 0, right: 0, height: 2.5, backgroundColor: "rgba(255,255,255,0.2)", zIndex: 20 },
+  bottomGrad: { position: "absolute", bottom: 0, left: 0, right: 0, height: 360, zIndex: 5 },
+  progressBar: { position: "absolute", top: 0, left: 0, right: 0, height: 2.5, backgroundColor: "rgba(255,255,255,0.18)", zIndex: 20 },
   progressFill: { height: "100%", backgroundColor: "#7c3aed" },
-  orientBadge: { position: "absolute", top: 8, right: 8, zIndex: 25, flexDirection: "row", alignItems: "center", backgroundColor: "rgba(0,0,0,0.45)", borderRadius: 8, padding: 4 },
-  bottomLeft: { position: "absolute", bottom: 90, left: 16, right: 96, zIndex: 10 },
+  orientBadge: {
+    position: "absolute", top: 8, right: 8, zIndex: 25,
+    flexDirection: "row", alignItems: "center",
+    backgroundColor: "rgba(0,0,0,0.45)", borderRadius: 8, padding: 4,
+  },
+  bottomLeft: { position: "absolute", bottom: 100, left: 16, right: 96, zIndex: 10 },
   authorRow: { flexDirection: "row", alignItems: "center", marginBottom: 10 },
-  authorName: { color: "#fff", fontWeight: "700", fontSize: 15, textShadowColor: "rgba(0,0,0,0.6)", textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 3 },
+  authorName: {
+    color: "#fff", fontWeight: "700", fontSize: 15,
+    textShadowColor: "rgba(0,0,0,0.6)", textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 3,
+  },
   authorHandle: { color: "rgba(255,255,255,0.65)", fontSize: 12 },
-  caption: { color: "#fff", fontSize: 14, lineHeight: 20, marginBottom: 8, textShadowColor: "rgba(0,0,0,0.5)", textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 3 },
+  caption: {
+    color: "#fff", fontSize: 14, lineHeight: 20, marginBottom: 8,
+    textShadowColor: "rgba(0,0,0,0.5)", textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 3,
+  },
   hashtagRow: { flexDirection: "row", flexWrap: "wrap", gap: 6 },
   hashtag: { color: "#a78bfa", fontSize: 13, fontWeight: "600" },
-  sideActions: { position: "absolute", right: 12, bottom: 100, alignItems: "center", gap: 22, zIndex: 10 },
+  sideActions: { position: "absolute", right: 12, bottom: 110, alignItems: "center", gap: 22, zIndex: 10 },
   sideBtn: { alignItems: "center", gap: 5 },
   sideBtnCircle: {
     width: 50, height: 50, borderRadius: 25,

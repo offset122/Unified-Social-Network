@@ -144,6 +144,11 @@ export async function deletePost(postId: string, authorId: string) {
   if (error) throw new Error(error.message);
 }
 
+export async function updatePostVisibility(postId: string, authorId: string, visibility: "public" | "followers" | "private") {
+  const { error } = await supabase.from("posts").update({ visibility }).eq("id", postId).eq("author_id", authorId);
+  if (error) throw new Error(error.message);
+}
+
 // ─── Comments ─────────────────────────────────────────────────────────────────
 
 export async function fetchComments(postId: string): Promise<Comment[]> {

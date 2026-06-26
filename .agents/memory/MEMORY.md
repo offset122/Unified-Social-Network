@@ -11,3 +11,6 @@
 - [getOrCreateDM fallback](get-or-create-dm.md) — `get_dm_conversation` RPC may not exist; always wrap in try/catch and manually lookup shared DM conversations as fallback.
 - [Icon sets for filled icons](icon-sets.md) — Feather is outline-only; use AntDesign (heart/hearto) for hearts, Ionicons (bookmark/bookmark-outline) for bookmarks in React Native.
 - [expo-camera dynamic import](expo-camera-dynamic.md) — Import expo-camera dynamically at runtime inside useEffect to avoid web crash; check Platform.OS !== "web" before requesting permissions.
+- [useFocusEffect in reels](reels-focus.md) — Import useFocusEffect from expo-router; set tabFocused state to stop videos when tab blurs; pass (tabFocused && visibleIndex === index) as isVisible.
+- [Supabase live_sessions join](live-sessions-join.md) — live_sessions 400 error on profiles(*) means FK not set or RLS blocks; full schema in supabase_schema.sql fixes this.
+- [Post type differentiation](post-type-ux.md) — Text posts: left accent + soft inner box; video posts: Video component with tap-to-play overlay; image posts: ScrollView pager with dot indicator.

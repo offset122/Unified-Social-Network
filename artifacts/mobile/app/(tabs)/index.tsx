@@ -20,11 +20,15 @@ import {
   fetchFeed, fetchStories, likePost, unlikePost, savePost, unsavePost,
   createComment, fetchComments, resolveMediaUrl, uploadMedia,
   fetchUnreadNotificationCount, generateAICaption, timeAgo, formatCount,
+  deletePost, updatePostVisibility,
   type Post, type Comment, type Profile,
 } from "@/lib/db";
 import { supabase } from "@/lib/supabase";
 
 const { width: SCREEN_WIDTH } = Dimensions.get("window");
+const isTablet = SCREEN_WIDTH >= 768;
+const CARD_MARGIN = isTablet ? 24 : 12;
+const MAX_CARD_WIDTH = isTablet ? 600 : SCREEN_WIDTH;
 
 // ─── Avatar ───────────────────────────────────────────────────────────────────
 
@@ -160,22 +164,63 @@ function CommentSheet({ postId, visible, onClose, userId, colors }: {
   );
 }
 
+// ─── Post Type Badge ──────────────────────────────────────────────────────────
+
+function PostTypeBadge({ type }: { type: "text" | "image" | "video" }) {
+  if (type === "video") {
+    return (
+      <View style={styles.typeBadge}>
+        <Feather name="video" size={10} color="#fff" />
+        <Text style={styles.typeBadgeText}>Video</Text>
+      </View>
+    );
+  }
+  if (type === "image") return null;
+  return (
+    <View style={[styles.typeBadge, { backgroundColor: "rgba(99,102,241,0.85)" }]}>
+      <Feather name="type" size={10} color="#fff" />
+      <Text style={styles.typeBadgeText}>Text</Text>
+    </View>
+  );
+}
+
+// ─── Visibility Badge ─────────────────────────────────────────────────────────
+
+function VisibilityBadge({ visibility }: { visibility: string }) {
+  const icons: Record<string, string> = { public: "globe", followers: "users", private: "lock" };
+  const icon = (icons[visibility] ?? "globe") as any;
+  return (
+    <View style={{ flexDirection: "row", alignItems: "center", gap: 3 }}>
+      <Feather name={icon} size={11} color="#a1a1aa" />
+      <Text style={{ color: "#a1a1aa", fontSize: 11, textTransform: "capitalize" }}>{visibility}</Text>
+    </View>
+  );
+}
+
 // ─── Post Card ────────────────────────────────────────────────────────────────
 
-function PostCard({ post, userId, colors, onRequireAuth }: { post: Post; userId: string; colors: any; onRequireAuth?: () => void }) {
+function PostCard({ post, userId, colors, onRequireAuth, onDeleted }: {
+  post: Post; userId: string; colors: any; onRequireAuth?: () => void;
+  onDeleted?: (id: string) => void;
+}) {
+  const qc = useQueryClient();
   const [liked, setLiked] = useState(post.is_liked ?? false);
   const [likes, setLikes] = useState(post.likes_count);
   const [saved, setSaved] = useState(post.is_saved ?? false);
   const [commentOpen, setCommentOpen] = useState(false);
   const [imgIdx, setImgIdx] = useState(0);
+  const [visibility, setVisibility] = useState(post.visibility ?? "public");
   const likeScale = useRef(new Animated.Value(1)).current;
-  const likeOpacity = useRef(new Animated.Value(0)).current;
 
   const mediaUrls = (post.media_urls ?? []).map(resolveMediaUrl).filter(Boolean);
   const isVideo = post.media_type === "video";
+  const isImage = post.media_type === "image";
+  const isText = !isVideo && !isImage;
   const aspectRatio = post.media_width && post.media_height
-    ? post.media_width / post.media_height
+    ? Math.min(Math.max(post.media_width / post.media_height, 0.5625), 1.91)
     : 1;
+
+  const isOwn = userId === post.author_id;
 
   const handleLike = () => {
     if (!userId) { onRequireAuth?.(); return; }
@@ -183,16 +228,10 @@ function PostCard({ post, userId, colors, onRequireAuth }: { post: Post; userId:
     setLiked(next);
     setLikes(l => l + (next ? 1 : -1));
     if (next) {
-      likeOpacity.setValue(0);
       Animated.sequence([
-        Animated.parallel([
-          Animated.spring(likeScale, { toValue: 1.5, useNativeDriver: true, speed: 80, bounciness: 14 }),
-          Animated.timing(likeOpacity, { toValue: 1, duration: 100, useNativeDriver: true }),
-        ]),
+        Animated.spring(likeScale, { toValue: 1.5, useNativeDriver: true, speed: 80, bounciness: 14 }),
         Animated.spring(likeScale, { toValue: 1, useNativeDriver: true, speed: 80 }),
       ]).start();
-    } else {
-      Animated.spring(likeScale, { toValue: 1, useNativeDriver: true, speed: 100 }).start();
     }
     const fn = next ? likePost : unlikePost;
     fn(userId, post.id).catch(() => { setLiked(!next); setLikes(l => l + (next ? -1 : 1)); });
@@ -206,12 +245,80 @@ function PostCard({ post, userId, colors, onRequireAuth }: { post: Post; userId:
     fn(userId, post.id).catch(() => setSaved(!next));
   };
 
+  const handleMore = () => {
+    if (!userId) { onRequireAuth?.(); return; }
+    if (isOwn) {
+      Alert.alert("Post Options", undefined, [
+        {
+          text: "Change Visibility",
+          onPress: () => {
+            Alert.alert("Set Visibility", "Who can see this post?", [
+              {
+                text: "Public", onPress: async () => {
+                  setVisibility("public");
+                  await updatePostVisibility(post.id, userId, "public");
+                  qc.invalidateQueries({ queryKey: ["feed"] });
+                }
+              },
+              {
+                text: "Followers Only", onPress: async () => {
+                  setVisibility("followers");
+                  await updatePostVisibility(post.id, userId, "followers");
+                  qc.invalidateQueries({ queryKey: ["feed"] });
+                }
+              },
+              {
+                text: "Private", onPress: async () => {
+                  setVisibility("private");
+                  await updatePostVisibility(post.id, userId, "private");
+                  qc.invalidateQueries({ queryKey: ["feed"] });
+                }
+              },
+              { text: "Cancel", style: "cancel" },
+            ]);
+          }
+        },
+        {
+          text: "Delete Post", style: "destructive",
+          onPress: () => {
+            Alert.alert("Delete Post", "This cannot be undone.", [
+              { text: "Cancel", style: "cancel" },
+              {
+                text: "Delete", style: "destructive",
+                onPress: async () => {
+                  try {
+                    await deletePost(post.id, userId);
+                    onDeleted?.(post.id);
+                    qc.invalidateQueries({ queryKey: ["feed"] });
+                  } catch { Alert.alert("Error", "Could not delete post"); }
+                }
+              },
+            ]);
+          }
+        },
+        { text: "Cancel", style: "cancel" },
+      ]);
+    } else {
+      Alert.alert("Report Post", "Flag this post as inappropriate?", [
+        { text: "Report", style: "destructive", onPress: () => {} },
+        { text: "Cancel", style: "cancel" },
+      ]);
+    }
+  };
+
   const profile = post.profiles as Profile | undefined;
   const displayName = profile?.display_name ?? "User";
   const username = profile?.username ?? "user";
 
   return (
-    <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]}>
+    <View style={[
+      styles.card,
+      { backgroundColor: colors.card, borderColor: colors.border },
+      isText && styles.textPostCard,
+    ]}>
+      {/* Text post accent */}
+      {isText && <View style={[styles.textPostAccent, { backgroundColor: colors.primary }]} />}
+
       {/* Author header */}
       <View style={styles.cardHeader}>
         <Link href={`/user/${post.author_id}` as any} asChild>
@@ -220,50 +327,65 @@ function PostCard({ post, userId, colors, onRequireAuth }: { post: Post; userId:
               <Avatar name={displayName} avatarUrl={profile?.avatar_url} size={42} />
             </View>
             <View style={{ marginLeft: 10, flex: 1 }}>
-              <Text style={[styles.authorName, { color: colors.foreground }]}>{displayName}</Text>
-              <Text style={[styles.authorMeta, { color: colors.mutedForeground }]}>
-                {"@" + username + " · " + timeAgo(post.created_at)}
-              </Text>
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                <Text style={[styles.authorName, { color: colors.foreground }]}>{displayName}</Text>
+                <PostTypeBadge type={isVideo ? "video" : isImage ? "image" : "text"} />
+              </View>
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginTop: 2 }}>
+                <Text style={[styles.authorMeta, { color: colors.mutedForeground }]}>
+                  {"@" + username + " · " + timeAgo(post.created_at)}
+                </Text>
+                {isOwn && <VisibilityBadge visibility={visibility} />}
+              </View>
             </View>
           </Pressable>
         </Link>
-        <Pressable hitSlop={10} style={styles.moreBtn}>
+        <Pressable hitSlop={10} style={styles.moreBtn} onPress={handleMore}>
           <Feather name="more-horizontal" size={20} color={colors.mutedForeground} />
         </Pressable>
       </View>
 
-      {/* Content */}
+      {/* Text content */}
       {!!post.content && (
-        <Text style={[styles.postContent, { color: colors.foreground }]}>
-          {post.content}
-        </Text>
+        isText ? (
+          <View style={styles.textOnlyContent}>
+            <Text style={[styles.textOnlyText, { color: colors.foreground }]}>{post.content}</Text>
+          </View>
+        ) : (
+          <Text style={[styles.postContent, { color: colors.foreground }]}>{post.content}</Text>
+        )
       )}
 
       {/* Media */}
       {mediaUrls.length > 0 && (
-        <View style={[styles.mediaWrap, { aspectRatio: Math.min(Math.max(aspectRatio, 0.5625), 1.91) }]}>
+        <View style={[styles.mediaWrap, { aspectRatio }]}>
           {isVideo ? (
-            <Video
-              source={{ uri: mediaUrls[0] }}
-              style={StyleSheet.absoluteFill}
-              resizeMode={ResizeMode.CONTAIN}
-              shouldPlay={false}
-              isLooping
-              useNativeControls
-            />
+            <>
+              <Video
+                source={{ uri: mediaUrls[0] }}
+                style={StyleSheet.absoluteFill}
+                resizeMode={ResizeMode.CONTAIN}
+                shouldPlay={false}
+                isLooping
+                useNativeControls
+              />
+              <View style={styles.videoCornerBadge}>
+                <Feather name="play-circle" size={14} color="#fff" />
+              </View>
+            </>
           ) : (
             <>
               <ScrollView
                 horizontal
                 pagingEnabled
                 showsHorizontalScrollIndicator={false}
-                onMomentumScrollEnd={e => setImgIdx(Math.round(e.nativeEvent.contentOffset.x / (SCREEN_WIDTH - 24)))}
+                onMomentumScrollEnd={e => setImgIdx(Math.round(e.nativeEvent.contentOffset.x / (SCREEN_WIDTH - CARD_MARGIN * 2)))}
               >
                 {mediaUrls.map((url, i) => (
                   <Image
                     key={i}
                     source={{ uri: url }}
-                    style={{ width: SCREEN_WIDTH - 24, height: "100%" }}
+                    style={{ width: SCREEN_WIDTH - CARD_MARGIN * 2, height: "100%" }}
                     resizeMode="cover"
                   />
                 ))}
@@ -271,16 +393,17 @@ function PostCard({ post, userId, colors, onRequireAuth }: { post: Post; userId:
               {mediaUrls.length > 1 && (
                 <View style={styles.dots}>
                   {mediaUrls.map((_, i) => (
-                    <View
-                      key={i}
-                      style={[
-                        styles.dot,
-                        i === imgIdx
-                          ? { width: 18, backgroundColor: "#fff" }
-                          : { width: 6, backgroundColor: "rgba(255,255,255,0.45)" },
-                      ]}
-                    />
+                    <View key={i} style={[
+                      styles.dot,
+                      i === imgIdx ? { width: 18, backgroundColor: "#fff" } : { width: 6, backgroundColor: "rgba(255,255,255,0.45)" },
+                    ]} />
                   ))}
+                </View>
+              )}
+              {mediaUrls.length > 1 && (
+                <View style={styles.imageCountBadge}>
+                  <Feather name="image" size={10} color="#fff" />
+                  <Text style={{ color: "#fff", fontSize: 11, fontWeight: "700" }}>{imgIdx + 1}/{mediaUrls.length}</Text>
                 </View>
               )}
             </>
@@ -291,21 +414,15 @@ function PostCard({ post, userId, colors, onRequireAuth }: { post: Post; userId:
       {/* Actions */}
       <View style={[styles.actions, { borderTopColor: colors.border }]}>
         <View style={styles.leftActions}>
-          {/* Like */}
           <Pressable onPress={handleLike} style={styles.actionBtn}>
             <Animated.View style={{ transform: [{ scale: likeScale }] }}>
-              <AntDesign
-                name={liked ? "heart" : "hearto"}
-                size={22}
-                color={liked ? "#ff3b5c" : colors.mutedForeground}
-              />
+              <AntDesign name={liked ? "heart" : "hearto"} size={22} color={liked ? "#ff3b5c" : colors.mutedForeground} />
             </Animated.View>
             <Text style={[styles.actionCount, { color: liked ? "#ff3b5c" : colors.mutedForeground }]}>
               {formatCount(likes)}
             </Text>
           </Pressable>
 
-          {/* Comment */}
           <Pressable onPress={() => setCommentOpen(true)} style={styles.actionBtn}>
             <Feather name="message-circle" size={22} color={colors.mutedForeground} />
             <Text style={[styles.actionCount, { color: colors.mutedForeground }]}>
@@ -313,36 +430,38 @@ function PostCard({ post, userId, colors, onRequireAuth }: { post: Post; userId:
             </Text>
           </Pressable>
 
-          {/* Share */}
           <Pressable style={styles.actionBtn}>
             <Feather name="share-2" size={20} color={colors.mutedForeground} />
           </Pressable>
         </View>
 
-        {/* Bookmark */}
         <Pressable onPress={handleSave} style={styles.actionBtn}>
-          <Ionicons
-            name={saved ? "bookmark" : "bookmark-outline"}
-            size={22}
-            color={saved ? "#7c3aed" : colors.mutedForeground}
-          />
+          <Ionicons name={saved ? "bookmark" : "bookmark-outline"} size={22} color={saved ? "#7c3aed" : colors.mutedForeground} />
         </Pressable>
       </View>
 
-      {/* Like count label */}
       {likes > 0 && (
         <Text style={[styles.likeLabel, { color: colors.foreground }]}>
           {formatCount(likes) + " " + (likes === 1 ? "like" : "likes")}
         </Text>
       )}
 
-      <CommentSheet
-        postId={post.id}
-        visible={commentOpen}
-        onClose={() => setCommentOpen(false)}
-        userId={userId}
-        colors={colors}
-      />
+      <CommentSheet postId={post.id} visible={commentOpen} onClose={() => setCommentOpen(false)} userId={userId} colors={colors} />
+    </View>
+  );
+}
+
+// ─── End Of Feed ──────────────────────────────────────────────────────────────
+
+function EndOfFeed({ colors }: { colors: any }) {
+  return (
+    <View style={styles.endFeed}>
+      <View style={[styles.endFeedLine, { backgroundColor: colors.border }]} />
+      <View style={{ flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: 16 }}>
+        <AntDesign name="checkcircleo" size={16} color={colors.mutedForeground} />
+        <Text style={[styles.endFeedText, { color: colors.mutedForeground }]}>You're all caught up!</Text>
+      </View>
+      <View style={[styles.endFeedLine, { backgroundColor: colors.border }]} />
     </View>
   );
 }
@@ -360,6 +479,7 @@ export default function HomeScreen() {
   const [cursor, setCursor] = useState<string | undefined>(undefined);
   const [posts, setPosts] = useState<Post[]>([]);
   const [loadingMore, setLoadingMore] = useState(false);
+  const [hasMore, setHasMore] = useState(true);
 
   const { data, isLoading, refetch } = useQuery({
     queryKey: ["feed"],
@@ -375,10 +495,13 @@ export default function HomeScreen() {
   });
 
   useEffect(() => {
-    if (data) { setPosts(data); if (data.length) setCursor(data[data.length - 1].created_at); }
+    if (data) {
+      setPosts(data);
+      setHasMore(data.length >= 20);
+      if (data.length) setCursor(data[data.length - 1].created_at);
+    }
   }, [data]);
 
-  // Realtime subscription for new posts
   useEffect(() => {
     if (!user?.id) return;
     const channel = supabase.channel("feed-updates")
@@ -389,23 +512,38 @@ export default function HomeScreen() {
   }, [user?.id]);
 
   const loadMore = useCallback(async () => {
-    if (loadingMore || !cursor || !user?.id) return;
+    if (loadingMore || !cursor || !hasMore) return;
     setLoadingMore(true);
     try {
-      const more = await fetchFeed(user.id, cursor);
-      if (more.length) {
-        setPosts(p => [...p, ...more]);
+      const more = await fetchFeed(user?.id ?? "", cursor);
+      if (more.length > 0) {
+        setPosts(p => {
+          const existingIds = new Set(p.map(x => x.id));
+          const fresh = more.filter(x => !existingIds.has(x.id));
+          return [...p, ...fresh];
+        });
         setCursor(more[more.length - 1].created_at);
+        if (more.length < 20) setHasMore(false);
+      } else {
+        setHasMore(false);
       }
     } finally {
       setLoadingMore(false);
     }
-  }, [loadingMore, cursor, user?.id]);
+  }, [loadingMore, cursor, hasMore, user?.id]);
+
+  const handleDeleted = useCallback((id: string) => {
+    setPosts(p => p.filter(x => x.id !== id));
+  }, []);
 
   const router = useRouter();
 
   if (authLoading) return null;
   if (!isAuthenticated && !isGuest) return <Redirect href="/login" />;
+
+  const containerStyle = isTablet
+    ? { paddingHorizontal: (SCREEN_WIDTH - MAX_CARD_WIDTH) / 2 }
+    : {};
 
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
@@ -429,21 +567,37 @@ export default function HomeScreen() {
         data={posts}
         keyExtractor={p => p.id}
         showsVerticalScrollIndicator={false}
-        refreshControl={<RefreshControl refreshing={isLoading} onRefresh={refetch} tintColor={colors.primary} />}
+        refreshControl={<RefreshControl refreshing={isLoading && posts.length === 0} onRefresh={() => { setHasMore(true); refetch(); }} tintColor={colors.primary} />}
         onEndReached={loadMore}
-        onEndReachedThreshold={0.4}
+        onEndReachedThreshold={0.5}
         ListHeaderComponent={<StoryBar userId={user?.id ?? ""} />}
-        renderItem={({ item }) => <PostCard post={item} userId={user?.id ?? ""} colors={colors} onRequireAuth={() => setAuthPromptVisible(true)} />}
-        ItemSeparatorComponent={() => <View style={{ height: 8 }} />}
-        ListFooterComponent={loadingMore ? <ActivityIndicator color={colors.primary} style={{ padding: 20 }} /> : null}
+        renderItem={({ item }) => (
+          <View style={containerStyle}>
+            <PostCard
+              post={item}
+              userId={user?.id ?? ""}
+              colors={colors}
+              onRequireAuth={() => setAuthPromptVisible(true)}
+              onDeleted={handleDeleted}
+            />
+          </View>
+        )}
+        ItemSeparatorComponent={() => <View style={{ height: 10 }} />}
+        ListFooterComponent={
+          loadingMore
+            ? <ActivityIndicator color={colors.primary} style={{ padding: 24 }} />
+            : !hasMore && posts.length > 0
+              ? <EndOfFeed colors={colors} />
+              : null
+        }
         ListEmptyComponent={!isLoading ? (
           <View style={styles.empty}>
             <Feather name="home" size={48} color={colors.mutedForeground} />
             <Text style={[styles.emptyTitle, { color: colors.foreground }]}>Your feed is empty</Text>
             <Text style={[styles.emptyDesc, { color: colors.mutedForeground }]}>Follow people to see their posts here</Text>
           </View>
-        ) : null}
-        contentContainerStyle={{ paddingBottom: insets.bottom + 80 }}
+        ) : <ActivityIndicator color={colors.primary} style={{ marginTop: 60 }} />}
+        contentContainerStyle={{ paddingBottom: insets.bottom + 90 }}
       />
       <AuthPromptModal
         visible={authPromptVisible}
@@ -481,10 +635,16 @@ const styles = StyleSheet.create({
   storyName: { fontSize: 11, color: "#71717a", maxWidth: 64, textAlign: "center" },
 
   card: {
-    marginHorizontal: 12, borderRadius: 18,
+    marginHorizontal: CARD_MARGIN, borderRadius: 18,
     borderWidth: StyleSheet.hairlineWidth, overflow: "hidden",
     shadowColor: "#000", shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.06, shadowRadius: 8, elevation: 2,
+  },
+  textPostCard: {
+    borderLeftWidth: 0,
+  },
+  textPostAccent: {
+    position: "absolute", left: 0, top: 0, bottom: 0, width: 3, borderRadius: 3,
   },
   cardHeader: {
     flexDirection: "row", alignItems: "center",
@@ -497,15 +657,42 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 2 }, shadowRadius: 6,
   },
   authorName: { fontSize: 15, fontWeight: "700", letterSpacing: -0.2 },
-  authorMeta: { fontSize: 12, marginTop: 1.5 },
+  authorMeta: { fontSize: 12, marginTop: 0 },
   moreBtn: { padding: 4 },
+
+  typeBadge: {
+    flexDirection: "row", alignItems: "center", gap: 3,
+    backgroundColor: "rgba(0,0,0,0.55)", borderRadius: 6,
+    paddingHorizontal: 6, paddingVertical: 2,
+  },
+  typeBadgeText: { color: "#fff", fontSize: 10, fontWeight: "700" },
+
   postContent: { paddingHorizontal: 14, paddingBottom: 13, fontSize: 15, lineHeight: 23 },
+
+  textOnlyContent: {
+    marginHorizontal: 14, marginBottom: 14, borderRadius: 14,
+    padding: 16, backgroundColor: "rgba(124,58,237,0.06)",
+    borderWidth: 1, borderColor: "rgba(124,58,237,0.12)",
+  },
+  textOnlyText: { fontSize: 17, lineHeight: 26, fontWeight: "500", letterSpacing: -0.1 },
+
   mediaWrap: { width: "100%", overflow: "hidden", backgroundColor: "#000" },
+  videoCornerBadge: {
+    position: "absolute", top: 10, right: 10,
+    backgroundColor: "rgba(0,0,0,0.55)", borderRadius: 10, padding: 4,
+  },
+  imageCountBadge: {
+    position: "absolute", top: 10, right: 10,
+    backgroundColor: "rgba(0,0,0,0.55)", borderRadius: 10,
+    paddingHorizontal: 8, paddingVertical: 4,
+    flexDirection: "row", alignItems: "center", gap: 4,
+  },
   dots: {
     position: "absolute", bottom: 12, left: 0, right: 0,
     flexDirection: "row", justifyContent: "center", gap: 4, alignItems: "center",
   },
   dot: { height: 6, borderRadius: 3 },
+
   actions: {
     flexDirection: "row", alignItems: "center", justifyContent: "space-between",
     paddingHorizontal: 14, paddingVertical: 11,
@@ -535,6 +722,10 @@ const styles = StyleSheet.create({
     paddingHorizontal: 15, paddingVertical: 10, fontSize: 15, maxHeight: 100,
   },
   sendBtn: { width: 40, height: 40, borderRadius: 20, alignItems: "center", justifyContent: "center" },
+
+  endFeed: { flexDirection: "row", alignItems: "center", paddingVertical: 28, gap: 0 },
+  endFeedLine: { flex: 1, height: StyleSheet.hairlineWidth },
+  endFeedText: { fontSize: 13, fontWeight: "500" },
 
   empty: { alignItems: "center", paddingVertical: 80, gap: 12 },
   emptyTitle: { fontSize: 20, fontWeight: "800" },
