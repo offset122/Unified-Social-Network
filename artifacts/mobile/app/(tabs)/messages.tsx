@@ -9,6 +9,7 @@ import { LinearGradient } from "expo-linear-gradient";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/lib/auth";
+import GuestScreen from "@/components/GuestScreen";
 import { useColors } from "@/hooks/useColors";
 import { fetchConversations, timeAgo, resolveMediaUrl, type Conversation, type Profile } from "@/lib/db";
 import { supabase } from "@/lib/supabase";
@@ -36,7 +37,7 @@ function Avatar({ name, avatarUrl, size, online }: { name: string; avatarUrl?: s
 }
 
 export default function MessagesScreen() {
-  const { isAuthenticated, isLoading: authLoading, user } = useAuth();
+  const { isAuthenticated, isLoading: authLoading, user, isGuest } = useAuth();
   const colors = useColors();
   const insets = useSafeAreaInsets();
   const router = useRouter();
@@ -62,6 +63,7 @@ export default function MessagesScreen() {
   }, [user?.id]);
 
   if (authLoading) return null;
+  if (isGuest) return <GuestScreen icon="message-square" title="Message Anyone" subtitle="Send DMs, create groups, and make audio or video calls with your friends." perks={["Direct messages with anyone", "Group conversations", "Audio & video calls", "Share posts in chat"]} />;
   if (!isAuthenticated) return <Redirect href="/login" />;
 
   const totalUnread = (conversations as Conversation[]).reduce((s, c) => s + (c.unread_count ?? 0), 0);

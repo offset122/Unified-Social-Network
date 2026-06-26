@@ -10,6 +10,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Redirect, router } from "expo-router";
 import { useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/lib/auth";
+import GuestScreen from "@/components/GuestScreen";
 import { useColors } from "@/hooks/useColors";
 import { uploadMedia, generateAICaption } from "@/lib/db";
 import { supabase as sb } from "@/lib/supabase";
@@ -28,7 +29,7 @@ function Avatar({ name, size }: { name: string; size: number }) {
 }
 
 export default function CreateScreen() {
-  const { user, isAuthenticated } = useAuth();
+  const { user, isAuthenticated, isGuest } = useAuth();
   const colors = useColors();
   const insets = useSafeAreaInsets();
   const qc = useQueryClient();
@@ -41,6 +42,7 @@ export default function CreateScreen() {
   const [generatingCaption, setGeneratingCaption] = useState(false);
   const [visibility, setVisibility] = useState<"public" | "followers" | "private">("public");
 
+  if (isGuest) return <GuestScreen icon="plus-circle" title="Create & Share" subtitle="Sign up to share posts, reels, and stories with your followers." perks={["Post photos and videos", "Create short reels", "Control who sees your content", "AI-powered captions"]} />;
   if (!isAuthenticated) return <Redirect href="/login" />;
 
   const pickMedia = useCallback(async () => {

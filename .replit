@@ -1,8 +1,10 @@
-modules = ["nodejs-24"]
+modules = ["nodejs-24", "python-3.11"]
 
 [deployment]
 router = "application"
 deploymentTarget = "autoscale"
+run = ["sh", "-c", "cd artifacts/mobile && PORT=3000 node server/serve.js"]
+build = ["sh", "-c", "cd artifacts/mobile && pnpm run build"]
 
 [deployment.postBuild]
 args = ["pnpm", "store", "prune"]

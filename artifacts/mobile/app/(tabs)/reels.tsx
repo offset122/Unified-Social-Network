@@ -11,6 +11,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { router, Link } from "expo-router";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/lib/auth";
+import AuthPromptModal from "@/components/AuthPromptModal";
 import { useColors } from "@/hooks/useColors";
 import {
   fetchReels, likePost, unlikePost, savePost, unsavePost,
@@ -325,7 +326,7 @@ function ReelCard({ item, isVisible }: { item: Post; isVisible: boolean }) {
 }
 
 export default function ReelsScreen() {
-  const { user, isAuthenticated } = useAuth();
+  const { user, isAuthenticated, isGuest } = useAuth();
   const insets = useSafeAreaInsets();
   const isWeb = Platform.OS === "web";
   const [visibleIndex, setVisibleIndex] = useState(0);
@@ -333,7 +334,7 @@ export default function ReelsScreen() {
   const { data = [], isLoading, refetch } = useQuery({
     queryKey: ["reels"],
     queryFn: () => fetchReels(user?.id ?? ""),
-    enabled: !!user?.id,
+    enabled: isAuthenticated || isGuest || true,
   });
 
   const onViewableItemsChanged = useCallback(({ viewableItems }: any) => {
@@ -346,7 +347,7 @@ export default function ReelsScreen() {
     onViewableItemsChanged,
   }]);
 
-  if (!isAuthenticated) return null;
+
 
   return (
     <View style={S.container}>

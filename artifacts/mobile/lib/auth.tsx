@@ -1,6 +1,10 @@
-import React, { createContext, useContext, useState, useEffect, useCallback, type ReactNode } from "react";
+import React, {
+  createContext, useContext, useState, useEffect, useCallback, useRef, type ReactNode,
+} from "react";
 import { supabase } from "./supabase";
 import type { Session, User } from "@supabase/supabase-js";
+
+export type WelcomeState = null | "welcome" | "welcome-back";
 
 interface AppUser {
   id: string;
@@ -15,6 +19,10 @@ interface AuthContextValue {
   session: Session | null;
   isLoading: boolean;
   isAuthenticated: boolean;
+  isGuest: boolean;
+  welcomeState: WelcomeState;
+  setWelcomeState: (s: WelcomeState) => void;
+  browseAsGuest: () => void;
   login: () => Promise<void>;
   logout: () => Promise<void>;
   loginWithEmail: (email: string, password: string) => Promise<void>;
@@ -26,6 +34,10 @@ const AuthContext = createContext<AuthContextValue>({
   session: null,
   isLoading: true,
   isAuthenticated: false,
+  isGuest: false,
+  welcomeState: null,
+  setWelcomeState: () => {},
+  browseAsGuest: () => {},
   login: async () => {},
   logout: async () => {},
   loginWithEmail: async () => {},
@@ -47,17 +59,35 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<AppUser | null>(null);
   const [session, setSession] = useState<Session | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [isGuest, setIsGuest] = useState(false);
+  const [welcomeState, setWelcomeState] = useState<WelcomeState>(null);
+  const prevUserIdRef = useRef<string | null>(null);
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
       setSession(session);
-      setUser(session?.user ? mapUser(session.user) : null);
+      if (session?.user) {
+        setUser(mapUser(session.user));
+        setIsGuest(false);
+        prevUserIdRef.current = session.user.id;
+      }
       setIsLoading(false);
     });
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
       setSession(session);
-      setUser(session?.user ? mapUser(session.user) : null);
+      if (session?.user) {
+        const mappedUser = mapUser(session.user);
+        setUser(mappedUser);
+        setIsGuest(false);
+        if (event === "SIGNED_IN" && prevUserIdRef.current !== null && prevUserIdRef.current !== session.user.id) {
+          setWelcomeState("welcome-back");
+        }
+        prevUserIdRef.current = session.user.id;
+      } else {
+        setUser(null);
+        prevUserIdRef.current = null;
+      }
       setIsLoading(false);
     });
 
@@ -65,16 +95,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const loginWithEmail = useCallback(async (email: string, password: string) => {
-    const { error } = await supabase.auth.signInWithPassword({ email, password });
+    const prevId = prevUserIdRef.current;
+    const { data, error } = await supabase.auth.signInWithPassword({ email, password });
     if (error) throw new Error(error.message);
+    if (data.user && prevId !== data.user.id) {
+      prevUserIdRef.current = data.user.id;
+      setWelcomeState("welcome-back");
+    }
   }, []);
 
   const registerWithEmail = useCallback(async (
     email: string,
     password: string,
     firstName?: string,
-    lastName?: string
+    lastName?: string,
   ) => {
+    prevUserIdRef.current = null;
     const { data, error } = await supabase.auth.signUp({
       email,
       password,
@@ -98,11 +134,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         bio: null,
         avatar_url: null,
       });
+      setWelcomeState("welcome");
     }
   }, []);
 
   const logout = useCallback(async () => {
     await supabase.auth.signOut();
+    setIsGuest(false);
+    setWelcomeState(null);
+    prevUserIdRef.current = null;
+  }, []);
+
+  const browseAsGuest = useCallback(() => {
+    setIsGuest(true);
   }, []);
 
   const login = useCallback(async () => {}, []);
@@ -113,6 +157,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       session,
       isLoading,
       isAuthenticated: !!user,
+      isGuest,
+      welcomeState,
+      setWelcomeState,
+      browseAsGuest,
       login,
       logout,
       loginWithEmail,

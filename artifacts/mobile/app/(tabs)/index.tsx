@@ -12,6 +12,7 @@ import { Video, ResizeMode } from "expo-av";
 import { LinearGradient } from "expo-linear-gradient";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/lib/auth";
+import AuthPromptModal from "@/components/AuthPromptModal";
 import { useColors } from "@/hooks/useColors";
 import {
   fetchFeed, fetchStories, likePost, unlikePost, savePost, unsavePost,
@@ -106,6 +107,7 @@ function CommentSheet({ postId, visible, onClose, userId, colors }: {
 
   const handleSubmit = async () => {
     if (!text.trim()) return;
+    if (!userId) return;
     setSubmitting(true);
     try {
       await createComment(postId, userId, text.trim());
@@ -158,7 +160,7 @@ function CommentSheet({ postId, visible, onClose, userId, colors }: {
 
 // ─── Post Card ────────────────────────────────────────────────────────────────
 
-function PostCard({ post, userId, colors }: { post: Post; userId: string; colors: any }) {
+function PostCard({ post, userId, colors, onRequireAuth }: { post: Post; userId: string; colors: any; onRequireAuth?: () => void }) {
   const qc = useQueryClient();
   const [liked, setLiked] = useState(post.is_liked ?? false);
   const [likes, setLikes] = useState(post.likes_count);
@@ -175,6 +177,7 @@ function PostCard({ post, userId, colors }: { post: Post; userId: string; colors
     : 1;
 
   const handleLike = () => {
+    if (!userId) { onRequireAuth?.(); return; }
     const next = !liked;
     setLiked(next);
     setLikes(l => l + (next ? 1 : -1));
@@ -187,6 +190,7 @@ function PostCard({ post, userId, colors }: { post: Post; userId: string; colors
   };
 
   const handleSave = () => {
+    if (!userId) { onRequireAuth?.(); return; }
     const next = !saved;
     setSaved(next);
     const fn = next ? savePost : unsavePost;
@@ -278,7 +282,8 @@ function PostCard({ post, userId, colors }: { post: Post; userId: string; colors
 // ─── Home Screen ──────────────────────────────────────────────────────────────
 
 export default function HomeScreen() {
-  const { user, isAuthenticated, isLoading: authLoading } = useAuth();
+  const { user, isAuthenticated, isGuest, isLoading: authLoading } = useAuth();
+  const [authPromptVisible, setAuthPromptVisible] = React.useState(false);
   const colors = useColors();
   const insets = useSafeAreaInsets();
   const isWeb = Platform.OS === "web";
@@ -291,7 +296,7 @@ export default function HomeScreen() {
   const { data, isLoading, refetch } = useQuery({
     queryKey: ["feed"],
     queryFn: () => fetchFeed(user?.id ?? "", undefined),
-    enabled: !!user?.id,
+    enabled: isAuthenticated || isGuest || true,
   });
 
   const { data: notifCount = 0 } = useQuery({
@@ -332,7 +337,7 @@ export default function HomeScreen() {
   const router = useRouter();
 
   if (authLoading) return null;
-  if (!isAuthenticated) return <Redirect href="/login" />;
+  if (!isAuthenticated && !isGuest) return <Redirect href="/login" />;
 
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
@@ -360,7 +365,7 @@ export default function HomeScreen() {
         onEndReached={loadMore}
         onEndReachedThreshold={0.4}
         ListHeaderComponent={<StoryBar userId={user?.id ?? ""} />}
-        renderItem={({ item }) => <PostCard post={item} userId={user?.id ?? ""} colors={colors} />}
+        renderItem={({ item }) => <PostCard post={item} userId={user?.id ?? ""} colors={colors} onRequireAuth={() => setAuthPromptVisible(true)} />}
         ItemSeparatorComponent={() => <View style={{ height: 8 }} />}
         ListFooterComponent={loadingMore ? <ActivityIndicator color={colors.primary} style={{ padding: 20 }} /> : null}
         ListEmptyComponent={!isLoading ? (
@@ -371,6 +376,11 @@ export default function HomeScreen() {
           </View>
         ) : null}
         contentContainerStyle={{ paddingBottom: insets.bottom + 80 }}
+      />
+      <AuthPromptModal
+        visible={authPromptVisible}
+        onDismiss={() => setAuthPromptVisible(false)}
+        reason="Sign up to like, comment, and save posts."
       />
     </View>
   );

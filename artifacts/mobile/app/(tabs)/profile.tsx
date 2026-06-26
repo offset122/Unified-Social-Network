@@ -9,6 +9,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Link, Redirect, useRouter } from "expo-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/lib/auth";
+import GuestScreen from "@/components/GuestScreen";
 import { useColors } from "@/hooks/useColors";
 import { useColorScheme } from "react-native";
 import {
@@ -204,7 +205,7 @@ function SettingsSheet({ visible, onClose, onLogout, colors, colorScheme }: {
 }
 
 export default function ProfileScreen() {
-  const { isAuthenticated, isLoading: authLoading, user, logout } = useAuth();
+  const { isAuthenticated, isLoading: authLoading, user, logout, isGuest } = useAuth();
   const colors = useColors();
   const insets = useSafeAreaInsets();
   const colorScheme = useColorScheme();
@@ -241,6 +242,7 @@ export default function ProfileScreen() {
   };
 
   if (authLoading) return null;
+  if (isGuest) return <GuestScreen icon="user" title="Your Profile" subtitle="Create an account to build your profile, share posts, and connect with others." perks={["Post photos, videos & reels", "Build your following", "Save posts you love", "See your view counts"]} />;
   if (!isAuthenticated) return <Redirect href="/login" />;
   if (profileLoading) return <View style={{ flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: colors.background }}><ActivityIndicator color="#7c3aed" size="large" /></View>;
 

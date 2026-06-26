@@ -1,11 +1,11 @@
 {
   "expo": {
     "name": "SocialApp",
-    "slug": "mobile",
+    "slug": "socialapp",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
-    "scheme": "mobile",
+    "scheme": "socialapp",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "splash": {
@@ -14,10 +14,19 @@
       "backgroundColor": "#ffffff"
     },
     "ios": {
-      "supportsTablet": false
+      "supportsTablet": false,
+      "infoPlist": {
+        "NSUserNotificationUsageDescription": "Allow SocialApp to send you notifications for messages, calls, and activity."
+      },
+      "bundleIdentifier": "com.socialapp.mobile"
     },
     "android": {
-      "package": "com.anonymous.mobile"
+      "package": "com.socialapp.mobile",
+      "permissions": [
+        "android.permission.RECEIVE_BOOT_COMPLETED",
+        "android.permission.VIBRATE",
+        "android.permission.POST_NOTIFICATIONS"
+      ]
     },
     "web": {
       "favicon": "./assets/images/icon.png"
@@ -31,7 +40,17 @@
       ],
       "expo-font",
       "expo-web-browser",
-      "expo-secure-store"
+      "expo-secure-store",
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/images/icon.png",
+          "color": "#7c3aed",
+          "sounds": [],
+          "androidMode": "default",
+          "androidCollapsedTitle": "SocialApp notifications"
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true,

@@ -1,12 +1,12 @@
 import React, { useEffect, useRef, useState } from "react";
 import {
   View, Text, StyleSheet, Pressable, Animated, Dimensions,
-  ActivityIndicator, Platform, ScrollView, TextInput, Alert,
+  ActivityIndicator, Platform, ScrollView, TextInput,
 } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
 import { Feather } from "@expo/vector-icons";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { Redirect, router } from "expo-router";
+import { Redirect, router, useLocalSearchParams } from "expo-router";
 import { useAuth } from "@/lib/auth";
 import { useColorScheme } from "react-native";
 
@@ -48,13 +48,20 @@ function PasswordInput({ value, onChangeText, placeholder, colors: c }: {
 }
 
 export default function LoginScreen() {
-  const { isAuthenticated, isLoading, loginWithEmail, registerWithEmail } = useAuth();
+  const { isAuthenticated, isLoading, loginWithEmail, registerWithEmail, browseAsGuest } = useAuth();
+  const params = useLocalSearchParams<{ mode?: string }>();
   const colorScheme = useColorScheme();
   const isDark = colorScheme === "dark";
   const c = buildColors(isDark);
   const fadeAnim = useRef(new Animated.Value(0)).current;
 
-  const [screen, setScreen] = useState<Screen>("welcome");
+  const initialScreen: Screen = params.mode === "login"
+    ? "login-form"
+    : params.mode === "signup"
+      ? "signup-form"
+      : "welcome";
+
+  const [screen, setScreen] = useState<Screen>(initialScreen);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [firstName, setFirstName] = useState("");
@@ -100,6 +107,11 @@ export default function LoginScreen() {
     }
   };
 
+  const handleGuest = () => {
+    browseAsGuest();
+    router.replace("/(tabs)");
+  };
+
   if (screen === "welcome") {
     return (
       <LinearGradient colors={c.bg} style={{ flex: 1 }}>
@@ -135,6 +147,10 @@ export default function LoginScreen() {
             </Pressable>
             <Pressable onPress={() => setScreen("login-form")} style={[styles.secondaryBtn, { borderColor: c.primary }]}>
               <Text style={[styles.secondaryBtnText, { color: c.primary }]}>Sign In</Text>
+            </Pressable>
+            <Pressable onPress={handleGuest} style={styles.guestBtn}>
+              <Feather name="eye" size={15} color={c.fgMuted} />
+              <Text style={[styles.guestBtnText, { color: c.fgMuted }]}>Browse as Guest</Text>
             </Pressable>
           </Animated.View>
         </SafeAreaView>
@@ -204,6 +220,11 @@ export default function LoginScreen() {
               <Text style={{ color: c.primary, fontWeight: "700" }}>{isLogin ? "Sign Up" : "Sign In"}</Text>
             </Text>
           </Pressable>
+
+          <Pressable onPress={handleGuest} style={[styles.guestBtn, { marginTop: 20 }]}>
+            <Feather name="eye" size={15} color={c.fgMuted} />
+            <Text style={[styles.guestBtnText, { color: c.fgMuted }]}>Browse as Guest instead</Text>
+          </Pressable>
         </ScrollView>
       </SafeAreaView>
     </LinearGradient>
@@ -217,15 +238,17 @@ const styles = StyleSheet.create({
   logoCircleSm: { width: 52, height: 52, borderRadius: 26, alignItems: "center", justifyContent: "center", marginBottom: 12 },
   appName: { fontSize: 32, fontWeight: "800", letterSpacing: -0.8 },
   tagline: { fontSize: 16, marginTop: 6, marginBottom: 28 },
-  featureList: { width: "100%", gap: 10, marginBottom: 36 },
+  featureList: { width: "100%", gap: 10, marginBottom: 28 },
   featureRow: { flexDirection: "row", alignItems: "center", gap: 12, paddingHorizontal: 14, paddingVertical: 12, borderRadius: 14, borderWidth: 1 },
   featureIcon: { width: 34, height: 34, borderRadius: 10, alignItems: "center", justifyContent: "center" },
   featureLabel: { fontSize: 14, fontWeight: "700" },
   featureDesc: { fontSize: 12, marginTop: 1 },
   primaryBtn: { width: "100%", paddingVertical: 15, borderRadius: 16, alignItems: "center", justifyContent: "center", marginBottom: 12 },
   primaryBtnText: { color: "#fff", fontSize: 16, fontWeight: "800" },
-  secondaryBtn: { width: "100%", paddingVertical: 14, borderRadius: 16, alignItems: "center", justifyContent: "center", borderWidth: 2 },
+  secondaryBtn: { width: "100%", paddingVertical: 14, borderRadius: 16, alignItems: "center", justifyContent: "center", borderWidth: 2, marginBottom: 12 },
   secondaryBtnText: { fontSize: 16, fontWeight: "700" },
+  guestBtn: { flexDirection: "row", alignItems: "center", gap: 6, paddingVertical: 10, paddingHorizontal: 16 },
+  guestBtnText: { fontSize: 14 },
   formWrap: { flexGrow: 1, paddingHorizontal: 28, paddingTop: 20, paddingBottom: 40 },
   backBtn: { marginBottom: 24, width: 40, height: 40, alignItems: "center", justifyContent: "center" },
   formTitle: { fontSize: 26, fontWeight: "800", letterSpacing: -0.5, marginBottom: 4 },
