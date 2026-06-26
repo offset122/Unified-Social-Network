@@ -1,6 +1,6 @@
-import { supabase } from "./supabase";
+import { getEnvValue, supabase } from "./supabase";
 
-const SUPABASE_URL = process.env.EXPO_PUBLIC_SUPABASE_URL ?? "";
+const SUPABASE_URL = getEnvValue("EXPO_PUBLIC_SUPABASE_URL", "SUPABASE_URL");
 
 export function resolveMediaUrl(path: string | null | undefined): string {
   if (!path) return "";
@@ -228,15 +228,18 @@ export async function fetchConversations(userId: string): Promise<Conversation[]
 export async function getOrCreateDM(userId: string, otherId: string): Promise<string> {
   const { data: existing } = await supabase.rpc("get_dm_conversation", { user1: userId, user2: otherId });
   if (existing) return existing;
-  const { data: convo } = await supabase.from("conversations").insert({ type: "dm", created_by: userId }).select().single();
-  if (!convo) throw new Error("Failed to create conversation");
-  await supabase.from("conversation_members").insert([{ conversation_id: convo.id, user_id: userId }, { conversation_id: convo.id, user_id: otherId }]);
+  const { data: convo, error } = await supabase.from("conversations").insert({ type: "dm", created_by: userId }).select("id").single();
+  if (error || !convo?.id) throw new Error(error?.message ?? "Failed to create conversation");
+  await supabase.from("conversation_members").insert([
+    { conversation_id: convo.id, user_id: userId },
+    { conversation_id: convo.id, user_id: otherId },
+  ]);
   return convo.id;
 }
 
 export async function createGroupConversation(creatorId: string, name: string, memberIds: string[]): Promise<string> {
-  const { data: convo, error } = await supabase.from("conversations").insert({ type: "group", name, created_by: creatorId }).select().single();
-  if (error || !convo) throw new Error(error?.message ?? "Failed");
+  const { data: convo, error } = await supabase.from("conversations").insert({ type: "group", name, created_by: creatorId }).select("id").single();
+  if (error || !convo?.id) throw new Error(error?.message ?? "Failed");
   await supabase.from("conversation_members").insert([creatorId, ...memberIds].map(uid => ({ conversation_id: convo.id, user_id: uid, is_admin: uid === creatorId })));
   return convo.id;
 }

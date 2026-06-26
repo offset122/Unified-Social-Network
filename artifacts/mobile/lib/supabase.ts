@@ -1,8 +1,25 @@
 import { createClient } from "@supabase/supabase-js";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 
-const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL!;
-const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY!;
+export function getEnvValue(...keys: string[]): string {
+  for (const key of keys) {
+    const value = process.env[key];
+    if (value) return value;
+  }
+  return "";
+}
+
+const supabaseUrl = getEnvValue("EXPO_PUBLIC_SUPABASE_URL", "SUPABASE_URL");
+const supabaseAnonKey = getEnvValue("EXPO_PUBLIC_SUPABASE_ANON_KEY", "SUPABASE_ANON_KEY");
+
+if (!supabaseUrl || !supabaseAnonKey) {
+  console.warn("Supabase environment is missing required values:", {
+    EXPO_PUBLIC_SUPABASE_URL: !!supabaseUrl,
+    EXPO_PUBLIC_SUPABASE_ANON_KEY: !!supabaseAnonKey,
+  });
+} else {
+  console.log("Supabase environment loaded:", { supabaseUrl });
+}
 
 export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
   auth: {
