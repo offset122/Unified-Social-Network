@@ -4,6 +4,7 @@ import { Feather } from "@expo/vector-icons";
 import React from "react";
 import { Platform, StyleSheet, View, useColorScheme } from "react-native";
 import { useColors } from "@/hooks/useColors";
+import AIFloatingButton from "@/components/AIFloatingButton";
 
 // Lazy-require iOS-only modules so Android never evaluates them
 const isIOS = Platform.OS === "ios";
@@ -165,7 +166,17 @@ function ClassicTabLayout() {
 
 export default function TabLayout() {
   if (isIOS && isLiquidGlassAvailable()) {
-    return <NativeTabLayout />;
+    return (
+      <View style={{ flex: 1 }} pointerEvents="box-none">
+        <NativeTabLayout />
+        <AIFloatingButton />
+      </View>
+    );
   }
-  return <ClassicTabLayout />;
+  return (
+    <View style={{ flex: 1 }} pointerEvents="box-none">
+      <ClassicTabLayout />
+      <AIFloatingButton />
+    </View>
+  );
 }

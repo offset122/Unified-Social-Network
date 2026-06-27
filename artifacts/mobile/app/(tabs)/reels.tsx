@@ -20,6 +20,7 @@ import {
   createComment, fetchComments, resolveMediaUrl, formatCount, timeAgo,
   incrementPostViews, type Post, type Comment, type Profile,
 } from "@/lib/db";
+import AICommentSuggestions from "@/components/ai/AICommentSuggestions";
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get("window");
 const REEL_HEIGHT = Platform.OS === "web" ? Math.min(640, SCREEN_HEIGHT - 100) : SCREEN_HEIGHT;
@@ -41,8 +42,8 @@ function VideoProgress({ progress, duration }: { progress: number; duration: num
   return <View style={S.progressBar}><View style={[S.progressFill, { width: `${pct * 100}%` }]} /></View>;
 }
 
-function ReelComments({ postId, visible, onClose, userId, onCountChange }: {
-  postId: string; visible: boolean; onClose: () => void; userId: string; onCountChange?: (n: number) => void;
+function ReelComments({ postId, postContent, visible, onClose, userId, onCountChange }: {
+  postId: string; postContent: string; visible: boolean; onClose: () => void; userId: string; onCountChange?: (n: number) => void;
 }) {
   const qc = useQueryClient();
   const [text, setText] = useState("");
@@ -89,16 +90,19 @@ function ReelComments({ postId, visible, onClose, userId, onCountChange }: {
           )}
           ListEmptyComponent={<Text style={{ textAlign: "center", color: "#71717a", marginTop: 48, fontSize: 15 }}>No comments yet. Be first!</Text>}
         />
-        <View style={{ flexDirection: "row", gap: 10, padding: 12, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: "#3f3f46" }}>
-          <TextInput
-            style={{ flex: 1, backgroundColor: "#27272a", borderRadius: 22, paddingHorizontal: 16, paddingVertical: 10, color: "#fff", fontSize: 14 }}
-            placeholder="Add a comment..." placeholderTextColor="#71717a"
-            value={text} onChangeText={setText} returnKeyType="send" onSubmitEditing={submit}
-          />
-          <Pressable onPress={submit} disabled={submitting || !text.trim()}
-            style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: text.trim() ? "#7c3aed" : "#3f3f46", alignItems: "center", justifyContent: "center" }}>
-            {submitting ? <ActivityIndicator color="#fff" size="small" /> : <Feather name="send" size={16} color="#fff" />}
-          </Pressable>
+        <View style={{ borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: "#3f3f46" }}>
+          <AICommentSuggestions postContent={postContent} onSelect={(s) => setText(s)} />
+          <View style={{ flexDirection: "row", gap: 10, padding: 12 }}>
+            <TextInput
+              style={{ flex: 1, backgroundColor: "#27272a", borderRadius: 22, paddingHorizontal: 16, paddingVertical: 10, color: "#fff", fontSize: 14 }}
+              placeholder="Add a comment..." placeholderTextColor="#71717a"
+              value={text} onChangeText={setText} returnKeyType="send" onSubmitEditing={submit}
+            />
+            <Pressable onPress={submit} disabled={submitting || !text.trim()}
+              style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: text.trim() ? "#7c3aed" : "#3f3f46", alignItems: "center", justifyContent: "center" }}>
+              {submitting ? <ActivityIndicator color="#fff" size="small" /> : <Feather name="send" size={16} color="#fff" />}
+            </Pressable>
+          </View>
         </View>
       </View>
     </Modal>
@@ -329,7 +333,7 @@ function ReelCard({ item, isVisible }: { item: Post; isVisible: boolean }) {
         </Pressable>
       </View>
 
-      <ReelComments postId={item.id} visible={commentOpen} onClose={() => setCommentOpen(false)} userId={user?.id ?? ""} onCountChange={setCommentsCount} />
+      <ReelComments postId={item.id} postContent={item.content ?? ""} visible={commentOpen} onClose={() => setCommentOpen(false)} userId={user?.id ?? ""} onCountChange={setCommentsCount} />
     </View>
   );
 }

@@ -271,10 +271,7 @@ export async function getOrCreateDM(userId: string, otherId: string): Promise<st
     if (existing) return existing as string;
   } catch {}
 
-<<<<<<< HEAD
-=======
   // 2. Manual lookup — find existing shared DM via membership rows
->>>>>>> a921ecbe158663c4ba2565fa8c55472a42251a44
   const { data: myConvos, error: myErr } = await supabase
     .from("conversation_members")
     .select("conversation_id")
@@ -309,12 +306,9 @@ export async function getOrCreateDM(userId: string, otherId: string): Promise<st
     }
   }
 
-<<<<<<< HEAD
-=======
   // 3. Create a new DM — generate UUID client-side so we never need to
   //    read the row back through the SELECT RLS policy (which would fail
   //    because the user isn't in conversation_members yet at that point).
->>>>>>> a921ecbe158663c4ba2565fa8c55472a42251a44
   const newId = crypto.randomUUID();
 
   const { error: createErr } = await supabase
@@ -328,20 +322,14 @@ export async function getOrCreateDM(userId: string, otherId: string): Promise<st
     throw new Error(createErr.message ?? "Failed to create conversation");
   }
 
-<<<<<<< HEAD
-=======
   // 4. Add both users as members
->>>>>>> a921ecbe158663c4ba2565fa8c55472a42251a44
   const { error: memberErr } = await supabase.from("conversation_members").insert([
     { conversation_id: newId, user_id: userId },
     { conversation_id: newId, user_id: otherId },
   ]);
 
   if (memberErr) {
-<<<<<<< HEAD
-=======
     // Roll back the orphaned conversation
->>>>>>> a921ecbe158663c4ba2565fa8c55472a42251a44
     await supabase.from("conversations").delete().eq("id", newId);
     throw new Error(memberErr.message ?? "Failed to add conversation members");
   }

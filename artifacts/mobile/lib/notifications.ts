@@ -1,6 +1,3 @@
-import * as Notifications from "expo-notifications";
-import Constants from "expo-constants";
-import { Platform } from "react-native";
 import { supabase } from "./supabase";
 
 export type NotificationType =
@@ -41,73 +38,6 @@ export const NOTIFICATION_META: Record<NotificationType, { icon: string; color: 
   live:            { icon: "radio",          color: "#dc2626", emoji: "🔴" },
 };
 
-Notifications.setNotificationHandler({
-  handleNotification: async () => ({
-    shouldShowBanner: true,
-    shouldShowList: true,
-    shouldPlaySound: true,
-    shouldSetBadge: true,
-  } as any),
-});
-
-export async function registerForPushNotifications(): Promise<string | null> {
-  if (Platform.OS === "web") return null;
-
-  try {
-    const existing = (await Notifications.getPermissionsAsync()) as any;
-    let granted: boolean = existing.granted ?? existing.status === "granted";
-
-    if (!granted) {
-      const result = (await Notifications.requestPermissionsAsync()) as any;
-      granted = result.granted ?? result.status === "granted";
-    }
-
-    if (!granted) return null;
-
-    const projectId =
-      Constants.expoConfig?.extra?.eas?.projectId ??
-      Constants.easConfig?.projectId ??
-      "e782640a-2f13-4580-a6d1-01be9b485b02";
-    const tokenData = await Notifications.getExpoPushTokenAsync({ projectId });
-
-    if (Platform.OS === "android") {
-      await Notifications.setNotificationChannelAsync("default", {
-        name: "SocialApp",
-        importance: Notifications.AndroidImportance.MAX,
-        vibrationPattern: [0, 250, 250, 250],
-        lightColor: "#7c3aed",
-        sound: "default",
-      });
-      await Notifications.setNotificationChannelAsync("calls", {
-        name: "Calls",
-        importance: Notifications.AndroidImportance.MAX,
-        vibrationPattern: [0, 500, 200, 500],
-        lightColor: "#059669",
-        sound: "default",
-      });
-      await Notifications.setNotificationChannelAsync("messages", {
-        name: "Messages",
-        importance: Notifications.AndroidImportance.HIGH,
-        vibrationPattern: [0, 250],
-        lightColor: "#6d28d9",
-        sound: "default",
-      });
-      await Notifications.setNotificationChannelAsync("security", {
-        name: "Security Alerts",
-        importance: Notifications.AndroidImportance.MAX,
-        vibrationPattern: [0, 500, 250, 500, 250, 500],
-        lightColor: "#dc2626",
-        sound: "default",
-      });
-    }
-
-    return tokenData.data;
-  } catch (e) {
-    console.warn("Push notification registration failed:", e);
-    return null;
-  }
-}
-
 export async function savePushToken(userId: string, token: string) {
   try {
     await supabase.from("profiles").update({ push_token: token }).eq("id", userId);
@@ -124,17 +54,9 @@ export async function sendPushNotification(expoPushToken: string, notification: 
     title: `${meta.emoji} ${notification.title}`,
     body: notification.body,
     data: notification.data ?? {},
-    channelId: notification.type === "audio_call" || notification.type === "video_call"
-      ? "calls"
-      : notification.type === "message" || notification.type === "message_request"
-        ? "messages"
-        : notification.type === "security_alert"
-          ? "security"
-          : "default",
     priority: "high" as const,
     badge: 1,
   };
-
   try {
     await fetch("https://exp.host/--/api/v2/push/send", {
       method: "POST",

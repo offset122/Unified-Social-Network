@@ -14,7 +14,8 @@ import { useColors } from "@/hooks/useColors";
 import { useColorScheme } from "react-native";
 import {
   fetchProfile, fetchUserPosts, fetchSavedPosts, resolveMediaUrl,
-  formatCount, timeAgo, deletePost, type Post, type Profile,
+  formatCount, timeAgo, deletePost, generateProfileInsights,
+  type Post, type Profile,
 } from "@/lib/db";
 
 const { width: SCREEN_WIDTH } = Dimensions.get("window");
@@ -218,6 +219,8 @@ export default function ProfileScreen() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [viewMode, setViewMode] = useState<ViewMode>("grid");
   const [postTab, setPostTab] = useState<PostTab>("posts");
+  const [aiInsight, setAiInsight] = useState<string | null>(null);
+  const [loadingInsight, setLoadingInsight] = useState(false);
 
   const { data: profile, isLoading: profileLoading } = useQuery({
     queryKey: ["my-profile", user?.id],
@@ -241,6 +244,26 @@ export default function ProfileScreen() {
       qc.invalidateQueries({ queryKey: ["my-posts"] });
       qc.invalidateQueries({ queryKey: ["feed"] });
     } catch { Alert.alert("Error", "Could not delete post"); }
+  };
+
+  const handleAIInsight = async () => {
+    if (loadingInsight) return;
+    if (aiInsight) { setAiInsight(null); return; }
+    setLoadingInsight(true);
+    try {
+      const allPosts = (posts as Post[]);
+      const insight = await generateProfileInsights({
+        totalPosts: profile?.posts_count ?? 0,
+        totalLikes: allPosts.reduce((s, p) => s + p.likes_count, 0),
+        totalViews: allPosts.reduce((s, p) => s + p.views_count, 0),
+        imagePosts: allPosts.filter(p => p.media_type === "image").length,
+        videoPosts: allPosts.filter(p => p.media_type === "video").length,
+        textPosts: allPosts.filter(p => !p.media_type).length,
+      });
+      setAiInsight(insight);
+    } finally {
+      setLoadingInsight(false);
+    }
   };
 
   if (authLoading) return null;
@@ -315,7 +338,36 @@ export default function ProfileScreen() {
               <Feather name="radio" size={15} color="#fff" />
               <Text style={styles.quickBtnText}>Go Live</Text>
             </Pressable>
+            <Pressable onPress={() => router.push("/ai-chat" as any)} style={[styles.quickBtn, { backgroundColor: "#7c3aed" }]}>
+              <Feather name="zap" size={15} color="#fff" />
+              <Text style={styles.quickBtnText}>AI</Text>
+            </Pressable>
           </View>
+
+          {/* AI Insights */}
+          <Pressable
+            onPress={handleAIInsight}
+            style={[styles.insightBtn, { backgroundColor: isDark ? "#7c3aed18" : "#ede9fe", borderColor: "#7c3aed44" }]}
+          >
+            {loadingInsight
+              ? <ActivityIndicator size="small" color="#7c3aed" />
+              : <Feather name="zap" size={14} color="#7c3aed" />}
+            <Text style={[styles.insightBtnText, { color: "#7c3aed" }]}>
+              {loadingInsight ? "Analyzing your profile…" : aiInsight ? "Hide AI insights" : "Get AI growth insights ✨"}
+            </Text>
+          </Pressable>
+
+          {aiInsight && (
+            <View style={[styles.insightCard, { backgroundColor: isDark ? "#1a0533" : "#f5f3ff", borderColor: "#7c3aed33" }]}>
+              <View style={styles.insightHeader}>
+                <LinearGradient colors={["#7c3aed", "#4f46e5"]} style={styles.insightDot}>
+                  <Feather name="zap" size={12} color="#fff" />
+                </LinearGradient>
+                <Text style={[styles.insightTitle, { color: "#7c3aed" }]}>AI Insights</Text>
+              </View>
+              <Text style={[styles.insightText, { color: colors.foreground }]}>{aiInsight}</Text>
+            </View>
+          )}
         </View>
 
         {/* Tab bar */}
@@ -381,9 +433,16 @@ const styles = StyleSheet.create({
   statValue: { fontSize: 20, fontWeight: "800", letterSpacing: -0.5 },
   statLabel: { fontSize: 11, marginTop: 2, fontWeight: "500", textTransform: "uppercase", letterSpacing: 0.3 },
   statDivider: { width: StyleSheet.hairlineWidth, height: 36 },
-  quickActions: { flexDirection: "row", gap: 10, marginTop: 4 },
-  quickBtn: { flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, paddingVertical: 10, borderRadius: 12 },
-  quickBtnText: { color: "#fff", fontWeight: "700", fontSize: 14 },
+  quickActions: { flexDirection: "row", gap: 8, marginTop: 4 },
+  quickBtn: { flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 5, paddingVertical: 10, borderRadius: 12 },
+  quickBtnText: { color: "#fff", fontWeight: "700", fontSize: 13 },
+  insightBtn: { flexDirection: "row", alignItems: "center", gap: 7, marginTop: 12, paddingHorizontal: 14, paddingVertical: 10, borderRadius: 14, borderWidth: 1 },
+  insightBtnText: { fontSize: 14, fontWeight: "600", flex: 1 },
+  insightCard: { marginTop: 10, borderRadius: 14, borderWidth: 1, padding: 14, gap: 10 },
+  insightHeader: { flexDirection: "row", alignItems: "center", gap: 8 },
+  insightDot: { width: 26, height: 26, borderRadius: 13, alignItems: "center", justifyContent: "center" },
+  insightTitle: { fontSize: 14, fontWeight: "800", letterSpacing: 0.2 },
+  insightText: { fontSize: 14, lineHeight: 21 },
   tabBar: { flexDirection: "row", alignItems: "center", paddingHorizontal: 14, borderBottomWidth: StyleSheet.hairlineWidth },
   tabBtn: { flexDirection: "row", alignItems: "center", gap: 5, paddingVertical: 12, paddingRight: 16, position: "relative" },
   tabLabel: { fontSize: 13, fontWeight: "500" },

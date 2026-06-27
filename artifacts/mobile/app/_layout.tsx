@@ -8,23 +8,17 @@ import {
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Stack, useRouter } from "expo-router";
 import * as SplashScreen from "expo-splash-screen";
-import * as Notifications from "expo-notifications";
 import React, { useEffect, useState, type ReactNode } from "react";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { KeyboardProvider } from "react-native-keyboard-controller";
 import { SafeAreaProvider } from "react-native-safe-area-context";
-import { Platform, View } from "react-native";
+import { View } from "react-native";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { AuthProvider, useAuth } from "@/lib/auth";
 import { ThemeProvider } from "@/lib/theme";
 import WelcomeModal from "@/components/WelcomeModal";
 import NotificationBanner from "@/components/NotificationBanner";
-import {
-  registerForPushNotifications,
-  savePushToken,
-  mapDbNotificationToApp,
-  type AppNotification,
-} from "@/lib/notifications";
+import { mapDbNotificationToApp, type AppNotification } from "@/lib/notifications";
 import { supabase } from "@/lib/supabase";
 
 SplashScreen.preventAutoHideAsync();
@@ -65,37 +59,8 @@ function AppShell({ children }: { children: ReactNode }) {
       else if (data.type === "new_post" && data.postId) router.push(`/post/${data.postId}` as any);
       else if (data.type === "live") router.push("/live-sessions" as any);
       else router.push("/notifications" as any);
-    } catch { /* noop */ }
+    } catch { }
   };
-
-  useEffect(() => {
-    if (!isAuthenticated || !user || Platform.OS === "web") return;
-
-    registerForPushNotifications().then(token => {
-      if (token) savePushToken(user.id, token);
-    });
-
-    const foregroundSub = Notifications.addNotificationReceivedListener(notif => {
-      const data = notif.request.content.data as Record<string, string>;
-      setActiveNotif({
-        id: notif.request.identifier,
-        type: (data?.type as any) ?? "message",
-        title: notif.request.content.title ?? "Notification",
-        body: notif.request.content.body ?? "",
-        avatarUrl: data?.avatarUrl,
-        senderName: data?.senderName,
-        data,
-        timestamp: Date.now(),
-      });
-    });
-
-    const responseSub = Notifications.addNotificationResponseReceivedListener(response => {
-      const data = response.notification.request.content.data as Record<string, string>;
-      handleNotifNav(data);
-    });
-
-    return () => { foregroundSub.remove(); responseSub.remove(); };
-  }, [isAuthenticated, user?.id]);
 
   useEffect(() => {
     if (!isAuthenticated || !user) return;

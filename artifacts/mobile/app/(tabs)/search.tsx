@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from "react";
+import React, { useState, useCallback, useEffect, useRef } from "react";
 import {
   View, Text, StyleSheet, TextInput, FlatList, Pressable,
   ActivityIndicator, Platform, Image, ScrollView,
@@ -6,11 +6,13 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useRouter, Redirect } from "expo-router";
 import { Feather } from "@expo/vector-icons";
+import { LinearGradient } from "expo-linear-gradient";
 import { useQuery } from "@tanstack/react-query";
 import { useAuth } from "@/lib/auth";
 import { useColors } from "@/hooks/useColors";
 import {
   searchUsers, resolveMediaUrl, formatCount, getOrCreateDM,
+  generateSearchSuggestions,
   type Profile, type Post,
 } from "@/lib/db";
 import { supabase } from "@/lib/supabase";
@@ -64,6 +66,57 @@ async function fetchTrendingHashtags(): Promise<{ tag: string; count: number }[]
     .map(([tag, count]) => ({ tag, count }));
 }
 
+// ─── AI Search Suggestions ────────────────────────────────────────────────────
+
+function AISearchSuggestions({ query, onSelect }: { query: string; onSelect: (s: string) => void }) {
+  const colors = useColors();
+  const [suggestions, setSuggestions] = useState<string[]>([]);
+  const [loading, setLoading] = useState(false);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    setSuggestions([]);
+    if (query.length < 2) return;
+    if (timerRef.current) clearTimeout(timerRef.current);
+    timerRef.current = setTimeout(async () => {
+      setLoading(true);
+      try {
+        const results = await generateSearchSuggestions(query);
+        setSuggestions(results);
+      } finally {
+        setLoading(false);
+      }
+    }, 800);
+    return () => { if (timerRef.current) clearTimeout(timerRef.current); };
+  }, [query]);
+
+  if (!loading && suggestions.length === 0) return null;
+
+  return (
+    <View style={[SS.aiSuggestBar, { borderBottomColor: colors.border }]}>
+      <View style={[SS.aiBadge, { backgroundColor: colors.primary + "18" }]}>
+        <LinearGradient colors={["#7c3aed", "#4f46e5"]} style={SS.aiDot}>
+          <Feather name="zap" size={9} color="#fff" />
+        </LinearGradient>
+        <Text style={[SS.aiText, { color: colors.primary }]}>AI</Text>
+      </View>
+      {loading ? (
+        <ActivityIndicator size="small" color={colors.primary} style={{ marginLeft: 4 }} />
+      ) : (
+        suggestions.map((s, i) => (
+          <Pressable key={i} onPress={() => onSelect(s)}
+            style={[SS.suggestChip, { backgroundColor: colors.secondary, borderColor: colors.border }]}>
+            <Feather name="search" size={11} color={colors.mutedForeground} />
+            <Text style={[SS.suggestText, { color: colors.foreground }]}>{s}</Text>
+          </Pressable>
+        ))
+      )}
+    </View>
+  );
+}
+
+// ─── Search Screen ─────────────────────────────────────────────────────────────
+
 export default function SearchScreen() {
   const { isAuthenticated, user } = useAuth();
   const colors = useColors();
@@ -112,15 +165,22 @@ export default function SearchScreen() {
   const hasResults = results.length > 0;
 
   return (
-    <View style={[styles.container, { backgroundColor: colors.background, paddingTop: isWeb ? 67 : insets.top }]}>
-      <View style={[styles.header, { borderBottomColor: colors.border }]}>
-        <Text style={[styles.title, { color: colors.foreground }]}>Discover</Text>
+    <View style={[S.container, { backgroundColor: colors.background, paddingTop: isWeb ? 67 : insets.top }]}>
+      <View style={[S.header, { borderBottomColor: colors.border }]}>
+        <Text style={[S.title, { color: colors.foreground }]}>Discover</Text>
+        <Pressable onPress={() => router.push("/ai-chat" as any)}
+          style={[S.aiChatBtn, { backgroundColor: colors.primary + "18", borderColor: colors.primary + "44" }]}>
+          <LinearGradient colors={["#7c3aed", "#4f46e5"]} style={S.aiChatDot}>
+            <Feather name="zap" size={12} color="#fff" />
+          </LinearGradient>
+          <Text style={[S.aiChatText, { color: colors.primary }]}>AI Chat</Text>
+        </Pressable>
       </View>
 
-      <View style={[styles.searchWrap, { backgroundColor: colors.secondary, borderColor: colors.border }]}>
+      <View style={[S.searchWrap, { backgroundColor: colors.secondary, borderColor: colors.border }]}>
         <Feather name="search" size={18} color={colors.mutedForeground} />
         <TextInput
-          style={[styles.searchInput, { color: colors.foreground }]}
+          style={[S.searchInput, { color: colors.foreground }]}
           placeholder="Search people, posts, #hashtags..."
           placeholderTextColor={colors.mutedForeground}
           value={query} onChangeText={setQuery}
@@ -133,15 +193,20 @@ export default function SearchScreen() {
         )}
       </View>
 
+      {/* AI suggestions appear below search bar */}
+      {query.length >= 2 && (
+        <AISearchSuggestions query={query} onSelect={s => { setQuery(s); setTab("posts"); }} />
+      )}
+
       {query.length >= 1 && (
-        <View style={[styles.tabs, { borderBottomColor: colors.border }]}>
+        <View style={[S.tabs, { borderBottomColor: colors.border }]}>
           {(["people", "posts"] as SearchTab[]).map(t => (
-            <Pressable key={t} onPress={() => setTab(t)} style={styles.tab}>
-              <Text style={[styles.tabText, { color: tab === t ? colors.primary : colors.mutedForeground },
+            <Pressable key={t} onPress={() => setTab(t)} style={S.tab}>
+              <Text style={[S.tabText, { color: tab === t ? colors.primary : colors.mutedForeground },
                 tab === t && { fontWeight: "700" }]}>
                 {t === "people" ? "People" : "Posts"}
               </Text>
-              {tab === t && <View style={[styles.tabLine, { backgroundColor: colors.primary }]} />}
+              {tab === t && <View style={[S.tabLine, { backgroundColor: colors.primary }]} />}
             </Pressable>
           ))}
         </View>
@@ -150,14 +215,14 @@ export default function SearchScreen() {
       {query.length === 0 ? (
         <ScrollView contentContainerStyle={{ paddingBottom: insets.bottom + 90 }} showsVerticalScrollIndicator={false}>
           {(hashtags as { tag: string; count: number }[]).length > 0 && (
-            <View style={styles.section}>
-              <Text style={[styles.sectionTitle, { color: colors.foreground }]}>Trending</Text>
-              <View style={styles.hashtagGrid}>
+            <View style={S.section}>
+              <Text style={[S.sectionTitle, { color: colors.foreground }]}>Trending</Text>
+              <View style={S.hashtagGrid}>
                 {(hashtags as { tag: string; count: number }[]).map(({ tag, count }) => (
                   <Pressable key={tag} onPress={() => { setQuery(tag); setTab("posts"); }}
-                    style={[styles.hashtagChip, { backgroundColor: colors.secondary, borderColor: colors.border }]}>
-                    <Text style={[styles.hashtagText, { color: colors.primary }]}>{tag}</Text>
-                    <Text style={[styles.hashtagCount, { color: colors.mutedForeground }]}>{count}</Text>
+                    style={[S.hashtagChip, { backgroundColor: colors.secondary, borderColor: colors.border }]}>
+                    <Text style={[S.hashtagText, { color: colors.primary }]}>{tag}</Text>
+                    <Text style={[S.hashtagCount, { color: colors.mutedForeground }]}>{count}</Text>
                   </Pressable>
                 ))}
               </View>
@@ -165,24 +230,24 @@ export default function SearchScreen() {
           )}
 
           {(suggested as Profile[]).length > 0 && (
-            <View style={styles.section}>
-              <Text style={[styles.sectionTitle, { color: colors.foreground }]}>Suggested People</Text>
+            <View style={S.section}>
+              <Text style={[S.sectionTitle, { color: colors.foreground }]}>Suggested People</Text>
               {(suggested as Profile[]).map(u => (
                 <Pressable key={u.id} onPress={() => router.push(`/user/${u.id}` as any)}
-                  style={[styles.userRow, { borderBottomColor: colors.border }]}>
+                  style={[S.userRow, { borderBottomColor: colors.border }]}>
                   <Avatar name={u.display_name} avatarUrl={u.avatar_url} size={48} />
-                  <View style={styles.userInfo}>
-                    <Text style={[styles.userName, { color: colors.foreground }]}>{u.display_name}</Text>
-                    <Text style={[styles.userHandle, { color: colors.mutedForeground }]}>@{u.username}</Text>
-                    <View style={styles.userStats}>
+                  <View style={S.userInfo}>
+                    <Text style={[S.userName, { color: colors.foreground }]}>{u.display_name}</Text>
+                    <Text style={[S.userHandle, { color: colors.mutedForeground }]}>@{u.username}</Text>
+                    <View style={S.userStats}>
                       <Feather name="users" size={11} color={colors.mutedForeground} />
-                      <Text style={[styles.userStat, { color: colors.mutedForeground }]}>
+                      <Text style={[S.userStat, { color: colors.mutedForeground }]}>
                         {formatCount(u.followers_count)} followers
                       </Text>
                     </View>
                   </View>
                   <Pressable onPress={() => handleMessage(u.id, u.display_name)}
-                    style={[styles.msgBtn, { backgroundColor: colors.secondary, borderColor: colors.border }]}>
+                    style={[S.msgBtn, { backgroundColor: colors.secondary, borderColor: colors.border }]}>
                     <Feather name="message-circle" size={16} color={colors.foreground} />
                   </Pressable>
                 </Pressable>
@@ -191,12 +256,12 @@ export default function SearchScreen() {
           )}
         </ScrollView>
       ) : isLoading ? (
-        <View style={styles.center}><ActivityIndicator color={colors.primary} size="large" /></View>
+        <View style={S.center}><ActivityIndicator color={colors.primary} size="large" /></View>
       ) : !hasResults ? (
-        <View style={styles.center}>
+        <View style={S.center}>
           <Feather name="search" size={40} color={colors.mutedForeground} />
-          <Text style={[styles.emptyTitle, { color: colors.foreground }]}>No results</Text>
-          <Text style={[styles.emptyDesc, { color: colors.mutedForeground }]}>
+          <Text style={[S.emptyTitle, { color: colors.foreground }]}>No results</Text>
+          <Text style={[S.emptyDesc, { color: colors.mutedForeground }]}>
             Try a different {tab === "people" ? "name or username" : "keyword or #hashtag"}
           </Text>
         </View>
@@ -207,24 +272,24 @@ export default function SearchScreen() {
           contentContainerStyle={{ paddingBottom: insets.bottom + 80, paddingTop: 8 }}
           renderItem={({ item: u }) => (
             <Pressable onPress={() => router.push(`/user/${u.id}` as any)}
-              style={[styles.userRow, { borderBottomColor: colors.border }]}>
+              style={[S.userRow, { borderBottomColor: colors.border }]}>
               <Avatar name={u.display_name} avatarUrl={u.avatar_url} size={50} />
-              <View style={styles.userInfo}>
-                <Text style={[styles.userName, { color: colors.foreground }]}>{u.display_name}</Text>
-                <Text style={[styles.userHandle, { color: colors.mutedForeground }]}>@{u.username}</Text>
-                {u.bio && <Text style={[styles.userBio, { color: colors.mutedForeground }]} numberOfLines={1}>{u.bio}</Text>}
-                <View style={styles.userStats}>
+              <View style={S.userInfo}>
+                <Text style={[S.userName, { color: colors.foreground }]}>{u.display_name}</Text>
+                <Text style={[S.userHandle, { color: colors.mutedForeground }]}>@{u.username}</Text>
+                {u.bio && <Text style={[S.userBio, { color: colors.mutedForeground }]} numberOfLines={1}>{u.bio}</Text>}
+                <View style={S.userStats}>
                   <Feather name="users" size={11} color={colors.mutedForeground} />
-                  <Text style={[styles.userStat, { color: colors.mutedForeground }]}>{formatCount(u.followers_count)} followers</Text>
+                  <Text style={[S.userStat, { color: colors.mutedForeground }]}>{formatCount(u.followers_count)} followers</Text>
                 </View>
               </View>
               <View style={{ gap: 8 }}>
                 <Pressable onPress={() => router.push(`/user/${u.id}` as any)}
-                  style={[styles.actionBtn, { backgroundColor: colors.primary }]}>
+                  style={[S.actionBtn, { backgroundColor: colors.primary }]}>
                   <Text style={{ color: "#fff", fontSize: 12, fontWeight: "700" }}>View</Text>
                 </Pressable>
                 <Pressable onPress={() => handleMessage(u.id, u.display_name)}
-                  style={[styles.actionBtn, { backgroundColor: colors.secondary, borderWidth: 1, borderColor: colors.border }]}>
+                  style={[S.actionBtn, { backgroundColor: colors.secondary, borderWidth: 1, borderColor: colors.border }]}>
                   <Feather name="message-circle" size={14} color={colors.foreground} />
                 </Pressable>
               </View>
@@ -241,19 +306,19 @@ export default function SearchScreen() {
             const thumb = p.media_urls?.[0] ? resolveMediaUrl(p.media_urls[0]) : null;
             return (
               <Pressable onPress={() => router.push(`/post/${p.id}` as any)}
-                style={[styles.postRow, { borderBottomColor: colors.border }]}>
+                style={[S.postRow, { borderBottomColor: colors.border }]}>
                 <Avatar name={profile?.display_name ?? "U"} avatarUrl={profile?.avatar_url} size={38} />
                 <View style={{ flex: 1 }}>
-                  <Text style={[styles.postAuthor, { color: colors.primary }]}>@{profile?.username ?? "user"}</Text>
-                  <Text style={[styles.postContent, { color: colors.foreground }]} numberOfLines={2}>{p.content}</Text>
-                  <View style={styles.postMeta}>
+                  <Text style={[S.postAuthor, { color: colors.primary }]}>@{profile?.username ?? "user"}</Text>
+                  <Text style={[S.postContent, { color: colors.foreground }]} numberOfLines={2}>{p.content}</Text>
+                  <View style={S.postMeta}>
                     <Feather name="heart" size={11} color={colors.mutedForeground} />
-                    <Text style={[styles.postMetaText, { color: colors.mutedForeground }]}>{formatCount(p.likes_count)}</Text>
+                    <Text style={[S.postMetaText, { color: colors.mutedForeground }]}>{formatCount(p.likes_count)}</Text>
                     <Feather name="message-circle" size={11} color={colors.mutedForeground} />
-                    <Text style={[styles.postMetaText, { color: colors.mutedForeground }]}>{formatCount(p.comments_count)}</Text>
+                    <Text style={[S.postMetaText, { color: colors.mutedForeground }]}>{formatCount(p.comments_count)}</Text>
                   </View>
                 </View>
-                {thumb && <Image source={{ uri: thumb }} style={styles.postThumb} resizeMode="cover" />}
+                {thumb && <Image source={{ uri: thumb }} style={S.postThumb} resizeMode="cover" />}
               </Pressable>
             );
           }}
@@ -263,10 +328,13 @@ export default function SearchScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const S = StyleSheet.create({
   container: { flex: 1 },
-  header: { paddingHorizontal: 16, paddingBottom: 10, borderBottomWidth: StyleSheet.hairlineWidth },
+  header: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 16, paddingBottom: 10, borderBottomWidth: StyleSheet.hairlineWidth },
   title: { fontSize: 26, fontWeight: "800", letterSpacing: -0.5 },
+  aiChatBtn: { flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 12, paddingVertical: 7, borderRadius: 18, borderWidth: 1 },
+  aiChatDot: { width: 20, height: 20, borderRadius: 10, alignItems: "center", justifyContent: "center" },
+  aiChatText: { fontSize: 13, fontWeight: "700" },
   searchWrap: {
     flexDirection: "row", alignItems: "center", gap: 10,
     marginHorizontal: 16, marginVertical: 12, paddingHorizontal: 14, paddingVertical: 12,
@@ -307,4 +375,18 @@ const styles = StyleSheet.create({
   postMeta: { flexDirection: "row", alignItems: "center", gap: 5, marginTop: 6 },
   postMetaText: { fontSize: 12, marginRight: 6 },
   postThumb: { width: 60, height: 60, borderRadius: 10 },
+});
+
+const SS = StyleSheet.create({
+  aiSuggestBar: { flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: 16, paddingVertical: 10, borderBottomWidth: StyleSheet.hairlineWidth, flexWrap: "wrap" },
+  aiDot: { width: 16, height: 16, borderRadius: 8, alignItems: "center", justifyContent: "center" },
+  aiText: { fontSize: 11, fontWeight: "800", letterSpacing: 0.4 },
+  aiBadge: {},
+  aiLabel: {},
+  aiLabelText: {},
+  aiChip: {},
+  aiChipText: {},
+  suggestChip: { flexDirection: "row", alignItems: "center", gap: 5, paddingHorizontal: 12, paddingVertical: 6, borderRadius: 16, borderWidth: 1 },
+  suggestText: { fontSize: 13 },
+  aiBadge: { flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: 8, paddingVertical: 5, borderRadius: 12, backgroundColor: "transparent" },
 });
