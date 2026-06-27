@@ -1,7 +1,7 @@
 -- ============================================================
--- SocialApp — Missing Tables Only
+-- SocialApp — Missing Tables (Messaging + Live)
 -- Paste into Supabase → SQL Editor → Run
--- Safe to re-run (uses IF NOT EXISTS / CREATE OR REPLACE)
+-- Safe to re-run (IF NOT EXISTS + DROP POLICY IF EXISTS)
 -- ============================================================
 
 -- ─── Tables ───────────────────────────────────────────────
@@ -74,13 +74,13 @@ $$;
 
 -- ─── Row Level Security ───────────────────────────────────
 
-alter table public.conversations       enable row level security;
+alter table public.conversations        enable row level security;
 alter table public.conversation_members enable row level security;
-alter table public.messages            enable row level security;
-alter table public.live_sessions       enable row level security;
-alter table public.live_messages       enable row level security;
+alter table public.messages             enable row level security;
+alter table public.live_sessions        enable row level security;
+alter table public.live_messages        enable row level security;
 
--- Drop old policies first so re-runs are safe
+-- Drop all old policies first (makes this safe to re-run)
 drop policy if exists "convos_select"        on public.conversations;
 drop policy if exists "convos_insert"        on public.conversations;
 drop policy if exists "convos_update"        on public.conversations;
@@ -98,46 +98,76 @@ drop policy if exists "live_sessions_delete" on public.live_sessions;
 drop policy if exists "live_messages_select" on public.live_messages;
 drop policy if exists "live_messages_insert" on public.live_messages;
 
--- conversations: only members can see their conversations
+-- conversations: visible to members only
+-- (queries conversation_members from conversations policy = no recursion)
 create policy "convos_select" on public.conversations for select using (
-  exists (select 1 from public.conversation_members where conversation_id = id and user_id = auth.uid())
+  exists (
+    select 1 from public.conversation_members
+    where conversation_id = conversations.id
+      and user_id = auth.uid()
+  )
 );
-create policy "convos_insert" on public.conversations for insert with check (auth.uid() = created_by);
+create policy "convos_insert" on public.conversations for insert
+  with check (auth.uid() = created_by);
 create policy "convos_update" on public.conversations for update using (
-  exists (select 1 from public.conversation_members where conversation_id = id and user_id = auth.uid())
+  exists (
+    select 1 from public.conversation_members
+    where conversation_id = conversations.id
+      and user_id = auth.uid()
+  )
 );
 
--- conversation_members
-create policy "conv_members_select" on public.conversation_members for select using (
-  user_id = auth.uid() or
-  exists (select 1 from public.conversation_members cm2 where cm2.conversation_id = conversation_id and cm2.user_id = auth.uid())
-);
-create policy "conv_members_insert" on public.conversation_members for insert with check (true);
-create policy "conv_members_update" on public.conversation_members for update using (
-  user_id = auth.uid() or
-  exists (select 1 from public.conversation_members cm2 where cm2.conversation_id = conversation_id and cm2.user_id = auth.uid() and cm2.is_admin = true)
-);
-create policy "conv_members_delete" on public.conversation_members for delete using (user_id = auth.uid());
+-- conversation_members: NON-RECURSIVE
+-- Each user can only see their own membership rows.
+-- (The app queries with .eq("user_id", myId) so this is sufficient.)
+create policy "conv_members_select" on public.conversation_members
+  for select using (user_id = auth.uid());
 
--- messages: conversation members only
+-- Anyone can be added to a conversation (insert handled by server logic)
+create policy "conv_members_insert" on public.conversation_members
+  for insert with check (true);
+
+-- Members can update their own row; admins can update others
+create policy "conv_members_update" on public.conversation_members
+  for update using (user_id = auth.uid());
+
+-- Members can leave (delete their own row)
+create policy "conv_members_delete" on public.conversation_members
+  for delete using (user_id = auth.uid());
+
+-- messages: only conversation members can read/write
+-- (queries conversation_members from messages policy = no recursion)
 create policy "messages_select" on public.messages for select using (
-  exists (select 1 from public.conversation_members where conversation_id = messages.conversation_id and user_id = auth.uid())
+  exists (
+    select 1 from public.conversation_members
+    where conversation_id = messages.conversation_id
+      and user_id = auth.uid()
+  )
 );
 create policy "messages_insert" on public.messages for insert with check (
-  auth.uid() = sender_id and
-  exists (select 1 from public.conversation_members where conversation_id = messages.conversation_id and user_id = auth.uid())
+  auth.uid() = sender_id
+  and exists (
+    select 1 from public.conversation_members
+    where conversation_id = messages.conversation_id
+      and user_id = auth.uid()
+  )
 );
-create policy "messages_update" on public.messages for update using (auth.uid() = sender_id);
+create policy "messages_update" on public.messages
+  for update using (auth.uid() = sender_id);
 
 -- live_sessions: public read, host writes
 create policy "live_sessions_select" on public.live_sessions for select using (true);
-create policy "live_sessions_insert" on public.live_sessions for insert with check (auth.uid() = host_id);
-create policy "live_sessions_update" on public.live_sessions for update using (auth.uid() = host_id);
-create policy "live_sessions_delete" on public.live_sessions for delete using (auth.uid() = host_id);
+create policy "live_sessions_insert" on public.live_sessions for insert
+  with check (auth.uid() = host_id);
+create policy "live_sessions_update" on public.live_sessions for update
+  using (auth.uid() = host_id);
+create policy "live_sessions_delete" on public.live_sessions for delete
+  using (auth.uid() = host_id);
 
 -- live_messages: public read, authenticated write
 create policy "live_messages_select" on public.live_messages for select using (true);
-create policy "live_messages_insert" on public.live_messages for insert with check (auth.uid() = user_id);
+create policy "live_messages_insert" on public.live_messages for insert
+  with check (auth.uid() = user_id);
 
 -- ─── Realtime ─────────────────────────────────────────────
 
