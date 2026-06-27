@@ -98,10 +98,12 @@ drop policy if exists "live_sessions_delete" on public.live_sessions;
 drop policy if exists "live_messages_select" on public.live_messages;
 drop policy if exists "live_messages_insert" on public.live_messages;
 
--- conversations: visible to members only
--- (queries conversation_members from conversations policy = no recursion)
+-- conversations: creator can always see their own row; members can see theirs.
+-- The creator check is needed because at INSERT time the user isn't in
+-- conversation_members yet, so the SELECT-back after insert would fail otherwise.
 create policy "convos_select" on public.conversations for select using (
-  exists (
+  auth.uid() = created_by
+  or exists (
     select 1 from public.conversation_members
     where conversation_id = conversations.id
       and user_id = auth.uid()

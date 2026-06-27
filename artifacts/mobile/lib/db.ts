@@ -271,15 +271,18 @@ export async function getOrCreateDM(userId: string, otherId: string): Promise<st
     if (existing) return existing as string;
   } catch {}
 
-  // 2. Manual lookup — check for existing shared DM
+  // 2. Manual lookup — find existing shared DM via membership rows
   const { data: myConvos, error: myErr } = await supabase
     .from("conversation_members")
     .select("conversation_id")
     .eq("user_id", userId);
 
   if (myErr) {
-    // Table likely doesn't exist — surface a clear message
-    throw new Error("Messaging isn't set up yet. Please run the Supabase schema SQL first.");
+    const code = (myErr as any)?.code ?? "";
+    if (code === "42P01" || myErr.message?.includes("does not exist")) {
+      throw new Error("Messaging tables are missing. Please run missing_tables.sql in Supabase.");
+    }
+    throw new Error(myErr.message ?? "Could not load conversations");
   }
 
   if (myConvos?.length) {
@@ -303,33 +306,35 @@ export async function getOrCreateDM(userId: string, otherId: string): Promise<st
     }
   }
 
-  // 3. Create new DM conversation
-  const { data: convo, error: createErr } = await supabase
+  // 3. Create a new DM — generate UUID client-side so we never need to
+  //    read the row back through the SELECT RLS policy (which would fail
+  //    because the user isn't in conversation_members yet at that point).
+  const newId = crypto.randomUUID();
+
+  const { error: createErr } = await supabase
     .from("conversations")
-    .insert({ type: "dm", created_by: userId })
-    .select("id")
-    .single();
+    .insert({ id: newId, type: "dm", created_by: userId });
 
   if (createErr) {
     if (createErr.code === "42P01" || createErr.message?.includes("does not exist")) {
-      throw new Error("Messaging isn't set up yet. Please run the Supabase schema SQL first.");
+      throw new Error("Messaging tables are missing. Please run missing_tables.sql in Supabase.");
     }
     throw new Error(createErr.message ?? "Failed to create conversation");
   }
-  if (!(convo as any)?.id) throw new Error("Failed to create conversation");
 
+  // 4. Add both users as members
   const { error: memberErr } = await supabase.from("conversation_members").insert([
-    { conversation_id: (convo as any).id, user_id: userId },
-    { conversation_id: (convo as any).id, user_id: otherId },
+    { conversation_id: newId, user_id: userId },
+    { conversation_id: newId, user_id: otherId },
   ]);
 
   if (memberErr) {
-    // Clean up the created conversation if members insert failed
-    await supabase.from("conversations").delete().eq("id", (convo as any).id);
+    // Roll back the orphaned conversation
+    await supabase.from("conversations").delete().eq("id", newId);
     throw new Error(memberErr.message ?? "Failed to add conversation members");
   }
 
-  return (convo as any).id as string;
+  return newId;
 }
 
 export async function createGroupConversation(creatorId: string, name: string, memberIds: string[]): Promise<string> {
