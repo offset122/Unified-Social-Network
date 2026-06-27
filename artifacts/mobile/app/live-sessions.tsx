@@ -128,6 +128,8 @@ function HostCameraPreview({ isActive }: { isActive: boolean }) {
     if (Platform.OS === "web") return;
     (async () => {
       try {
+        // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+        // @ts-ignore — expo-camera is optional; installed only in native builds
         const mod = await import("expo-camera");
         const result = await mod.Camera.requestCameraPermissionsAsync();
         if (result.granted) {
@@ -407,7 +409,7 @@ function LiveStreamModal({
           ) : (
             <Pressable onPress={handleLike} style={LS.liveLikeBtn}>
               <Animated.View style={{ transform: [{ scale: likeScale }] }}>
-                <AntDesign name={isLiked ? "heart" : "hearto"} size={22} color={isLiked ? "#ff3b5c" : "#fff"} />
+                <AntDesign name={(isLiked ? "heart" : "hearto") as any} size={22} color={isLiked ? "#ff3b5c" : "#fff"} />
               </Animated.View>
             </Pressable>
           )}

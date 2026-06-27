@@ -296,7 +296,7 @@ function ReelCard({ item, isVisible }: { item: Post; isVisible: boolean }) {
       <View style={S.sideActions}>
         <Pressable onPress={handleLike} style={S.sideBtn}>
           <Animated.View style={[S.sideBtnCircle, isLiked && S.sideBtnCircleActive, { transform: [{ scale: likeScale }] }]}>
-            <AntDesign name={isLiked ? "heart" : "hearto"} size={24} color={isLiked ? "#ff3b5c" : "#fff"} />
+            <AntDesign name={(isLiked ? "heart" : "hearto") as any} size={24} color={isLiked ? "#ff3b5c" : "#fff"} />
           </Animated.View>
           <Text style={[S.sideCount, isLiked && { color: "#ff3b5c" }]}>{formatCount(likesCount)}</Text>
         </Pressable>

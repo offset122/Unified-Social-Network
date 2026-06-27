@@ -163,7 +163,7 @@ export default function StoryViewerScreen() {
       </LinearGradient>
 
       {/* Tap zones */}
-      <View style={styles.tapZones} pointerEvents="box-none">
+      <View style={[styles.tapZones, { pointerEvents: "box-none" } as any]}>
         <Pressable style={styles.tapLeft} onPress={goPrev} />
         <Pressable style={styles.tapRight} onPress={goNext} />
       </View>
