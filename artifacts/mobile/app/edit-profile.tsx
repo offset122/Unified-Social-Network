@@ -12,6 +12,7 @@ import { useColors } from "@/hooks/useColors";
 import { useAuth } from "@/lib/auth";
 import { fetchProfile, updateProfile, uploadMedia, resolveMediaUrl } from "@/lib/db";
 import { LinearGradient } from "expo-linear-gradient";
+import AIBioWriter from "@/components/ai/AIBioWriter";
 
 export default function EditProfileScreen() {
   const { user } = useAuth();
@@ -151,6 +152,7 @@ export default function EditProfileScreen() {
               multiline maxLength={150}
             />
             <Text style={[styles.charCount, { color: colors.mutedForeground }]}>{bio.length}/150</Text>
+            <AIBioWriter displayName={displayName} onApply={setBio} />
           </View>
         </View>
       </ScrollView>

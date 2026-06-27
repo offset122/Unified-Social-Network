@@ -56,8 +56,8 @@ export type Message = {
   media_url: string | null; media_type: "image" | "video" | "audio" | "file" | null;
   reply_to_id: string | null; post_id: string | null; is_deleted: boolean;
   created_at: string; profiles?: Profile;
-  reply_to?: { id: string; content: string; media_type: string | null; profiles?: Profile } | null;
-  shared_post?: { id: string; content: string; media_urls: string[]; media_type: string | null; profiles?: Profile } | null;
+  reply_to?: { id: string; content: string; media_type: string | null; sender_id: string } | null;
+  shared_post?: { id: string; content: string; media_urls: string[]; media_type: string | null; author_id: string } | null;
 };
 
 export type Conversation = {
@@ -270,21 +270,29 @@ export async function getOrCreateDM(userId: string, otherId: string): Promise<st
     if (existing) return existing as string;
   } catch {}
 
-  const { data: myConvos } = await supabase
+  const { data: myConvos, error: myErr } = await supabase
     .from("conversation_members")
     .select("conversation_id")
     .eq("user_id", userId);
 
+  if (myErr) {
+    const code = (myErr as any)?.code ?? "";
+    if (code === "42P01" || myErr.message?.includes("does not exist")) {
+      throw new Error("Messaging tables are missing. Please run missing_tables.sql in Supabase.");
+    }
+    throw new Error(myErr.message ?? "Could not load conversations");
+  }
+
   if (myConvos?.length) {
     const myIds = (myConvos as any[]).map(r => r.conversation_id as string);
-    const { data: sharedMemberships } = await supabase
+    const { data: shared } = await supabase
       .from("conversation_members")
       .select("conversation_id")
       .eq("user_id", otherId)
       .in("conversation_id", myIds);
 
-    if (sharedMemberships?.length) {
-      const sharedIds = (sharedMemberships as any[]).map(r => r.conversation_id as string);
+    if (shared?.length) {
+      const sharedIds = (shared as any[]).map(r => r.conversation_id as string);
       const { data: dmConvo } = await supabase
         .from("conversations")
         .select("id")
@@ -296,17 +304,30 @@ export async function getOrCreateDM(userId: string, otherId: string): Promise<st
     }
   }
 
-  const { data: convo, error } = await supabase
+  const newId = crypto.randomUUID();
+
+  const { error: createErr } = await supabase
     .from("conversations")
-    .insert({ type: "dm", created_by: userId })
-    .select("id")
-    .single();
-  if (error || !(convo as any)?.id) throw new Error(error?.message ?? "Failed to create conversation");
-  await supabase.from("conversation_members").insert([
-    { conversation_id: (convo as any).id, user_id: userId },
-    { conversation_id: (convo as any).id, user_id: otherId },
+    .insert({ id: newId, type: "dm", created_by: userId });
+
+  if (createErr) {
+    if (createErr.code === "42P01" || createErr.message?.includes("does not exist")) {
+      throw new Error("Messaging tables are missing. Please run missing_tables.sql in Supabase.");
+    }
+    throw new Error(createErr.message ?? "Failed to create conversation");
+  }
+
+  const { error: memberErr } = await supabase.from("conversation_members").insert([
+    { conversation_id: newId, user_id: userId },
+    { conversation_id: newId, user_id: otherId },
   ]);
-  return (convo as any).id as string;
+
+  if (memberErr) {
+    await supabase.from("conversations").delete().eq("id", newId);
+    throw new Error(memberErr.message ?? "Failed to add conversation members");
+  }
+
+  return newId;
 }
 
 export async function createGroupConversation(creatorId: string, name: string, memberIds: string[]): Promise<string> {
@@ -324,33 +345,83 @@ export async function fetchConversationMembers(conversationId: string): Promise<
 // ─── Messages ─────────────────────────────────────────────────────────────────
 
 export async function fetchMessages(conversationId: string, cursor?: string): Promise<Message[]> {
-  let q = supabase.from("messages")
-    .select("*, profiles(*), reply_to:reply_to_id(id, content, media_type, profiles(*)), shared_post:post_id(id, content, media_urls, media_type, profiles(*))")
-    .eq("conversation_id", conversationId).order("created_at", { ascending: false }).limit(40);
+  // Explicit column list avoids PostgREST schema ambiguity between
+  // public.messages and realtime.messages. Profiles joined client-side.
+  let q = supabase
+    .from("messages")
+    .select("id, conversation_id, sender_id, content, media_url, media_type, reply_to_id, post_id, is_deleted, created_at")
+    .eq("conversation_id", conversationId)
+    .eq("is_deleted", false)
+    .order("created_at", { ascending: false })
+    .limit(40);
   if (cursor) q = q.lt("created_at", cursor);
-  const { data } = await q;
-  return ((data ?? []).reverse()) as Message[];
+  const { data, error } = await q;
+  if (error) {
+    const code = (error as any)?.code ?? "";
+    if (code === "42P01" || error.message?.includes("does not exist")) {
+      throw new Error("Messaging tables are missing. Please run missing_tables.sql in Supabase.");
+    }
+    throw new Error(error.message);
+  }
+  if (!data?.length) return [];
+
+  // Batch-fetch profiles for all unique senders in one query
+  const senderIds = [...new Set(data.map((m: any) => m.sender_id as string))];
+  const { data: profiles } = await supabase
+    .from("profiles")
+    .select("*")
+    .in("id", senderIds);
+
+  const profileMap = new Map((profiles ?? []).map((p: any) => [p.id as string, p]));
+
+  return data.reverse().map((m: any) => ({
+    ...m,
+    profiles: profileMap.get(m.sender_id) ?? undefined,
+    reply_to: null,
+    shared_post: null,
+  })) as Message[];
 }
 
-export async function sendMessage(conversationId: string, senderId: string, content: string, opts?: { mediaUrl?: string; mediaType?: string; replyToId?: string; postId?: string }) {
-  const { data, error } = await supabase.from("messages").insert({
-    conversation_id: conversationId, sender_id: senderId, content,
-    media_url: opts?.mediaUrl ?? null, media_type: opts?.mediaType ?? null,
-    reply_to_id: opts?.replyToId ?? null, post_id: opts?.postId ?? null, is_deleted: false,
-  }).select("*, profiles(*), reply_to:reply_to_id(id, content, media_type, profiles(*)), shared_post:post_id(id, content, media_urls, media_type, profiles(*))").single();
+export async function sendMessage(
+  conversationId: string,
+  senderId: string,
+  content: string,
+  opts?: { mediaUrl?: string; mediaType?: string; replyToId?: string; postId?: string }
+) {
+  const msgId = crypto.randomUUID();
+  const { error } = await supabase.from("messages").insert({
+    id: msgId,
+    conversation_id: conversationId,
+    sender_id: senderId,
+    content,
+    media_url: opts?.mediaUrl ?? null,
+    media_type: opts?.mediaType ?? null,
+    reply_to_id: opts?.replyToId ?? null,
+    post_id: opts?.postId ?? null,
+    is_deleted: false,
+  });
   if (error) throw new Error(error.message);
-  await supabase.from("conversation_members").update({ unread_count: supabase.rpc("increment_unread" as any) as any }).eq("conversation_id", conversationId).neq("user_id", senderId);
-  await supabase.from("conversations").update({ last_message_at: new Date().toISOString() }).eq("id", conversationId);
-  return data as Message;
+  await supabase
+    .from("conversations")
+    .update({ last_message_at: new Date().toISOString() })
+    .eq("id", conversationId);
 }
 
 export async function deleteMessage(messageId: string, senderId: string) {
-  const { error } = await supabase.from("messages").update({ is_deleted: true, content: "This message was deleted" }).eq("id", messageId).eq("sender_id", senderId);
+  const { error } = await supabase
+    .from("messages")
+    .update({ is_deleted: true, content: "This message was deleted" })
+    .eq("id", messageId)
+    .eq("sender_id", senderId);
   if (error) throw new Error(error.message);
 }
 
 export async function markConversationRead(conversationId: string, userId: string) {
-  await supabase.from("conversation_members").update({ unread_count: 0 }).eq("conversation_id", conversationId).eq("user_id", userId);
+  await supabase
+    .from("conversation_members")
+    .update({ unread_count: 0 })
+    .eq("conversation_id", conversationId)
+    .eq("user_id", userId);
 }
 
 // ─── Block ────────────────────────────────────────────────────────────────────
@@ -407,12 +478,6 @@ export async function fetchStories(userId: string) {
   return data ?? [];
 }
 
-export async function createStory(authorId: string, mediaUrl: string, mediaType: "image" | "video"): Promise<void> {
-  const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
-  const { error } = await supabase.from("stories").insert({ author_id: authorId, media_url: mediaUrl, media_type: mediaType, expires_at: expiresAt, views_count: 0 });
-  if (error) throw new Error(error.message);
-}
-
 // ─── Live Sessions ────────────────────────────────────────────────────────────
 
 export async function fetchLiveSessions(): Promise<LiveSession[]> {
@@ -445,13 +510,13 @@ export async function sendLiveMessage(sessionId: string, userId: string, content
 // ─── AI (OpenRouter) ─────────────────────────────────────────────────────────
 
 async function callAI(system: string, userMsg: string, maxTokens = 150): Promise<string> {
-  const key = process.env.EXPO_PUBLIC_OPENROUTER_KEY;
+  const key = getEnvValue("EXPO_PUBLIC_OPENROUTER_KEY");
   if (!key) return "";
   try {
     const resp = await fetch("https://openrouter.ai/api/v1/chat/completions", {
       method: "POST",
       headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ model: "meta-llama/llama-3.1-8b-instruct:free", messages: [{ role: "system", content: system }, { role: "user", content: userMsg }], max_tokens: maxTokens }),
+      body: JSON.stringify({ model: "openrouter/auto:free", messages: [{ role: "system", content: system }, { role: "user", content: userMsg }], max_tokens: maxTokens }),
     });
     if (!resp.ok) return "";
     const json = await resp.json() as any;
@@ -471,4 +536,54 @@ export async function generateAIReplySuggestion(messageContext: string): Promise
 export async function generateAIHashtags(content: string): Promise<string[]> {
   const text = await callAI("Generate 6 relevant hashtags including # symbol. Return ONLY a JSON array.", `Content: "${content}"`, 100);
   try { const a = JSON.parse(text); return Array.isArray(a) ? a.slice(0, 6) : []; } catch { return []; }
+}
+
+export async function generateAICommentSuggestions(postContent: string): Promise<string[]> {
+  const text = await callAI('Generate 3 engaging comment suggestions (under 60 chars each). Return ONLY a JSON array: ["comment1","comment2","comment3"]', `Post: "${postContent}"`, 100);
+  try { const a = JSON.parse(text); return Array.isArray(a) ? a.slice(0, 3) : []; } catch { return []; }
+}
+
+export async function generateAIBio(displayName: string): Promise<string> {
+  return callAI("You are a social media profile writer. Write a catchy, authentic bio under 120 chars. No quotes in output.", `Write a bio for someone named: ${displayName}`, 100);
+}
+
+export async function enhanceAICaption(caption: string): Promise<string> {
+  return callAI("You are a social media expert. Rewrite the caption to be punchier and more engaging. Keep it under 200 chars with 2-3 hashtags. No quotes in output.", `Enhance this caption: ${caption}`, 150);
+}
+
+export async function generatePostIdea(trendingTags: string[]): Promise<string> {
+  const tags = trendingTags.slice(0, 5).join(", ");
+  return callAI("You are a creative social media content coach. Suggest an engaging post idea in 1-2 sentences. No quotes in output.", `Trending topics: ${tags || "lifestyle, tech, travel"}. Suggest a post idea.`, 120);
+}
+
+export async function generateSearchSuggestions(query: string): Promise<string[]> {
+  const text = await callAI('Suggest 4 related search terms or hashtags for a social media search. Return ONLY a JSON array of strings.', `User searched for: "${query}"`, 80);
+  try { const a = JSON.parse(text); return Array.isArray(a) ? a.slice(0, 4) : []; } catch { return []; }
+}
+
+export async function generateProfileInsights(stats: { totalPosts: number; totalLikes: number; totalViews: number; imagePosts: number; videoPosts: number; textPosts: number }): Promise<string> {
+  return callAI("You are a social media growth coach. Give 2-3 short, actionable insights based on post stats. Be specific and encouraging. Under 250 chars total.",
+    `Stats: ${stats.totalPosts} posts, ${stats.totalLikes} likes, ${stats.totalViews} views, ${stats.imagePosts} image posts, ${stats.videoPosts} video posts, ${stats.textPosts} text posts.`, 200);
+}
+
+export async function chatWithAI(messages: { role: "user" | "assistant"; content: string }[]): Promise<string> {
+  const key = getEnvValue("EXPO_PUBLIC_OPENROUTER_KEY");
+  if (!key) return "Sorry, AI is not available right now.";
+  try {
+    const resp = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "openrouter/auto:free",
+        messages: [
+          { role: "system", content: "You are a helpful, friendly AI assistant built into a social media app. Keep responses concise and engaging." },
+          ...messages,
+        ],
+        max_tokens: 300,
+      }),
+    });
+    if (!resp.ok) return "Sorry, something went wrong. Try again.";
+    const json = await resp.json() as any;
+    return json.choices?.[0]?.message?.content?.trim() ?? "Sorry, I couldn't respond.";
+  } catch { return "Sorry, something went wrong. Try again."; }
 }

@@ -14,6 +14,9 @@ import GuestScreen from "@/components/GuestScreen";
 import { useColors } from "@/hooks/useColors";
 import { uploadMedia, generateAICaption } from "@/lib/db";
 import { supabase as sb } from "@/lib/supabase";
+import AIHashtagSuggestions from "@/components/ai/AIHashtagSuggestions";
+import AICaptionEnhancer from "@/components/ai/AICaptionEnhancer";
+import AIPostIdeas from "@/components/ai/AIPostIdeas";
 
 const MAX_VIDEO_SIZE = 100 * 1024 * 1024; // 100MB
 type PostMode = "post" | "reel";
@@ -41,6 +44,7 @@ export default function CreateScreen() {
   const [posting, setPosting] = useState(false);
   const [generatingCaption, setGeneratingCaption] = useState(false);
   const [visibility, setVisibility] = useState<"public" | "followers" | "private">("public");
+  const [trendingTags] = useState<string[]>([]);
 
   if (isGuest) return <GuestScreen icon="plus-circle" title="Create & Share" subtitle="Sign up to share posts, reels, and stories with your followers." perks={["Post photos and videos", "Create short reels", "Control who sees your content", "AI-powered captions"]} />;
   if (!isAuthenticated) return <Redirect href="/login" />;
@@ -243,7 +247,19 @@ export default function CreateScreen() {
             )}
             <Text style={[styles.toolBtnText, { color: colors.primary }]}>AI Caption</Text>
           </Pressable>
+          <AIHashtagSuggestions
+            content={content}
+            onApply={tag => setContent(prev => prev ? `${prev} ${tag}` : tag)}
+          />
+          <AICaptionEnhancer
+            caption={content}
+            onApply={setContent}
+          />
         </View>
+
+        {content === "" && media.length === 0 && (
+          <AIPostIdeas trendingTags={trendingTags} onApply={setContent} />
+        )}
 
         {/* Visibility */}
         <View style={[styles.visibilityRow, { borderTopColor: colors.border, borderBottomColor: colors.border }]}>

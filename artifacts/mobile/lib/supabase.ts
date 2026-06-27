@@ -22,6 +22,9 @@ if (!supabaseUrl || !supabaseAnonKey) {
 }
 
 export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
+  db: {
+    schema: "public", // force public schema — avoids PostgREST ambiguity with realtime.messages
+  },
   auth: {
     storage: AsyncStorage as any,
     autoRefreshToken: true,

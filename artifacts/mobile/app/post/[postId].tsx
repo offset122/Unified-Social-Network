@@ -15,6 +15,7 @@ import {
   fetchComments, createComment, likePost, unlikePost, savePost, unsavePost,
   resolveMediaUrl, timeAgo, formatCount, type Comment, type Profile,
 } from "@/lib/db";
+import AICommentSuggestions from "@/components/ai/AICommentSuggestions";
 import { supabase } from "@/lib/supabase";
 
 async function fetchPost(postId: string) {
@@ -187,6 +188,10 @@ export default function PostDetailScreen() {
 
       {/* Comment input */}
       <View style={[styles.commentInputBar, { borderTopColor: colors.border, backgroundColor: colors.background, paddingBottom: insets.bottom + 4 }]}>
+        <AICommentSuggestions
+          postContent={post?.content ?? ""}
+          onSelect={t => setCommentText(t)}
+        />
         <TextInput
           style={[styles.commentInput, { color: colors.foreground, backgroundColor: colors.secondary, borderColor: colors.border }]}
           placeholder="Add a comment..." placeholderTextColor={colors.mutedForeground}

@@ -23,6 +23,7 @@ import {
   deletePost, updatePostVisibility,
   type Post, type Comment, type Profile,
 } from "@/lib/db";
+import AICommentSuggestions from "@/components/ai/AICommentSuggestions";
 import { supabase } from "@/lib/supabase";
 
 const { width: SCREEN_WIDTH } = Dimensions.get("window");
@@ -149,6 +150,10 @@ function CommentSheet({ postId, visible, onClose, userId, colors }: {
           ListEmptyComponent={<Text style={{ textAlign: "center", color: colors.mutedForeground, marginTop: 40 }}>No comments yet. Be first!</Text>}
         />
         <View style={[styles.commentInput, { borderTopColor: colors.border, backgroundColor: colors.background }]}>
+          <AICommentSuggestions
+            postContent={(comments as Comment[])[0]?.content ?? ""}
+            onSelect={t => setText(t)}
+          />
           <TextInput
             style={[styles.commentTextInput, { color: colors.foreground, backgroundColor: colors.secondary, borderColor: colors.border }]}
             placeholder="Add a comment..." placeholderTextColor={colors.mutedForeground}
