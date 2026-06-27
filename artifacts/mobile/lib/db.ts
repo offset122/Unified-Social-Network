@@ -265,26 +265,33 @@ export async function fetchConversations(userId: string): Promise<Conversation[]
 }
 
 export async function getOrCreateDM(userId: string, otherId: string): Promise<string> {
+  // 1. Try the RPC shortcut first
   try {
     const { data: existing } = await supabase.rpc("get_dm_conversation", { user1: userId, user2: otherId });
     if (existing) return existing as string;
   } catch {}
 
-  const { data: myConvos } = await supabase
+  // 2. Manual lookup — check for existing shared DM
+  const { data: myConvos, error: myErr } = await supabase
     .from("conversation_members")
     .select("conversation_id")
     .eq("user_id", userId);
 
+  if (myErr) {
+    // Table likely doesn't exist — surface a clear message
+    throw new Error("Messaging isn't set up yet. Please run the Supabase schema SQL first.");
+  }
+
   if (myConvos?.length) {
     const myIds = (myConvos as any[]).map(r => r.conversation_id as string);
-    const { data: sharedMemberships } = await supabase
+    const { data: shared } = await supabase
       .from("conversation_members")
       .select("conversation_id")
       .eq("user_id", otherId)
       .in("conversation_id", myIds);
 
-    if (sharedMemberships?.length) {
-      const sharedIds = (sharedMemberships as any[]).map(r => r.conversation_id as string);
+    if (shared?.length) {
+      const sharedIds = (shared as any[]).map(r => r.conversation_id as string);
       const { data: dmConvo } = await supabase
         .from("conversations")
         .select("id")
@@ -296,16 +303,32 @@ export async function getOrCreateDM(userId: string, otherId: string): Promise<st
     }
   }
 
-  const { data: convo, error } = await supabase
+  // 3. Create new DM conversation
+  const { data: convo, error: createErr } = await supabase
     .from("conversations")
     .insert({ type: "dm", created_by: userId })
     .select("id")
     .single();
-  if (error || !(convo as any)?.id) throw new Error(error?.message ?? "Failed to create conversation");
-  await supabase.from("conversation_members").insert([
+
+  if (createErr) {
+    if (createErr.code === "42P01" || createErr.message?.includes("does not exist")) {
+      throw new Error("Messaging isn't set up yet. Please run the Supabase schema SQL first.");
+    }
+    throw new Error(createErr.message ?? "Failed to create conversation");
+  }
+  if (!(convo as any)?.id) throw new Error("Failed to create conversation");
+
+  const { error: memberErr } = await supabase.from("conversation_members").insert([
     { conversation_id: (convo as any).id, user_id: userId },
     { conversation_id: (convo as any).id, user_id: otherId },
   ]);
+
+  if (memberErr) {
+    // Clean up the created conversation if members insert failed
+    await supabase.from("conversations").delete().eq("id", (convo as any).id);
+    throw new Error(memberErr.message ?? "Failed to add conversation members");
+  }
+
   return (convo as any).id as string;
 }
 

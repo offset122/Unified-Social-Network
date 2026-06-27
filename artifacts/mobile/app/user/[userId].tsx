@@ -202,7 +202,7 @@ function ProfilePostCard({ post, isOwn, userId, colors, onDeleted }: {
       {/* Stats */}
       <View style={[PC.statsRow, { borderTopColor: colors.border }]}>
         <View style={PC.statItem}>
-          <AntDesign name="hearto" size={14} color={colors.mutedForeground} />
+          <AntDesign name={"hearto" as any} size={14} color={colors.mutedForeground} />
           <Text style={[PC.statText, { color: colors.mutedForeground }]}>{formatCount(post.likes_count)}</Text>
         </View>
         <View style={PC.statItem}>

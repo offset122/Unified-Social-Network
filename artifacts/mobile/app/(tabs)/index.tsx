@@ -416,7 +416,7 @@ function PostCard({ post, userId, colors, onRequireAuth, onDeleted }: {
         <View style={styles.leftActions}>
           <Pressable onPress={handleLike} style={styles.actionBtn}>
             <Animated.View style={{ transform: [{ scale: likeScale }] }}>
-              <AntDesign name={liked ? "heart" : "hearto"} size={22} color={liked ? "#ff3b5c" : colors.mutedForeground} />
+              <AntDesign name={(liked ? "heart" : "hearto") as any} size={22} color={liked ? "#ff3b5c" : colors.mutedForeground} />
             </Animated.View>
             <Text style={[styles.actionCount, { color: liked ? "#ff3b5c" : colors.mutedForeground }]}>
               {formatCount(likes)}
@@ -458,7 +458,7 @@ function EndOfFeed({ colors }: { colors: any }) {
     <View style={styles.endFeed}>
       <View style={[styles.endFeedLine, { backgroundColor: colors.border }]} />
       <View style={{ flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: 16 }}>
-        <AntDesign name="checkcircleo" size={16} color={colors.mutedForeground} />
+        <AntDesign name={"checkcircleo" as any} size={16} color={colors.mutedForeground} />
         <Text style={[styles.endFeedText, { color: colors.mutedForeground }]}>You're all caught up!</Text>
       </View>
       <View style={[styles.endFeedLine, { backgroundColor: colors.border }]} />
