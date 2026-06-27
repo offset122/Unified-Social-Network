@@ -1,6 +1,6 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import {
-  View, Text, StyleSheet, Pressable, Platform, Dimensions, Image, Alert,
+  View, Text, StyleSheet, Pressable, Platform, Dimensions, Alert,
 } from "react-native";
 import { Stack, useLocalSearchParams, useRouter } from "expo-router";
 import { Feather } from "@expo/vector-icons";
@@ -8,7 +8,7 @@ import { LinearGradient } from "expo-linear-gradient";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useAuth } from "@/lib/auth";
 import { useColors } from "@/hooks/useColors";
-import { resolveMediaUrl } from "@/lib/db";
+import { supabase } from "@/lib/supabase";
 
 const { width: W, height: H } = Dimensions.get("window");
 
@@ -38,12 +38,37 @@ export default function CallScreen() {
   const [isMuted, setIsMuted] = useState(false);
   const [isSpeaker, setIsSpeaker] = useState(false);
   const [isCameraOff, setIsCameraOff] = useState(false);
+  const signalChannel = useRef<ReturnType<typeof supabase.channel> | null>(null);
 
   useEffect(() => {
-    // Simulate call being answered after 3 seconds
-    const timer = setTimeout(() => setCallStatus("connected"), 3000);
-    return () => clearTimeout(timer);
-  }, []);
+    if (!user?.id || !chatId) return;
+
+    // Signaling channel — both peers join, caller sends "ringing", callee sends "answer"
+    const ch = supabase.channel(`call-signal-${chatId}`);
+    signalChannel.current = ch;
+
+    ch.on("broadcast", { event: "call-answer" }, () => {
+      setCallStatus("connected");
+    }).on("broadcast", { event: "call-end" }, () => {
+      setCallStatus("ended");
+      setTimeout(() => router.back(), 800);
+    }).subscribe(async (status) => {
+      if (status === "SUBSCRIBED") {
+        // Announce ringing to the peer
+        await ch.send({ type: "broadcast", event: "call-ring", payload: { callerId: user.id, isVideo } });
+      }
+    });
+
+    // Auto-answer simulation for demo (remove when real callee UI is added)
+    const demoTimer = setTimeout(async () => {
+      await ch.send({ type: "broadcast", event: "call-answer", payload: {} });
+    }, 3000);
+
+    return () => {
+      clearTimeout(demoTimer);
+      supabase.removeChannel(ch);
+    };
+  }, [chatId, user?.id]);
 
   useEffect(() => {
     if (callStatus !== "connected") return;
@@ -57,9 +82,18 @@ export default function CallScreen() {
     return `${String(m).padStart(2, "0")}:${String(sec).padStart(2, "0")}`;
   };
 
-  const handleEnd = () => {
+  const handleEnd = async () => {
     setCallStatus("ended");
+    await signalChannel.current?.send({ type: "broadcast", event: "call-end", payload: {} });
     setTimeout(() => router.back(), 800);
+  };
+
+  const handleMore = () => {
+    Alert.alert("More options", undefined, [
+      { text: isVideo ? "Switch to audio" : "Switch to video", onPress: () => {} },
+      { text: "Add person", onPress: () => router.push("/new-message" as any) },
+      { text: "Cancel", style: "cancel" },
+    ]);
   };
 
   return (
@@ -112,7 +146,7 @@ export default function CallScreen() {
             <Text style={styles.ctrlLabel}>{isSpeaker ? "Speaker" : "Earpiece"}</Text>
           </Pressable>
 
-          <Pressable style={styles.ctrlBtn}>
+          <Pressable onPress={handleMore} style={styles.ctrlBtn}>
             <Feather name="more-horizontal" size={24} color="#fff" />
             <Text style={styles.ctrlLabel}>More</Text>
           </Pressable>

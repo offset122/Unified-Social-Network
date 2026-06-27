@@ -69,6 +69,18 @@ export default function CreateScreen() {
     }
   }, [mode]);
 
+  const openCamera = useCallback(async () => {
+    const perm = await ImagePicker.requestCameraPermissionsAsync();
+    if (!perm.granted) { Alert.alert("Permission required", "Allow camera access to take a photo."); return; }
+    const isReel = mode === "reel";
+    const result = await ImagePicker.launchCameraAsync({
+      mediaTypes: isReel ? ImagePicker.MediaTypeOptions.Videos : ImagePicker.MediaTypeOptions.All,
+      quality: 0.85,
+      videoMaxDuration: isReel ? 60 : 30,
+    });
+    if (!result.canceled) setMedia([result.assets[0]]);
+  }, [mode]);
+
   const handleAICaption = async () => {
     setGeneratingCaption(true);
     try {
@@ -213,10 +225,14 @@ export default function CreateScreen() {
 
         {/* Toolbar */}
         <View style={[styles.toolbar, { borderTopColor: colors.border }]}>
+          <Pressable onPress={openCamera} style={styles.toolBtn}>
+            <Feather name="camera" size={22} color={colors.primary} />
+            <Text style={[styles.toolBtnText, { color: colors.primary }]}>Camera</Text>
+          </Pressable>
           <Pressable onPress={pickMedia} style={styles.toolBtn}>
             <Feather name={mode === "reel" ? "video" : "image"} size={22} color={colors.primary} />
             <Text style={[styles.toolBtnText, { color: colors.primary }]}>
-              {mode === "reel" ? "Video (up to 100MB)" : "Photo/Video"}
+              {mode === "reel" ? "Video (up to 100MB)" : "Gallery"}
             </Text>
           </Pressable>
           <Pressable onPress={handleAICaption} disabled={generatingCaption} style={styles.toolBtn}>

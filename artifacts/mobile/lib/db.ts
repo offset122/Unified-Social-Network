@@ -407,6 +407,12 @@ export async function fetchStories(userId: string) {
   return data ?? [];
 }
 
+export async function createStory(authorId: string, mediaUrl: string, mediaType: "image" | "video"): Promise<void> {
+  const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+  const { error } = await supabase.from("stories").insert({ author_id: authorId, media_url: mediaUrl, media_type: mediaType, expires_at: expiresAt, views_count: 0 });
+  if (error) throw new Error(error.message);
+}
+
 // ─── Live Sessions ────────────────────────────────────────────────────────────
 
 export async function fetchLiveSessions(): Promise<LiveSession[]> {

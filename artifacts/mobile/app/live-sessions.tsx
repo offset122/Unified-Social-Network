@@ -480,7 +480,13 @@ export default function LiveSessionsScreen() {
           session={watchingSession}
           onClose={() => {
             if (isHost) handleEndLive(watchingSession.id);
-            else setWatchingSession(null);
+            else {
+              // Decrement viewer count on leave
+              supabase.rpc("decrement_live_viewers" as any, { session_id: watchingSession.id }).then(() =>
+                qc.invalidateQueries({ queryKey: ["live-sessions"] })
+              );
+              setWatchingSession(null);
+            }
           }}
           userId={user?.id ?? ""}
           isHost={isHost}
@@ -586,7 +592,13 @@ export default function LiveSessionsScreen() {
             const host = s.profiles as Profile | undefined;
             return (
               <Pressable
-                onPress={() => setWatchingSession(s)}
+                onPress={() => {
+                  // Increment viewer count on join
+                  supabase.rpc("increment_live_viewers" as any, { session_id: s.id }).then(() =>
+                    qc.invalidateQueries({ queryKey: ["live-sessions"] })
+                  );
+                  setWatchingSession(s);
+                }}
                 style={({ pressed }) => [LS.sessionCard, { backgroundColor: colors.card, borderColor: colors.border, opacity: pressed ? 0.92 : 1 }]}
               >
                 <LinearGradient colors={["#1a0533", "#2d1b69"]} style={LS.sessionThumb}>
@@ -609,7 +621,12 @@ export default function LiveSessionsScreen() {
                     <Text style={{ color: colors.mutedForeground, fontSize: 12 }}>{timeAgo(s.started_at)}</Text>
                   </View>
                 </View>
-                <Pressable onPress={() => setWatchingSession(s)} style={LS.joinBtn}>
+                <Pressable onPress={() => {
+                    supabase.rpc("increment_live_viewers" as any, { session_id: s.id }).then(() =>
+                      qc.invalidateQueries({ queryKey: ["live-sessions"] })
+                    );
+                    setWatchingSession(s);
+                  }} style={LS.joinBtn}>
                   <Feather name="play" size={12} color="#fff" />
                   <Text style={LS.joinBtnText}>Join</Text>
                 </Pressable>

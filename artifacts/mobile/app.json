@@ -7,7 +7,10 @@
     "icon": "./assets/images/icon.png",
     "scheme": "socialapp",
     "userInterfaceStyle": "automatic",
-    "newArchEnabled": true,
+    "newArchEnabled": false,
+    "runtimeVersion": {
+      "policy": "sdkVersion"
+    },
     "splash": {
       "image": "./assets/images/icon.png",
       "resizeMode": "contain",
@@ -53,16 +56,16 @@
       ]
     ],
     "experiments": {
-      "typedRoutes": true,
-      "reactCompiler": true
+      "typedRoutes": true
     },
     "extra": {
       "router": {
         "origin": "https://replit.com/"
       },
       "eas": {
-        "projectId": "65aebab1-b882-489e-bf94-3576b832fec0"
+        "projectId": "e782640a-2f13-4580-a6d1-01be9b485b02"
       }
-    }
+    },
+    "owner": "clemooffset"
   }
 }

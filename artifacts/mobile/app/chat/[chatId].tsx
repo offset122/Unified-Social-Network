@@ -462,6 +462,25 @@ export default function ChatScreen() {
   const [aiSuggestions, setAiSuggestions] = useState<string[]>([]);
   const [showMediaMenu, setShowMediaMenu] = useState(false);
   const [loadingAI, setLoadingAI] = useState(false);
+  const [peerOnline, setPeerOnline] = useState(false);
+
+  // Real presence tracking via Supabase Realtime
+  useEffect(() => {
+    if (!user?.id || !chatId) return;
+    const presenceChannel = supabase.channel(`presence-${chatId}`, { config: { presence: { key: user.id } } });
+    presenceChannel
+      .on("presence", { event: "sync" }, () => {
+        const state = presenceChannel.presenceState();
+        const others = Object.keys(state).filter(k => k !== user.id);
+        setPeerOnline(others.length > 0);
+      })
+      .subscribe(async (status) => {
+        if (status === "SUBSCRIBED") {
+          await presenceChannel.track({ online_at: new Date().toISOString() });
+        }
+      });
+    return () => { supabase.removeChannel(presenceChannel); };
+  }, [chatId, user?.id]);
 
   // Audio recording — store loop ref to stop it properly
   const [recording, setRecording] = useState<Audio.Recording | null>(null);
@@ -697,15 +716,16 @@ export default function ChatScreen() {
         <View style={styles.headerPeerInfo}>
           <View style={styles.headerAvatarWrap}>
             <Avatar name={peerName} avatarUrl={params.peerAvatar} size={38} />
-            {/* Online dot */}
-            <View style={styles.onlineDot} />
+            {peerOnline && <View style={styles.onlineDot} />}
           </View>
           <View>
             <Text style={styles.headerName}>{peerName}</Text>
-            <View style={styles.headerStatusRow}>
-              <View style={styles.headerStatusDot} />
-              <Text style={styles.headerStatus}>Active now</Text>
-            </View>
+            {peerOnline && (
+              <View style={styles.headerStatusRow}>
+                <View style={styles.headerStatusDot} />
+                <Text style={styles.headerStatus}>Active now</Text>
+              </View>
+            )}
           </View>
         </View>
 

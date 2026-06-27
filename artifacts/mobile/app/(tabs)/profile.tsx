@@ -145,8 +145,10 @@ function PostGrid({ posts, colors, viewMode, onDelete, isOwn }: { posts: Post[];
   );
 }
 
-function SettingsSheet({ visible, onClose, onLogout, colors, colorScheme }: {
-  visible: boolean; onClose: () => void; onLogout: () => void; colors: any; colorScheme: string | null | undefined;
+function SettingsSheet({ visible, onClose, onLogout, onNavigateTab, colors, colorScheme }: {
+  visible: boolean; onClose: () => void; onLogout: () => void;
+  onNavigateTab: (tab: "posts" | "reels" | "saved") => void;
+  colors: any; colorScheme: string | null | undefined;
 }) {
   const router = useRouter();
   const insets = useSafeAreaInsets();
@@ -157,12 +159,12 @@ function SettingsSheet({ visible, onClose, onLogout, colors, colorScheme }: {
       { icon: "lock" as const, label: "Change Password", onPress: () => { onClose(); router.push("/change-password" as any); } },
     ]},
     { title: "Privacy & Safety", items: [
-      { icon: "eye-off" as const, label: "Blocked Users", onPress: () => {} },
+      { icon: "eye-off" as const, label: "Blocked Users", onPress: () => { onClose(); router.push("/blocked-users" as any); } },
       { icon: "bell" as const, label: "Notifications", onPress: () => { onClose(); router.push("/notifications" as any); } },
     ]},
     { title: "Content", items: [
-      { icon: "film" as const, label: "Your Reels", onPress: () => { onClose(); } },
-      { icon: "bookmark" as const, label: "Saved Posts", onPress: () => { onClose(); } },
+      { icon: "film" as const, label: "Your Reels", onPress: () => { onClose(); onNavigateTab("reels"); } },
+      { icon: "bookmark" as const, label: "Saved Posts", onPress: () => { onClose(); onNavigateTab("saved"); } },
     ]},
     { title: "Support", items: [
       { icon: "help-circle" as const, label: "Help & FAQ", onPress: () => {} },
@@ -263,7 +265,7 @@ export default function ProfileScreen() {
   return (
     <>
       <StatusBar barStyle={isDark ? "light-content" : "dark-content"} />
-      <SettingsSheet visible={settingsOpen} onClose={() => setSettingsOpen(false)} onLogout={handleLogout} colors={colors} colorScheme={colorScheme} />
+      <SettingsSheet visible={settingsOpen} onClose={() => setSettingsOpen(false)} onLogout={handleLogout} onNavigateTab={(tab) => setPostTab(tab)} colors={colors} colorScheme={colorScheme} />
       <ScrollView style={{ backgroundColor: colors.background }} contentContainerStyle={{ paddingBottom: insets.bottom + 80 }}>
         {/* Cover */}
         <View style={[styles.coverWrap, { paddingTop: isWeb ? 67 : insets.top }]}>

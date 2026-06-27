@@ -13,6 +13,7 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/lib/auth";
 import { useColors } from "@/hooks/useColors";
+import { supabase } from "@/lib/supabase";
 import {
   fetchProfile, fetchUserPosts, followUser, unfollowUser, isFollowing,
   blockUser, getOrCreateDM, resolveMediaUrl, formatCount, timeAgo,
@@ -441,6 +442,26 @@ export default function UserProfileScreen() {
     ]);
   };
 
+  const handleReport = () => {
+    Alert.alert("Report User", `Why are you reporting @${profile.username}?`, [
+      { text: "Spam", onPress: () => submitReport("spam") },
+      { text: "Harassment", onPress: () => submitReport("harassment") },
+      { text: "Inappropriate content", onPress: () => submitReport("inappropriate") },
+      { text: "Cancel", style: "cancel" },
+    ]);
+  };
+
+  const submitReport = async (reason: string) => {
+    if (!user?.id) return;
+    try {
+      await supabase.from("notifications").insert({
+        user_id: userId, actor_id: user.id, type: "report",
+        post_id: null, comment_id: null, is_read: false,
+      } as any);
+    } catch {}
+    Alert.alert("Reported", "Thank you. Our team will review this report.");
+  };
+
   const handleDeleted = (id: string) => {
     setPostList(p => p.filter(x => x.id !== id));
   };
@@ -567,7 +588,7 @@ export default function UserProfileScreen() {
             <Pressable hitSlop={8} style={styles.topBtn}
               onPress={() => Alert.alert("Options", undefined, [
                 { text: "Block", style: "destructive", onPress: handleBlock },
-                { text: "Report", onPress: () => {} },
+                { text: "Report", onPress: handleReport },
                 { text: "Cancel", style: "cancel" },
               ])}>
               <Feather name="more-horizontal" size={22} color={colors.foreground} />
@@ -610,7 +631,7 @@ export default function UserProfileScreen() {
           <Pressable hitSlop={8} style={styles.topBtn}
             onPress={() => Alert.alert("Options", undefined, [
               { text: "Block", style: "destructive", onPress: handleBlock },
-              { text: "Report", onPress: () => {} },
+              { text: "Report", onPress: handleReport },
               { text: "Cancel", style: "cancel" },
             ])}>
             <Feather name="more-horizontal" size={22} color={colors.foreground} />

@@ -328,7 +328,7 @@ export default function MessagesScreen() {
               <Feather name="users" size={18} color="#A5B4FC" />
             </Pressable>
             <Pressable
-              onPress={() => router.push("/(tabs)/search" as any)}
+              onPress={() => router.push("/new-message" as any)}
               style={({ pressed }) => [styles.iconBtn, styles.iconBtnPrimary, pressed && { opacity: 0.75 }]}
             >
               <Feather name="edit-2" size={17} color="#fff" />
@@ -390,7 +390,7 @@ export default function MessagesScreen() {
             </Text>
             {!search && (
               <Pressable
-                onPress={() => router.push("/(tabs)/search" as any)}
+                onPress={() => router.push("/new-message" as any)}
                 style={({ pressed }) => [styles.emptyBtn, pressed && { opacity: 0.8 }]}
               >
                 <LinearGradient

@@ -74,7 +74,7 @@ function StoryBar({ userId }: { userId: string }) {
   return (
     <View style={styles.storyBar}>
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.storyScroll}>
-        <Pressable style={styles.addStoryBtn} onPress={() => router.push("/create" as any)}>
+        <Pressable style={styles.addStoryBtn} onPress={() => router.push("/create-story" as any)}>
           <LinearGradient colors={["#7c3aed", "#4f46e5"]} style={styles.addStoryCircle}>
             <Feather name="plus" size={22} color="#fff" />
           </LinearGradient>
@@ -299,8 +299,9 @@ function PostCard({ post, userId, colors, onRequireAuth, onDeleted }: {
         { text: "Cancel", style: "cancel" },
       ]);
     } else {
-      Alert.alert("Report Post", "Flag this post as inappropriate?", [
-        { text: "Report", style: "destructive", onPress: () => {} },
+      Alert.alert("Report Post", "Why are you reporting this post?", [
+        { text: "Spam", onPress: async () => { await supabase.from("notifications").insert({ user_id: post.author_id, actor_id: userId, type: "report", post_id: post.id, is_read: false } as any); Alert.alert("Reported", "Thank you. Our team will review this."); } },
+        { text: "Inappropriate", onPress: async () => { await supabase.from("notifications").insert({ user_id: post.author_id, actor_id: userId, type: "report", post_id: post.id, is_read: false } as any); Alert.alert("Reported", "Thank you. Our team will review this."); } },
         { text: "Cancel", style: "cancel" },
       ]);
     }

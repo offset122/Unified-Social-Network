@@ -1,4 +1,5 @@
 import * as Notifications from "expo-notifications";
+import Constants from "expo-constants";
 import { Platform } from "react-native";
 import { supabase } from "./supabase";
 
@@ -63,9 +64,11 @@ export async function registerForPushNotifications(): Promise<string | null> {
 
     if (!granted) return null;
 
-    const tokenData = await Notifications.getExpoPushTokenAsync({
-      projectId: "65aebab1-b882-489e-bf94-3576b832fec0",
-    });
+    const projectId =
+      Constants.expoConfig?.extra?.eas?.projectId ??
+      Constants.easConfig?.projectId ??
+      "e782640a-2f13-4580-a6d1-01be9b485b02";
+    const tokenData = await Notifications.getExpoPushTokenAsync({ projectId });
 
     if (Platform.OS === "android") {
       await Notifications.setNotificationChannelAsync("default", {

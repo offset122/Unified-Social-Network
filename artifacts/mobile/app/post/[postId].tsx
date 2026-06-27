@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import {
   View, Text, StyleSheet, ScrollView, Pressable, ActivityIndicator,
-  Image, FlatList, TextInput, Alert,
+  Image, FlatList, TextInput, Alert, Share,
 } from "react-native";
 import { Stack, useLocalSearchParams, useRouter } from "expo-router";
 import { Feather } from "@expo/vector-icons";
@@ -153,7 +153,9 @@ export default function PostDetailScreen() {
             <Feather name="message-circle" size={22} color={colors.mutedForeground} />
             <Text style={[styles.actionCount, { color: colors.mutedForeground }]}>{formatCount(post.comments_count ?? 0)}</Text>
           </View>
-          <Pressable style={styles.actionBtn}>
+          <Pressable style={styles.actionBtn} onPress={() => {
+            Share.share({ message: post.content ? `${post.content} — shared via SocialApp` : "Check this out on SocialApp!" });
+          }}>
             <Feather name="share-2" size={20} color={colors.mutedForeground} />
           </Pressable>
           <Pressable onPress={handleSave} style={{ marginLeft: "auto" }}>

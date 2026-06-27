@@ -44,6 +44,9 @@ function RootLayoutNav() {
       <Stack.Screen name="call/[chatId]" options={{ headerShown: false }} />
       <Stack.Screen name="post/[postId]" options={{ headerShown: false }} />
       <Stack.Screen name="user/[userId]" options={{ headerShown: false }} />
+      <Stack.Screen name="create-story" options={{ headerShown: false }} />
+      <Stack.Screen name="new-message" options={{ headerShown: false }} />
+      <Stack.Screen name="blocked-users" options={{ headerShown: false }} />
       <Stack.Screen name="+not-found" />
     </Stack>
   );

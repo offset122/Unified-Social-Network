@@ -128,6 +128,17 @@ export default function NotificationsScreen() {
                   await supabase.from("notifications").update({ is_read: true }).eq("id", n.id);
                   qc.invalidateQueries({ queryKey: ["notifications"] });
                   qc.invalidateQueries({ queryKey: ["notif-count"] });
+                  // Navigate based on type
+                  if (n.type === "follow" && n.profiles?.username) {
+                    const { data: actor } = await supabase.from("profiles").select("id").eq("username", n.profiles.username).maybeSingle();
+                    if (actor?.id) router.push(`/user/${actor.id}` as any);
+                  } else if ((n.type === "like" || n.type === "comment" || n.type === "reply" || n.type === "mention") && (n as any).post_id) {
+                    router.push(`/post/${(n as any).post_id}` as any);
+                  } else if (n.type === "message") {
+                    router.push("/(tabs)/messages" as any);
+                  } else if (n.type === "live") {
+                    router.push("/live-sessions" as any);
+                  }
                 }}
               >
                 <View style={{ position: "relative" }}>

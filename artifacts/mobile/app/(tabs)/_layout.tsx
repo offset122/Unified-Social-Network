@@ -1,14 +1,25 @@
 import { BlurView } from "expo-blur";
-import { isLiquidGlassAvailable } from "expo-glass-effect";
 import { Tabs } from "expo-router";
-import { Icon, Label, NativeTabs } from "expo-router/unstable-native-tabs";
-import { SymbolView } from "expo-symbols";
 import { Feather } from "@expo/vector-icons";
 import React from "react";
 import { Platform, StyleSheet, View, useColorScheme } from "react-native";
 import { useColors } from "@/hooks/useColors";
 
+// Lazy-require iOS-only modules so Android never evaluates them
+const isIOS = Platform.OS === "ios";
+const isLiquidGlassAvailable: () => boolean = isIOS
+  ? require("expo-glass-effect").isLiquidGlassAvailable
+  : () => false;
+const SymbolView: React.ComponentType<any> | null = isIOS
+  ? require("expo-symbols").SymbolView
+  : null;
+const NativeTabsModule = isIOS
+  ? require("expo-router/unstable-native-tabs")
+  : null;
+
 function NativeTabLayout() {
+  if (!NativeTabsModule) return null;
+  const { NativeTabs, Icon, Label } = NativeTabsModule;
   return (
     <NativeTabs>
       <NativeTabs.Trigger name="index">
@@ -43,7 +54,6 @@ function ClassicTabLayout() {
   const colors = useColors();
   const colorScheme = useColorScheme();
   const isDark = colorScheme === "dark";
-  const isIOS = Platform.OS === "ios";
   const isWeb = Platform.OS === "web";
 
   return (
@@ -82,7 +92,7 @@ function ClassicTabLayout() {
         options={{
           title: "Home",
           tabBarIcon: ({ color }) =>
-            isIOS ? (
+            isIOS && SymbolView ? (
               <SymbolView name="house" tintColor={color} size={24} />
             ) : (
               <Feather name="home" size={22} color={color} />
@@ -94,7 +104,7 @@ function ClassicTabLayout() {
         options={{
           title: "Search",
           tabBarIcon: ({ color }) =>
-            isIOS ? (
+            isIOS && SymbolView ? (
               <SymbolView name="magnifyingglass" tintColor={color} size={24} />
             ) : (
               <Feather name="search" size={22} color={color} />
@@ -106,7 +116,7 @@ function ClassicTabLayout() {
         options={{
           title: "Reels",
           tabBarIcon: ({ color }) =>
-            isIOS ? (
+            isIOS && SymbolView ? (
               <SymbolView name="film" tintColor={color} size={24} />
             ) : (
               <Feather name="film" size={22} color={color} />
@@ -118,7 +128,7 @@ function ClassicTabLayout() {
         options={{
           title: "Create",
           tabBarIcon: ({ color }) =>
-            isIOS ? (
+            isIOS && SymbolView ? (
               <SymbolView name="plus.circle" tintColor={color} size={24} />
             ) : (
               <Feather name="plus-circle" size={22} color={color} />
@@ -130,7 +140,7 @@ function ClassicTabLayout() {
         options={{
           title: "Messages",
           tabBarIcon: ({ color }) =>
-            isIOS ? (
+            isIOS && SymbolView ? (
               <SymbolView name="bubble.left.and.bubble.right" tintColor={color} size={24} />
             ) : (
               <Feather name="message-square" size={22} color={color} />
@@ -142,7 +152,7 @@ function ClassicTabLayout() {
         options={{
           title: "Profile",
           tabBarIcon: ({ color }) =>
-            isIOS ? (
+            isIOS && SymbolView ? (
               <SymbolView name="person" tintColor={color} size={24} />
             ) : (
               <Feather name="user" size={22} color={color} />
@@ -154,7 +164,7 @@ function ClassicTabLayout() {
 }
 
 export default function TabLayout() {
-  if (isLiquidGlassAvailable()) {
+  if (isIOS && isLiquidGlassAvailable()) {
     return <NativeTabLayout />;
   }
   return <ClassicTabLayout />;

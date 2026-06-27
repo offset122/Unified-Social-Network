@@ -7,6 +7,7 @@ import { Stack, useRouter } from "expo-router";
 import { Feather } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useColors } from "@/hooks/useColors";
+import { supabase } from "@/lib/supabase";
 
 export default function ChangePasswordScreen() {
   const colors = useColors();
@@ -21,30 +22,26 @@ export default function ChangePasswordScreen() {
   const [showConfirm, setShowConfirm] = useState(false);
   const [loading, setLoading] = useState(false);
 
-  const domain = process.env.EXPO_PUBLIC_DOMAIN;
-
   const handleSave = async () => {
     if (!current.trim()) { Alert.alert("Error", "Enter your current password."); return; }
     if (next.length < 8) { Alert.alert("Error", "New password must be at least 8 characters."); return; }
     if (next !== confirm) { Alert.alert("Error", "New passwords do not match."); return; }
     setLoading(true);
     try {
-      const res = await fetch(`https://${domain}/api/auth/change-password`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({ currentPassword: current, newPassword: next }),
+      // Re-authenticate with current password then update
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user?.email) throw new Error("Not authenticated");
+      const { error: signInError } = await supabase.auth.signInWithPassword({
+        email: user.email, password: current,
       });
-      if (res.ok) {
-        Alert.alert("Success", "Password changed successfully.", [
-          { text: "OK", onPress: () => router.back() },
-        ]);
-      } else {
-        const err = await res.json().catch(() => ({}));
-        Alert.alert("Error", (err as { error?: string }).error ?? "Failed to change password.");
-      }
-    } catch {
-      Alert.alert("Error", "Could not reach the server. Please try again.");
+      if (signInError) throw new Error("Current password is incorrect.");
+      const { error } = await supabase.auth.updateUser({ password: next });
+      if (error) throw new Error(error.message);
+      Alert.alert("Success", "Password changed successfully.", [
+        { text: "OK", onPress: () => router.back() },
+      ]);
+    } catch (e: any) {
+      Alert.alert("Error", e.message ?? "Failed to change password.");
     } finally {
       setLoading(false);
     }
