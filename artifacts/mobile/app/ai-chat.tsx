@@ -2,8 +2,9 @@ import React, { useState, useRef, useEffect, useCallback } from "react";
 import {
   View, Text, StyleSheet, FlatList, TextInput, Pressable,
   ActivityIndicator, KeyboardAvoidingView, Platform, Animated,
-  ScrollView, Alert, Clipboard,
+  ScrollView, Alert,
 } from "react-native";
+import * as Clipboard from "expo-clipboard";
 import { Stack, useRouter, useLocalSearchParams } from "expo-router";
 import { Feather } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
@@ -202,11 +203,8 @@ export default function AIChatScreen() {
 
   const send = () => sendMessage(input);
 
-  const handleCopy = (text: string) => {
-    if (Clipboard?.setString) {
-      Clipboard.setString(text);
-    }
-    Alert.alert("Copied!", "", [{ text: "OK" }]);
+  const handleCopy = async (text: string) => {
+    await Clipboard.setStringAsync(text);
   };
 
   const clearHistory = () => {

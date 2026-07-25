@@ -1,11 +1,11 @@
-import React, { useEffect, useRef } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import {
-  View, Text, StyleSheet, Pressable, Animated, Dimensions, Modal, Platform,
+  View, Text, StyleSheet, Pressable, Animated, Dimensions, Modal,
 } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
 import { Feather } from "@expo/vector-icons";
-import { BlurView } from "expo-blur";
 import type { WelcomeState } from "@/lib/auth";
+import { generateAIOnboardingTip } from "@/lib/db";
 
 const { width: W, height: H } = Dimensions.get("window");
 
@@ -53,6 +53,7 @@ const PARTICLES = [
 export default function WelcomeModal({ visible, type, firstName, onDismiss }: Props) {
   const scale = useRef(new Animated.Value(0.7)).current;
   const opacity = useRef(new Animated.Value(0)).current;
+  const [aiTip, setAiTip] = useState("");
 
   useEffect(() => {
     if (visible) {
@@ -61,6 +62,7 @@ export default function WelcomeModal({ visible, type, firstName, onDismiss }: Pr
         Animated.timing(opacity, { toValue: 1, duration: 300, useNativeDriver: true }),
       ]).start();
       const t = setTimeout(onDismiss, 4500);
+      generateAIOnboardingTip(firstName ?? "there").then(setAiTip);
       return () => clearTimeout(t);
     } else {
       scale.setValue(0.7);
@@ -86,11 +88,7 @@ export default function WelcomeModal({ visible, type, firstName, onDismiss }: Pr
 
         <Animated.View style={[styles.card, { transform: [{ scale }], opacity }]}>
           <Pressable onPress={e => e.stopPropagation()}>
-            {Platform.OS !== "web" ? (
-              <BlurView intensity={60} tint="dark" style={StyleSheet.absoluteFill} />
-            ) : (
-              <View style={[StyleSheet.absoluteFill, { backgroundColor: "rgba(15,10,30,0.92)" }]} />
-            )}
+            <View style={[StyleSheet.absoluteFill, { backgroundColor: "rgba(15,10,30,0.92)" }]} />
 
             <LinearGradient
               colors={isWelcome ? ["#7c3aed", "#4f46e5", "#2563eb"] : ["#059669", "#0d9488", "#0891b2"]}
@@ -101,6 +99,18 @@ export default function WelcomeModal({ visible, type, firstName, onDismiss }: Pr
 
             <Text style={styles.title}>{title}</Text>
             <Text style={styles.subtitle}>{subtitle}</Text>
+
+            {!!aiTip && (
+              <View style={{ marginTop: 16, padding: 12, borderRadius: 14, backgroundColor: "rgba(124,58,237,0.12)", borderWidth: 1, borderColor: "rgba(124,58,237,0.25)" }}>
+                <View style={{ flexDirection: "row", alignItems: "center", gap: 6, marginBottom: 4 }}>
+                  <LinearGradient colors={["#7c3aed", "#4f46e5"]} style={{ width: 20, height: 20, borderRadius: 10, alignItems: "center", justifyContent: "center" }}>
+                    <Feather name="zap" size={10} color="#fff" />
+                  </LinearGradient>
+                  <Text style={{ color: "#a78bfa", fontSize: 12, fontWeight: "700" }}>AI Tip</Text>
+                </View>
+                <Text style={{ color: "#fff", fontSize: 13, lineHeight: 18 }}>{aiTip}</Text>
+              </View>
+            )}
 
             <View style={styles.featureRow}>
               {(isWelcome

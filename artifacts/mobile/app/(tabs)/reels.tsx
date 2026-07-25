@@ -18,8 +18,9 @@ import { useColors } from "@/hooks/useColors";
 import {
   fetchReels, likePost, unlikePost, savePost, unsavePost,
   createComment, fetchComments, resolveMediaUrl, formatCount, timeAgo,
-  incrementPostViews, type Post, type Comment, type Profile,
+  incrementPostViews, followUser, unfollowUser, type Post, type Comment, type Profile,
 } from "@/lib/db";
+import { supabase } from "@/lib/supabase";
 import AICommentSuggestions from "@/components/ai/AICommentSuggestions";
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get("window");
@@ -112,7 +113,6 @@ function ReelComments({ postId, postContent, visible, onClose, userId, onCountCh
 function ReelCard({ item, isVisible }: { item: Post; isVisible: boolean }) {
   const { user } = useAuth();
   const qc = useQueryClient();
-  const videoRef = useRef<Video>(null);
 
   const [isMuted, setIsMuted] = useState(false);
   const [isPaused, setIsPaused] = useState(false);
@@ -121,6 +121,7 @@ function ReelCard({ item, isVisible }: { item: Post; isVisible: boolean }) {
   const [isLiked, setIsLiked] = useState(item.is_liked ?? false);
   const [likesCount, setLikesCount] = useState(item.likes_count);
   const [isSaved, setIsSaved] = useState(item.is_saved ?? false);
+  const [isFollowing, setIsFollowing] = useState(false);
   const [commentOpen, setCommentOpen] = useState(false);
   const [commentsCount, setCommentsCount] = useState(item.comments_count);
   const [sharesCount, setSharesCount] = useState(item.shares_count);
@@ -129,6 +130,18 @@ function ReelCard({ item, isVisible }: { item: Post; isVisible: boolean }) {
   const doubleTapAnim = useRef(new Animated.Value(0)).current;
   const lastTap = useRef(0);
 
+  const isOwnReel = user?.id === item.author_id;
+
+  const handleFollow = async () => {
+    if (!user?.id) return;
+    const next = !isFollowing;
+    setIsFollowing(next);
+    try {
+      if (next) await followUser(user.id, item.author_id);
+      else await unfollowUser(user.id, item.author_id);
+    } catch { setIsFollowing(!next); }
+  };
+
   const profile = item.profiles as Profile | undefined;
   const videoUri = item.media_urls?.[0] ? resolveMediaUrl(item.media_urls[0]) : null;
 
@@ -136,16 +149,7 @@ function ReelCard({ item, isVisible }: { item: Post; isVisible: boolean }) {
   const isPortrait = videoAspect !== null && videoAspect < 1;
   const isLandscape = videoAspect !== null && videoAspect > 1.3;
 
-  // Play/pause based on visibility
-  useEffect(() => {
-    if (!videoRef.current) return;
-    if (isVisible && !isPaused) {
-      videoRef.current.playAsync().catch(() => {});
-    } else {
-      videoRef.current.pauseAsync().catch(() => {});
-    }
-  }, [isVisible, isPaused]);
-
+  // Play/pause driven entirely by shouldPlay prop — no imperative calls needed
   useEffect(() => {
     if (isVisible) incrementPostViews(item.id);
   }, [isVisible]);
@@ -208,10 +212,16 @@ function ReelCard({ item, isVisible }: { item: Post; isVisible: boolean }) {
   };
 
   const handleShare = async () => {
+    const prev = sharesCount;
     try {
       setSharesCount(c => c + 1);
-      await Share.share({ message: `🎬 Check out this reel by @${profile?.username}: ${item.content}` });
-    } catch { setSharesCount(c => c - 1); }
+      const result = await Share.share({ message: `🎬 Check out this reel by @${profile?.username}: ${item.content}` });
+      if (result.action === Share.sharedAction) {
+        await supabase.from("posts").update({ shares_count: prev + 1 }).eq("id", item.id);
+      } else {
+        setSharesCount(prev);
+      }
+    } catch { setSharesCount(prev); }
   };
 
   const hashtags = (item.content ?? "").split(/\s+/).filter(w => w.startsWith("#")).slice(0, 5);
@@ -229,7 +239,6 @@ function ReelCard({ item, isVisible }: { item: Post; isVisible: boolean }) {
       {videoUri ? (
         <Pressable onPress={handleTap} style={StyleSheet.absoluteFill}>
           <Video
-            ref={videoRef}
             source={{ uri: videoUri }}
             style={getVideoStyle()}
             resizeMode={isLandscape ? ResizeMode.CONTAIN : ResizeMode.COVER}
@@ -288,6 +297,13 @@ function ReelCard({ item, isVisible }: { item: Post; isVisible: boolean }) {
             </View>
           </Pressable>
         </Link>
+        {!isOwnReel && (
+          <Pressable onPress={handleFollow} style={[S.followBtn, isFollowing && S.followBtnActive]}>
+            <Text style={[S.followBtnText, isFollowing && { color: "rgba(255,255,255,0.7)" }]}>
+              {isFollowing ? "Following" : "+ Follow"}
+            </Text>
+          </Pressable>
+        )}
         {!!caption && <Text style={S.caption} numberOfLines={3}>{caption}</Text>}
         {hashtags.length > 0 && (
           <View style={S.hashtagRow}>
@@ -356,7 +372,7 @@ export default function ReelsScreen() {
     }, [])
   );
 
-  const { data = [], isLoading, refetch } = useQuery({
+  const { data = [], isLoading, isError, error, refetch } = useQuery({
     queryKey: ["reels"],
     queryFn: () => fetchReels(user?.id ?? ""),
     enabled: isAuthenticated || isGuest || true,
@@ -387,6 +403,17 @@ export default function ReelsScreen() {
 
       {isLoading ? (
         <View style={S.center}><ActivityIndicator color="#7c3aed" size="large" /></View>
+      ) : isError ? (
+        <View style={S.emptyWrap}>
+          <LinearGradient colors={["#1a0533", "#0f0a1e"]} style={StyleSheet.absoluteFill} />
+          <Feather name="alert-circle" size={56} color="#ef4444" />
+          <Text style={S.emptyTitle}>Couldn't load reels</Text>
+          <Text style={S.emptyDesc}>{(error as any)?.message ?? "Something went wrong."}</Text>
+          <Pressable onPress={() => refetch()} style={S.createFirstBtn}>
+            <Feather name="refresh-cw" size={16} color="#fff" />
+            <Text style={S.createFirstText}>Retry</Text>
+          </Pressable>
+        </View>
       ) : (data as Post[]).length === 0 ? (
         <View style={S.emptyWrap}>
           <LinearGradient colors={["#1a0533", "#0f0a1e"]} style={StyleSheet.absoluteFill} />
@@ -396,6 +423,10 @@ export default function ReelsScreen() {
           <Pressable onPress={() => router.push("/(tabs)/create" as any)} style={S.createFirstBtn}>
             <Feather name="plus" size={18} color="#fff" />
             <Text style={S.createFirstText}>Create Reel</Text>
+          </Pressable>
+          <Pressable onPress={() => router.push("/(tabs)/index" as any)} style={[S.createFirstBtn, { backgroundColor: "rgba(255,255,255,0.12)", marginTop: 0 }]}>
+            <Feather name="home" size={16} color="#fff" />
+            <Text style={S.createFirstText}>Browse Posts</Text>
           </Pressable>
         </View>
       ) : (
@@ -456,6 +487,9 @@ const S = StyleSheet.create({
     flexDirection: "row", alignItems: "center",
     backgroundColor: "rgba(0,0,0,0.45)", borderRadius: 8, padding: 4,
   },
+  followBtn: { alignSelf: "flex-start", paddingHorizontal: 14, paddingVertical: 6, borderRadius: 16, backgroundColor: "rgba(255,255,255,0.2)", borderWidth: 1, borderColor: "rgba(255,255,255,0.4)", marginBottom: 8 },
+  followBtnActive: { backgroundColor: "rgba(255,255,255,0.08)", borderColor: "rgba(255,255,255,0.2)" },
+  followBtnText: { color: "#fff", fontSize: 13, fontWeight: "700" },
   bottomLeft: { position: "absolute", bottom: 100, left: 16, right: 96, zIndex: 10 },
   authorRow: { flexDirection: "row", alignItems: "center", marginBottom: 10 },
   authorName: {

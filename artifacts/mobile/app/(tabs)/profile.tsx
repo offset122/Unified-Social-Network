@@ -14,7 +14,7 @@ import { useColors } from "@/hooks/useColors";
 import { useColorScheme } from "react-native";
 import {
   fetchProfile, fetchUserPosts, fetchSavedPosts, resolveMediaUrl,
-  formatCount, timeAgo, deletePost, generateProfileInsights,
+  formatCount, timeAgo, deletePost, generateProfileInsights, generateAIBioRefresh,
   type Post, type Profile,
 } from "@/lib/db";
 
@@ -168,8 +168,8 @@ function SettingsSheet({ visible, onClose, onLogout, onNavigateTab, colors, colo
       { icon: "bookmark" as const, label: "Saved Posts", onPress: () => { onClose(); onNavigateTab("saved"); } },
     ]},
     { title: "Support", items: [
-      { icon: "help-circle" as const, label: "Help & FAQ", onPress: () => {} },
-      { icon: "info" as const, label: "About", onPress: () => {}, detail: "v2.0.0" },
+      { icon: "help-circle" as const, label: "Help & FAQ", onPress: () => { onClose(); router.push("/settings" as any); } },
+      { icon: "info" as const, label: "About", onPress: () => Alert.alert("Vibe", "Version 2.0.0\n\nBuilt with \u2764\ufe0f using React Native & Expo.\n\nTerms of Service and Privacy Policy available at vibe.example.com"), detail: "v2.0.0" },
     ]},
   ];
   return (
@@ -221,6 +221,8 @@ export default function ProfileScreen() {
   const [postTab, setPostTab] = useState<PostTab>("posts");
   const [aiInsight, setAiInsight] = useState<string | null>(null);
   const [loadingInsight, setLoadingInsight] = useState(false);
+  const [bioRefresh, setBioRefresh] = useState("");
+  const [loadingBioRefresh, setLoadingBioRefresh] = useState(false);
 
   const { data: profile, isLoading: profileLoading } = useQuery({
     queryKey: ["my-profile", user?.id],
@@ -266,6 +268,19 @@ export default function ProfileScreen() {
     }
   };
 
+  const handleBioRefresh = async () => {
+    if (loadingBioRefresh) return;
+    setLoadingBioRefresh(true);
+    setBioRefresh("");
+    try {
+      const recentTopics = (posts as Post[]).slice(0, 10).map(p => p.content ?? "").join(" ");
+      const result = await generateAIBioRefresh(displayName, recentTopics.split(/\s+/).filter(w => w.length > 4).slice(0, 10));
+      setBioRefresh(result);
+    } finally {
+      setLoadingBioRefresh(false);
+    }
+  };
+
   if (authLoading) return null;
   if (isGuest) return <GuestScreen icon="user" title="Your Profile" subtitle="Create an account to build your profile, share posts, and connect with others." perks={["Post photos, videos & reels", "Build your following", "Save posts you love", "See your view counts"]} />;
   if (!isAuthenticated) return <Redirect href="/login" />;
@@ -290,15 +305,18 @@ export default function ProfileScreen() {
       <StatusBar barStyle={isDark ? "light-content" : "dark-content"} />
       <SettingsSheet visible={settingsOpen} onClose={() => setSettingsOpen(false)} onLogout={handleLogout} onNavigateTab={(tab) => setPostTab(tab)} colors={colors} colorScheme={colorScheme} />
       <ScrollView style={{ backgroundColor: colors.background }} contentContainerStyle={{ paddingBottom: insets.bottom + 80 }}>
-        {/* Cover */}
-        <View style={[styles.coverWrap, { paddingTop: isWeb ? 67 : insets.top }]}>
-          <LinearGradient colors={isDark ? ["#1e1b4b", "#2d1b69", "#1e1b4b"] : ["#ede9fe", "#ddd6fe", "#c4b5fd"]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={StyleSheet.absoluteFill} />
-          {profile?.cover_url && <Image source={{ uri: resolveMediaUrl(profile.cover_url) }} style={StyleSheet.absoluteFill} resizeMode="cover" />}
-          <Pressable onPress={() => setSettingsOpen(true)} style={[styles.settingsBtn, { backgroundColor: isDark ? "#ffffff18" : "#00000012" }]} hitSlop={8}>
-            <Feather name="settings" size={18} color={isDark ? "#e2d9f3" : "#4c1d95"} />
-          </Pressable>
-          <View style={styles.avatarRow}><Avatar name={displayName} size={92} avatarUrl={avatarUrl} /></View>
-        </View>
+         {/* Cover */}
+         <View style={[styles.coverWrap, { paddingTop: isWeb ? 67 : insets.top }]}>
+           <LinearGradient colors={isDark ? ["#1e1b4b", "#2d1b69", "#1e1b4b"] : ["#ede9fe", "#ddd6fe", "#c4b5fd"]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={StyleSheet.absoluteFill} />
+           {profile?.cover_url && <Image source={{ uri: resolveMediaUrl(profile.cover_url) }} style={StyleSheet.absoluteFill} resizeMode="cover" />}
+           <Pressable onPress={() => setSettingsOpen(true)} style={[styles.settingsBtn, { backgroundColor: isDark ? "#ffffff18" : "#00000012" }]} hitSlop={8}>
+             <Feather name="settings" size={18} color={isDark ? "#e2d9f3" : "#4c1d95"} />
+           </Pressable>
+           <Pressable onPress={() => router.push("/edit-profile" as any)} style={[styles.coverEditBtn, { backgroundColor: isDark ? "#ffffff18" : "#00000012" }]} hitSlop={8}>
+             <Feather name="camera" size={16} color={isDark ? "#e2d9f3" : "#4c1d95"} />
+           </Pressable>
+           <View style={styles.avatarRow}><Avatar name={displayName} size={92} avatarUrl={avatarUrl} /></View>
+         </View>
 
         {/* Profile info */}
         <View style={[styles.profileInfo, { borderBottomColor: colors.border }]}>
@@ -318,6 +336,16 @@ export default function ProfileScreen() {
             </Link>
           </View>
           {profile?.bio ? <Text style={[styles.bio, { color: colors.foreground }]}>{profile.bio}</Text> : null}
+          <Pressable onPress={handleBioRefresh} style={{ flexDirection: "row", alignItems: "center", gap: 6, marginTop: 6 }}>
+            <Feather name="refresh-cw" size={12} color="#7c3aed" />
+            <Text style={{ color: "#7c3aed", fontSize: 12, fontWeight: "600" }}>Refresh bio with AI</Text>
+          </Pressable>
+          {loadingBioRefresh && <ActivityIndicator size="small" color="#7c3aed" style={{ marginTop: 6 }} />}
+          {!!bioRefresh && (
+            <View style={{ marginTop: 8, padding: 12, borderRadius: 12, backgroundColor: "rgba(124,58,237,0.06)", borderWidth: 1, borderColor: "rgba(124,58,237,0.12)" }}>
+              <Text style={{ color: colors.foreground, fontSize: 13, lineHeight: 18 }}>{bioRefresh}</Text>
+            </View>
+          )}
 
           {/* Stats */}
           <View style={[styles.statsRow, { backgroundColor: isDark ? "#ffffff08" : "#7c3aed08", borderColor: isDark ? "#ffffff12" : "#7c3aed18" }]}>
@@ -330,9 +358,12 @@ export default function ProfileScreen() {
 
           {/* Quick actions */}
           <View style={styles.quickActions}>
-            <Pressable onPress={() => router.push("/(tabs)/messages" as any)} style={[styles.quickBtn, { backgroundColor: colors.primary }]}>
-              <Feather name="message-circle" size={15} color="#fff" />
-              <Text style={styles.quickBtnText}>Message</Text>
+            <Pressable onPress={async () => {
+              const { Share } = await import("react-native");
+              Share.share({ message: `Check out ${displayName}'s profile on Vibe!` });
+            }} style={[styles.quickBtn, { backgroundColor: colors.primary }]}>
+              <Feather name="share-2" size={15} color="#fff" />
+              <Text style={styles.quickBtnText}>Share Profile</Text>
             </Pressable>
             <Pressable onPress={() => router.push("/live-sessions" as any)} style={[styles.quickBtn, { backgroundColor: "#ef4444" }]}>
               <Feather name="radio" size={15} color="#fff" />
@@ -420,6 +451,7 @@ export default function ProfileScreen() {
 const styles = StyleSheet.create({
   coverWrap: { height: 200, position: "relative" },
   settingsBtn: { position: "absolute", top: 16, right: 16, width: 38, height: 38, borderRadius: 19, alignItems: "center", justifyContent: "center" },
+  coverEditBtn: { position: "absolute", bottom: 16, right: 16, width: 38, height: 38, borderRadius: 19, alignItems: "center", justifyContent: "center" },
   avatarRow: { position: "absolute", bottom: -46, left: 18 },
   profileInfo: { paddingHorizontal: 18, paddingTop: 56, paddingBottom: 14, borderBottomWidth: StyleSheet.hairlineWidth },
   nameRow: { flexDirection: "row", alignItems: "flex-start", gap: 10, marginBottom: 6 },

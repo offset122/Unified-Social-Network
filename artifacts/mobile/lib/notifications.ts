@@ -38,6 +38,13 @@ export const NOTIFICATION_META: Record<NotificationType, { icon: string; color: 
   live:            { icon: "radio",          color: "#dc2626", emoji: "🔴" },
 };
 
+// Expo push tokens are either ExponentPushToken[...] or a bare device token
+const EXPO_TOKEN_RE = /^ExponentPushToken\[[a-zA-Z0-9_-]+\]$|^[a-zA-Z0-9]{20,64}$/;
+
+function sanitizeText(value: unknown, maxLen: number): string {
+  return String(value ?? "").replace(/[<>"'`]/g, "").slice(0, maxLen);
+}
+
 export async function savePushToken(userId: string, token: string) {
   try {
     await supabase.from("profiles").update({ push_token: token }).eq("id", userId);
@@ -47,12 +54,16 @@ export async function savePushToken(userId: string, token: string) {
 }
 
 export async function sendPushNotification(expoPushToken: string, notification: Omit<AppNotification, "id" | "timestamp">) {
+  if (!EXPO_TOKEN_RE.test(expoPushToken)) {
+    console.warn("sendPushNotification: invalid push token format, skipping.");
+    return;
+  }
   const meta = NOTIFICATION_META[notification.type];
   const message = {
     to: expoPushToken,
     sound: "default",
-    title: `${meta.emoji} ${notification.title}`,
-    body: notification.body,
+    title: `${meta.emoji} ${sanitizeText(notification.title, 200)}`,
+    body: sanitizeText(notification.body, 500),
     data: notification.data ?? {},
     priority: "high" as const,
     badge: 1,
@@ -72,30 +83,32 @@ export function mapDbNotificationToApp(row: any): AppNotification {
   const type = (row.type ?? "message") as NotificationType;
   const meta = NOTIFICATION_META[type] ?? NOTIFICATION_META.message;
 
+  const senderName = sanitizeText(row.sender_name, 100);
+
   const titleMap: Record<NotificationType, string> = {
-    message:         row.sender_name ? `${row.sender_name}` : "New Message",
-    message_request: row.sender_name ? `${row.sender_name}` : "Message Request",
-    audio_call:      row.sender_name ? `${row.sender_name}` : "Incoming Call",
-    video_call:      row.sender_name ? `${row.sender_name}` : "Incoming Video Call",
-    new_post:        row.sender_name ? `${row.sender_name}` : "New Post",
-    new_reel:        row.sender_name ? `${row.sender_name}` : "New Reel",
+    message:         senderName || "New Message",
+    message_request: senderName || "Message Request",
+    audio_call:      senderName || "Incoming Call",
+    video_call:      senderName || "Incoming Video Call",
+    new_post:        senderName || "New Post",
+    new_reel:        senderName || "New Reel",
     security_alert:  "Security Alert",
-    like:            row.sender_name ? `${row.sender_name}` : "New Like",
-    comment:         row.sender_name ? `${row.sender_name}` : "New Comment",
-    follow:          row.sender_name ? `${row.sender_name}` : "New Follower",
-    live:            row.sender_name ? `${row.sender_name}` : "Going Live",
+    like:            senderName || "New Like",
+    comment:         senderName || "New Comment",
+    follow:          senderName || "New Follower",
+    live:            senderName || "Going Live",
   };
 
   const bodyMap: Record<NotificationType, string> = {
-    message:         row.message ?? "Sent you a message",
+    message:         sanitizeText(row.message, 300) || "Sent you a message",
     message_request: "Wants to message you",
     audio_call:      "Incoming audio call…",
     video_call:      "Incoming video call…",
-    new_post:        row.message ?? "Posted something new",
-    new_reel:        row.message ?? "Posted a new reel",
-    security_alert:  row.message ?? "New sign-in detected on your account",
+    new_post:        sanitizeText(row.message, 300) || "Posted something new",
+    new_reel:        sanitizeText(row.message, 300) || "Posted a new reel",
+    security_alert:  sanitizeText(row.message, 300) || "New sign-in detected on your account",
     like:            "Liked your post",
-    comment:         row.message ?? "Commented on your post",
+    comment:         sanitizeText(row.message, 300) || "Commented on your post",
     follow:          "Started following you",
     live:            "Is now live! Tap to join.",
   };
@@ -106,7 +119,7 @@ export function mapDbNotificationToApp(row: any): AppNotification {
     title: titleMap[type],
     body: bodyMap[type],
     avatarUrl: row.sender_avatar,
-    senderName: row.sender_name,
+    senderName: senderName || undefined,
     data: row.data ?? {},
     timestamp: row.created_at ? new Date(row.created_at).getTime() : Date.now(),
   };

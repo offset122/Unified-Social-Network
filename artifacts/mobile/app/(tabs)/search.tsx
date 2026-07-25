@@ -12,7 +12,8 @@ import { useAuth } from "@/lib/auth";
 import { useColors } from "@/hooks/useColors";
 import {
   searchUsers, resolveMediaUrl, formatCount, getOrCreateDM,
-  generateSearchSuggestions,
+  generateSearchSuggestions, generateAISemanticSearch, generateAITrendingInsights,
+  followUser, unfollowUser,
   type Profile, type Post,
 } from "@/lib/db";
 import { supabase } from "@/lib/supabase";
@@ -81,12 +82,12 @@ function AISearchSuggestions({ query, onSelect }: { query: string; onSelect: (s:
     timerRef.current = setTimeout(async () => {
       setLoading(true);
       try {
-        const results = await generateSearchSuggestions(query);
+        const results = await generateAISemanticSearch(query);
         setSuggestions(results);
       } finally {
         setLoading(false);
       }
-    }, 800);
+    }, 600);
     return () => { if (timerRef.current) clearTimeout(timerRef.current); };
   }, [query]);
 
@@ -125,6 +126,29 @@ export default function SearchScreen() {
   const isWeb = Platform.OS === "web";
   const [query, setQuery] = useState("");
   const [tab, setTab] = useState<SearchTab>("people");
+  const [followingIds, setFollowingIds] = useState<Set<string>>(new Set());
+  const [trendingInsights, setTrendingInsights] = useState<{ tag: string; insight: string } | null>(null);
+  const [loadingInsights, setLoadingInsights] = useState(false);
+
+  const toggleFollow = useCallback(async (targetId: string) => {
+    if (!user?.id) return;
+    const isNowFollowing = followingIds.has(targetId);
+    setFollowingIds(prev => {
+      const next = new Set(prev);
+      isNowFollowing ? next.delete(targetId) : next.add(targetId);
+      return next;
+    });
+    try {
+      if (isNowFollowing) await unfollowUser(user.id, targetId);
+      else await followUser(user.id, targetId);
+    } catch {
+      setFollowingIds(prev => {
+        const next = new Set(prev);
+        isNowFollowing ? next.add(targetId) : next.delete(targetId);
+        return next;
+      });
+    }
+  }, [user?.id, followingIds]);
 
   const { data: people = [], isLoading: loadingPeople } = useQuery({
     queryKey: ["search-people", query],
@@ -220,12 +244,36 @@ export default function SearchScreen() {
               <View style={S.hashtagGrid}>
                 {(hashtags as { tag: string; count: number }[]).map(({ tag, count }) => (
                   <Pressable key={tag} onPress={() => { setQuery(tag); setTab("posts"); }}
+                    onLongPress={async () => {
+                      setLoadingInsights(true);
+                      setTrendingInsights(null);
+                      try {
+                        const insight = await generateAITrendingInsights(tag);
+                        setTrendingInsights({ tag, insight });
+                      } finally {
+                        setLoadingInsights(false);
+                      }
+                    }}
                     style={[S.hashtagChip, { backgroundColor: colors.secondary, borderColor: colors.border }]}>
                     <Text style={[S.hashtagText, { color: colors.primary }]}>{tag}</Text>
                     <Text style={[S.hashtagCount, { color: colors.mutedForeground }]}>{count}</Text>
                   </Pressable>
                 ))}
               </View>
+              {trendingInsights && (
+                <View style={{ marginTop: 12, padding: 12, borderRadius: 12, backgroundColor: "rgba(124,58,237,0.08)", borderWidth: 1, borderColor: "rgba(124,58,237,0.15)" }}>
+                  <View style={{ flexDirection: "row", alignItems: "center", gap: 6, marginBottom: 4 }}>
+                    <Feather name="zap" size={12} color="#7c3aed" />
+                    <Text style={{ color: "#7c3aed", fontSize: 12, fontWeight: "700" }}>Why {trendingInsights.tag} is trending</Text>
+                  </View>
+                  <Text style={{ color: colors.foreground, fontSize: 13, lineHeight: 18 }}>{trendingInsights.insight}</Text>
+                </View>
+              )}
+              {loadingInsights && (
+                <View style={{ marginTop: 12, alignItems: "center" }}>
+                  <ActivityIndicator size="small" color="#7c3aed" />
+                </View>
+              )}
             </View>
           )}
 
@@ -246,9 +294,9 @@ export default function SearchScreen() {
                       </Text>
                     </View>
                   </View>
-                  <Pressable onPress={() => handleMessage(u.id, u.display_name)}
-                    style={[S.msgBtn, { backgroundColor: colors.secondary, borderColor: colors.border }]}>
-                    <Feather name="message-circle" size={16} color={colors.foreground} />
+                  <Pressable onPress={(e) => { (e as any).stopPropagation?.(); toggleFollow(u.id); }}
+                    style={[S.msgBtn, { backgroundColor: followingIds.has(u.id) ? colors.secondary : colors.primary, borderColor: colors.border, borderWidth: followingIds.has(u.id) ? 1 : 0 }]}>
+                    <Feather name={followingIds.has(u.id) ? "user-check" : "user-plus"} size={16} color={followingIds.has(u.id) ? colors.foreground : "#fff"} />
                   </Pressable>
                 </Pressable>
               ))}
@@ -288,9 +336,11 @@ export default function SearchScreen() {
                   style={[S.actionBtn, { backgroundColor: colors.primary }]}>
                   <Text style={{ color: "#fff", fontSize: 12, fontWeight: "700" }}>View</Text>
                 </Pressable>
-                <Pressable onPress={() => handleMessage(u.id, u.display_name)}
-                  style={[S.actionBtn, { backgroundColor: colors.secondary, borderWidth: 1, borderColor: colors.border }]}>
-                  <Feather name="message-circle" size={14} color={colors.foreground} />
+                <Pressable onPress={(e) => { (e as any).stopPropagation?.(); toggleFollow(u.id); }}
+                  style={[S.actionBtn, { backgroundColor: followingIds.has(u.id) ? colors.secondary : colors.primary + "cc", borderWidth: followingIds.has(u.id) ? 1 : 0, borderColor: colors.border }]}>
+                  <Text style={{ color: followingIds.has(u.id) ? colors.foreground : "#fff", fontSize: 12, fontWeight: "700" }}>
+                    {followingIds.has(u.id) ? "Following" : "Follow"}
+                  </Text>
                 </Pressable>
               </View>
             </Pressable>
@@ -381,12 +431,11 @@ const SS = StyleSheet.create({
   aiSuggestBar: { flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: 16, paddingVertical: 10, borderBottomWidth: StyleSheet.hairlineWidth, flexWrap: "wrap" },
   aiDot: { width: 16, height: 16, borderRadius: 8, alignItems: "center", justifyContent: "center" },
   aiText: { fontSize: 11, fontWeight: "800", letterSpacing: 0.4 },
-  aiBadge: {},
+  aiBadge: { flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: 8, paddingVertical: 5, borderRadius: 12, backgroundColor: "transparent" },
   aiLabel: {},
   aiLabelText: {},
   aiChip: {},
   aiChipText: {},
   suggestChip: { flexDirection: "row", alignItems: "center", gap: 5, paddingHorizontal: 12, paddingVertical: 6, borderRadius: 16, borderWidth: 1 },
   suggestText: { fontSize: 13 },
-  aiBadge: { flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: 8, paddingVertical: 5, borderRadius: 12, backgroundColor: "transparent" },
 });

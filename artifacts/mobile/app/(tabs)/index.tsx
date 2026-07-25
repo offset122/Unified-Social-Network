@@ -20,11 +20,13 @@ import {
   fetchFeed, fetchStories, likePost, unlikePost, savePost, unsavePost,
   createComment, fetchComments, resolveMediaUrl, uploadMedia,
   fetchUnreadNotificationCount, generateAICaption, timeAgo, formatCount,
-  deletePost, updatePostVisibility,
+  deletePost, updatePostVisibility, followUser, unfollowUser, isFollowing,
   type Post, type Comment, type Profile,
 } from "@/lib/db";
 import AICommentSuggestions from "@/components/ai/AICommentSuggestions";
 import { supabase } from "@/lib/supabase";
+import { Share } from "react-native";
+import VibeLogo from "@/components/VibeLogo";
 
 const { width: SCREEN_WIDTH } = Dimensions.get("window");
 const isTablet = SCREEN_WIDTH >= 768;
@@ -61,6 +63,16 @@ function StoryBar({ userId }: { userId: string }) {
     queryFn: () => fetchStories(userId),
   });
 
+  const { data: viewedStoryIds } = useQuery({
+    queryKey: ["story-views-me", userId],
+    queryFn: async () => {
+      if (!userId) return new Set<string>();
+      const { data } = await supabase.from("story_views").select("story_id").eq("viewer_id", userId);
+      return new Set((data ?? []).map((v: any) => v.story_id));
+    },
+    enabled: !!userId,
+  });
+
   const grouped = React.useMemo(() => {
     const map = new Map<string, any>();
     for (const s of stories) {
@@ -81,17 +93,28 @@ function StoryBar({ userId }: { userId: string }) {
           </LinearGradient>
           <Text style={styles.addStoryLabel}>Your Story</Text>
         </Pressable>
-        {grouped.map((g, i) => (
-          <Pressable key={i} style={styles.storyItem}
-            onPress={() => router.push({ pathname: "/story-viewer", params: { storyGroupIndex: i } } as any)}>
-            <LinearGradient colors={["#f97316", "#ec4899", "#7c3aed"]} style={styles.storyRing}>
-              <View style={styles.storyAvatarWrap}>
-                <Avatar name={g.user?.display_name ?? "U"} avatarUrl={g.user?.avatar_url} size={52} />
-              </View>
-            </LinearGradient>
-            <Text style={styles.storyName} numberOfLines={1}>{g.user?.username ?? "user"}</Text>
-          </Pressable>
-        ))}
+        {grouped.map((g, i) => {
+          const allViewed = g.stories.length > 0 && (viewedStoryIds ?? new Set()).has((g.stories as any[])[0].id) || g.stories.every((s: any) => (viewedStoryIds ?? new Set()).has(s.id));
+          return (
+            <Pressable key={i} style={styles.storyItem}
+              onPress={() => router.push({ pathname: "/story-viewer", params: { storyGroupIndex: i } } as any)}>
+              {allViewed ? (
+                <View style={[styles.storyRing, { backgroundColor: "#3f3f46", borderColor: "#52525b" }]}>
+                  <View style={styles.storyAvatarWrap}>
+                    <Avatar name={g.user?.display_name ?? "U"} avatarUrl={g.user?.avatar_url} size={52} />
+                  </View>
+                </View>
+              ) : (
+                <LinearGradient colors={["#f97316", "#ec4899", "#7c3aed"]} style={styles.storyRing}>
+                  <View style={styles.storyAvatarWrap}>
+                    <Avatar name={g.user?.display_name ?? "U"} avatarUrl={g.user?.avatar_url} size={52} />
+                  </View>
+                </LinearGradient>
+              )}
+              <Text style={styles.storyName} numberOfLines={1}>{g.user?.username ?? "user"}</Text>
+            </Pressable>
+          );
+        })}
       </ScrollView>
     </View>
   );
@@ -204,17 +227,21 @@ function VisibilityBadge({ visibility }: { visibility: string }) {
 
 // ─── Post Card ────────────────────────────────────────────────────────────────
 
-function PostCard({ post, userId, colors, onRequireAuth, onDeleted }: {
+function PostCard({ post, userId, colors, onRequireAuth, onDeleted, followUserId }: {
   post: Post; userId: string; colors: any; onRequireAuth?: () => void;
   onDeleted?: (id: string) => void;
+  followUserId?: string;
 }) {
   const qc = useQueryClient();
   const [liked, setLiked] = useState(post.is_liked ?? false);
   const [likes, setLikes] = useState(post.likes_count);
   const [saved, setSaved] = useState(post.is_saved ?? false);
+  const [shares, setShares] = useState(post.shares_count ?? 0);
   const [commentOpen, setCommentOpen] = useState(false);
   const [imgIdx, setImgIdx] = useState(0);
   const [visibility, setVisibility] = useState(post.visibility ?? "public");
+  const [isFollowing, setIsFollowing] = useState(false);
+  const [followLoading, setFollowLoading] = useState(false);
   const likeScale = useRef(new Animated.Value(1)).current;
 
   const mediaUrls = (post.media_urls ?? []).map(resolveMediaUrl).filter(Boolean);
@@ -226,7 +253,6 @@ function PostCard({ post, userId, colors, onRequireAuth, onDeleted }: {
     : 1;
 
   const isOwn = userId === post.author_id;
-
   const handleLike = () => {
     if (!userId) { onRequireAuth?.(); return; }
     const next = !liked;
@@ -248,6 +274,18 @@ function PostCard({ post, userId, colors, onRequireAuth, onDeleted }: {
     setSaved(next);
     const fn = next ? savePost : unsavePost;
     fn(userId, post.id).catch(() => setSaved(!next));
+  };
+
+  const handleFollow = async () => {
+    if (!userId || !followUserId) return;
+    const next = !isFollowing;
+    setIsFollowing(next);
+    setFollowLoading(true);
+    try {
+      if (next) await followUser(userId, followUserId);
+      else await unfollowUser(userId, followUserId);
+    } catch { setIsFollowing(!next); }
+    finally { setFollowLoading(false); }
   };
 
   const handleMore = () => {
@@ -346,6 +384,14 @@ function PostCard({ post, userId, colors, onRequireAuth, onDeleted }: {
             </View>
           </Pressable>
         </Link>
+        {!isOwn && followUserId && (
+          <Pressable onPress={handleFollow} disabled={followLoading}
+            style={[styles.followBtnSmall, { backgroundColor: isFollowing ? colors.secondary : colors.primary, borderColor: colors.border, borderWidth: isFollowing ? 1 : 0 }]}>
+            <Text style={{ color: isFollowing ? colors.foreground : "#fff", fontSize: 12, fontWeight: "700" }}>
+              {isFollowing ? "Following" : "Follow"}
+            </Text>
+          </Pressable>
+        )}
         <Pressable hitSlop={10} style={styles.moreBtn} onPress={handleMore}>
           <Feather name="more-horizontal" size={20} color={colors.mutedForeground} />
         </Pressable>
@@ -436,8 +482,20 @@ function PostCard({ post, userId, colors, onRequireAuth, onDeleted }: {
             </Text>
           </Pressable>
 
-          <Pressable style={styles.actionBtn}>
+          <Pressable style={styles.actionBtn} onPress={async () => {
+            if (!userId) { onRequireAuth?.(); return; }
+            try {
+              setShares(s => s + 1);
+              const result = await Share.share({ message: post.content ? `${post.content} — shared via Vibe` : "Check this out on Vibe!" });
+              if (result.action === Share.sharedAction) {
+                await supabase.from("posts").update({ shares_count: shares + 1 }).eq("id", post.id);
+              } else {
+                setShares(s => s - 1);
+              }
+            } catch { setShares(s => s - 1); }
+          }}>
             <Feather name="share-2" size={20} color={colors.mutedForeground} />
+            {shares > 0 && <Text style={[styles.actionCount, { color: colors.mutedForeground }]}>{formatCount(shares)}</Text>}
           </Pressable>
         </View>
 
@@ -486,12 +544,17 @@ export default function HomeScreen() {
   const [posts, setPosts] = useState<Post[]>([]);
   const [loadingMore, setLoadingMore] = useState(false);
   const [hasMore, setHasMore] = useState(true);
+  const [feedMode, setFeedMode] = useState<"latest" | "foryou">("latest");
 
-  const { data, isLoading, refetch } = useQuery({
+  const { data, isLoading, error, isError, refetch } = useQuery({
     queryKey: ["feed"],
     queryFn: () => fetchFeed(user?.id ?? "", undefined),
     enabled: isAuthenticated || isGuest || true,
   });
+
+  const handleFeedError = useCallback(() => {
+    refetch();
+  }, [refetch]);
 
   const { data: notifCount = 0 } = useQuery({
     queryKey: ["notif-count"],
@@ -509,8 +572,18 @@ export default function HomeScreen() {
   }, [data]);
 
   useEffect(() => {
+    if (feedMode === "foryou") {
+      setPosts(prev => [...prev].sort((a, b) =>
+        ((b.likes_count ?? 0) + (b.comments_count ?? 0) * 2 + (b.views_count ?? 0) * 0.5) -
+        ((a.likes_count ?? 0) + (a.comments_count ?? 0) * 2 + (a.views_count ?? 0) * 0.5)
+      ));
+    }
+  }, [feedMode]);
+
+  useEffect(() => {
     if (!user?.id) return;
-    const channel = supabase.channel("feed-updates")
+    const channelName = `feed-updates-${user.id}-${Date.now()}`;
+    const channel = supabase.channel(channelName)
       .on("postgres_changes", { event: "INSERT", schema: "public", table: "posts" }, () => {
         qc.invalidateQueries({ queryKey: ["feed"] });
       }).subscribe();
@@ -533,6 +606,8 @@ export default function HomeScreen() {
       } else {
         setHasMore(false);
       }
+    } catch (e) {
+      console.error("Failed to load more posts:", e);
     } finally {
       setLoadingMore(false);
     }
@@ -555,8 +630,12 @@ export default function HomeScreen() {
     <View style={[styles.container, { backgroundColor: colors.background }]}>
       {/* Header */}
       <View style={[styles.header, { paddingTop: isWeb ? 16 : insets.top + 4, borderBottomColor: colors.border }]}>
-        <Text style={[styles.headerTitle, { color: colors.foreground }]}>SocialApp</Text>
+        <VibeLogo size={28} showText={true} />
         <View style={styles.headerActions}>
+          <Pressable onPress={() => setFeedMode(feedMode === "latest" ? "foryou" : "latest")}
+            style={[styles.iconBtn, feedMode === "foryou" && { backgroundColor: colors.primary + "18" }]}>
+            <Feather name="zap" size={20} color={feedMode === "foryou" ? colors.primary : colors.foreground} />
+          </Pressable>
           <Pressable onPress={() => router.push("/notifications" as any)} style={styles.iconBtn}>
             <Feather name="bell" size={22} color={colors.foreground} />
             {notifCount > 0 && (
@@ -577,17 +656,21 @@ export default function HomeScreen() {
         onEndReached={loadMore}
         onEndReachedThreshold={0.5}
         ListHeaderComponent={<StoryBar userId={user?.id ?? ""} />}
-        renderItem={({ item }) => (
-          <View style={containerStyle}>
-            <PostCard
-              post={item}
-              userId={user?.id ?? ""}
-              colors={colors}
-              onRequireAuth={() => setAuthPromptVisible(true)}
-              onDeleted={handleDeleted}
-            />
-          </View>
-        )}
+        renderItem={({ item }) => {
+          const showFollow = !!user?.id && user.id !== item.author_id;
+          return (
+            <View style={containerStyle}>
+              <PostCard
+                post={item}
+                userId={user?.id ?? ""}
+                colors={colors}
+                onRequireAuth={() => setAuthPromptVisible(true)}
+                onDeleted={handleDeleted}
+                followUserId={showFollow ? item.author_id : undefined}
+              />
+            </View>
+          );
+        }}
         ItemSeparatorComponent={() => <View style={{ height: 10 }} />}
         ListFooterComponent={
           loadingMore
@@ -597,11 +680,27 @@ export default function HomeScreen() {
               : null
         }
         ListEmptyComponent={!isLoading ? (
-          <View style={styles.empty}>
-            <Feather name="home" size={48} color={colors.mutedForeground} />
-            <Text style={[styles.emptyTitle, { color: colors.foreground }]}>Your feed is empty</Text>
-            <Text style={[styles.emptyDesc, { color: colors.mutedForeground }]}>Follow people to see their posts here</Text>
-          </View>
+          isError ? (
+            <View style={styles.empty}>
+              <Feather name="alert-circle" size={48} color="#ef4444" />
+              <Text style={[styles.emptyTitle, { color: colors.foreground }]}>Couldn't load feed</Text>
+              <Text style={[styles.emptyDesc, { color: colors.mutedForeground }]}>{(error as any)?.message ?? "Something went wrong. Please try again."}</Text>
+              <Pressable onPress={handleFeedError} style={styles.emptyBtn}>
+                <Feather name="refresh-cw" size={16} color="#fff" />
+                <Text style={styles.emptyBtnText}>Retry</Text>
+              </Pressable>
+            </View>
+          ) : (
+            <View style={styles.empty}>
+              <Feather name="home" size={48} color={colors.mutedForeground} />
+              <Text style={[styles.emptyTitle, { color: colors.foreground }]}>Your feed is empty</Text>
+              <Text style={[styles.emptyDesc, { color: colors.mutedForeground }]}>Follow people to see their posts here</Text>
+              <Pressable onPress={() => router.push("/(tabs)/search" as any)} style={styles.emptyBtn}>
+                <Feather name="search" size={16} color="#fff" />
+                <Text style={styles.emptyBtnText}>Discover people to follow</Text>
+              </Pressable>
+            </View>
+          )
         ) : <ActivityIndicator color={colors.primary} style={{ marginTop: 60 }} />}
         contentContainerStyle={{ paddingBottom: insets.bottom + 90 }}
       />
@@ -636,7 +735,7 @@ const styles = StyleSheet.create({
   addStoryCircle: { width: 60, height: 60, borderRadius: 30, alignItems: "center", justifyContent: "center" },
   addStoryLabel: { fontSize: 11, color: "#71717a", maxWidth: 62, textAlign: "center" },
   storyItem: { alignItems: "center", gap: 5 },
-  storyRing: { width: 64, height: 64, borderRadius: 32, alignItems: "center", justifyContent: "center", padding: 2.5 },
+  storyRing: { width: 64, height: 64, borderRadius: 32, alignItems: "center", justifyContent: "center", padding: 2.5, borderWidth: 2 },
   storyAvatarWrap: { width: 57, height: 57, borderRadius: 28.5, borderWidth: 2.5, borderColor: "#fff", overflow: "hidden" },
   storyName: { fontSize: 11, color: "#71717a", maxWidth: 64, textAlign: "center" },
 
@@ -665,6 +764,7 @@ const styles = StyleSheet.create({
   authorName: { fontSize: 15, fontWeight: "700", letterSpacing: -0.2 },
   authorMeta: { fontSize: 12, marginTop: 0 },
   moreBtn: { padding: 4 },
+  followBtnSmall: { paddingHorizontal: 14, paddingVertical: 6, borderRadius: 14, marginRight: 4 },
 
   typeBadge: {
     flexDirection: "row", alignItems: "center", gap: 3,
@@ -736,4 +836,7 @@ const styles = StyleSheet.create({
   empty: { alignItems: "center", paddingVertical: 80, gap: 12 },
   emptyTitle: { fontSize: 20, fontWeight: "800" },
   emptyDesc: { fontSize: 14, textAlign: "center", lineHeight: 22 },
+  emptyBtn: { flexDirection: "row", alignItems: "center", gap: 8, backgroundColor: "#7c3aed", paddingHorizontal: 24, paddingVertical: 12, borderRadius: 22, marginTop: 8 },
+  emptyBtnText: { color: "#fff", fontWeight: "700", fontSize: 14 },
+  followChip: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 14, borderWidth: 1 },
 });

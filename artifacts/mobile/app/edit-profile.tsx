@@ -25,6 +25,9 @@ export default function EditProfileScreen() {
   const [bio, setBio] = useState("");
   const [avatarUri, setAvatarUri] = useState<string | null>(null);
   const [coverUri, setCoverUri] = useState<string | null>(null);
+  const [website, setWebsite] = useState("");
+  const [location, setLocation] = useState("");
+  const [pronouns, setPronouns] = useState("");
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(true);
 
@@ -62,7 +65,7 @@ export default function EditProfileScreen() {
     if (!username.trim()) { Alert.alert("Required", "Username is required"); return; }
     setSaving(true);
     try {
-      const updates: any = { display_name: displayName.trim(), username: username.trim().toLowerCase(), bio: bio.trim() };
+      const updates: any = { display_name: displayName.trim(), username: username.trim().toLowerCase(), bio: bio.trim(), website: website.trim(), location: location.trim(), pronouns: pronouns.trim() };
 
       if (avatarUri && !avatarUri.startsWith("http")) {
         const ext = avatarUri.split(".").pop() ?? "jpg";
@@ -132,6 +135,9 @@ export default function EditProfileScreen() {
           {[
             { label: "Display Name", value: displayName, onChange: setDisplayName, placeholder: "Your full name", autoCapitalize: "words" as const },
             { label: "Username", value: username, onChange: (v: string) => setUsername(v.toLowerCase().replace(/[^a-z0-9_]/g, "")), placeholder: "username", autoCapitalize: "none" as const },
+            { label: "Website", value: website, onChange: setWebsite, placeholder: "https://yoursite.com", autoCapitalize: "none" as const },
+            { label: "Location", value: location, onChange: setLocation, placeholder: "City, Country", autoCapitalize: "words" as const },
+            { label: "Pronouns", value: pronouns, onChange: setPronouns, placeholder: "he/him, she/her, they/them…", autoCapitalize: "none" as const },
           ].map(field => (
             <View key={field.label}>
               <Text style={[styles.fieldLabel, { color: colors.mutedForeground }]}>{field.label}</Text>

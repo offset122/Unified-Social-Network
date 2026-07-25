@@ -1,8 +1,12 @@
 import React, {
   createContext, useContext, useState, useEffect, useCallback, useRef, type ReactNode,
 } from "react";
+import * as WebBrowser from "expo-web-browser";
+import * as AuthSession from "expo-auth-session";
 import { supabase } from "./supabase";
 import type { Session, User } from "@supabase/supabase-js";
+
+WebBrowser.maybeCompleteAuthSession();
 
 export type WelcomeState = null | "welcome" | "welcome-back";
 
@@ -27,6 +31,7 @@ interface AuthContextValue {
   logout: () => Promise<void>;
   loginWithEmail: (email: string, password: string) => Promise<void>;
   registerWithEmail: (email: string, password: string, firstName?: string, lastName?: string) => Promise<void>;
+  loginWithGoogle: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextValue>({
@@ -42,6 +47,7 @@ const AuthContext = createContext<AuthContextValue>({
   logout: async () => {},
   loginWithEmail: async () => {},
   registerWithEmail: async () => {},
+  loginWithGoogle: async () => {},
 });
 
 function mapUser(supabaseUser: User): AppUser {
@@ -151,6 +157,31 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const login = useCallback(async () => {}, []);
 
+  const loginWithGoogle = useCallback(async () => {
+    const redirectTo = AuthSession.makeRedirectUri({ scheme: "vibe", path: "auth/callback" });
+    const { data, error } = await supabase.auth.signInWithOAuth({
+      provider: "google",
+      options: { redirectTo, skipBrowserRedirect: true },
+    });
+    if (error) throw new Error(error.message);
+    if (!data.url) throw new Error("No OAuth URL returned");
+    const result = await WebBrowser.openAuthSessionAsync(data.url, redirectTo);
+    if (result.type === "success" && result.url) {
+      const url = new URL(result.url);
+      const accessToken = url.searchParams.get("access_token") ??
+        new URLSearchParams(url.hash.replace("#", "")).get("access_token");
+      const refreshToken = url.searchParams.get("refresh_token") ??
+        new URLSearchParams(url.hash.replace("#", "")).get("refresh_token");
+      if (accessToken && refreshToken) {
+        const { error: sessionError } = await supabase.auth.setSession({
+          access_token: accessToken,
+          refresh_token: refreshToken,
+        });
+        if (sessionError) throw new Error(sessionError.message);
+      }
+    }
+  }, []);
+
   return (
     <AuthContext.Provider value={{
       user,
@@ -165,6 +196,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       logout,
       loginWithEmail,
       registerWithEmail,
+      loginWithGoogle,
     }}>
       {children}
     </AuthContext.Provider>

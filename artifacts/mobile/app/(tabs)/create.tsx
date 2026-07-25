@@ -13,7 +13,7 @@ import { useAuth } from "@/lib/auth";
 import { useColors } from "@/hooks/useColors";
 import {
   uploadMedia, generateAICaption, enhanceAICaption,
-  generatePostIdea, generateAIHashtags,
+  generatePostIdea, generateAIHashtags, generateAIAltText,
 } from "@/lib/db";
 import { supabase as sb } from "@/lib/supabase";
 
@@ -32,18 +32,21 @@ function Avatar({ name, size }: { name: string; size: number }) {
 
 // ─── AI Toolbar ───────────────────────────────────────────────────────────────
 
-function AIToolbar({ content, mode, onContent }: {
+function AIToolbar({ content, mode, onContent, media }: {
   content: string;
   mode: PostMode;
-  onContent: (v: string) => void;
+  onContent: (v: string | ((prev: string) => string)) => void;
+  media?: ImagePicker.ImagePickerAsset[];
 }) {
   const colors = useColors();
   const [active, setActive] = useState<string | null>(null);
   const [hashtags, setHashtags] = useState<string[]>([]);
+  const [altText, setAltText] = useState("");
 
   const run = async (action: string) => {
     setActive(action);
     setHashtags([]);
+    setAltText("");
     try {
       if (action === "caption") {
         const ctx = mode === "reel" ? "a short video reel for social media" : content || "a lifestyle photo post";
@@ -60,15 +63,14 @@ function AIToolbar({ content, mode, onContent }: {
         if (!content.trim()) return Alert.alert("Add content first", "Write a caption to generate relevant hashtags.");
         const tags = await generateAIHashtags(content);
         setHashtags(tags);
+      } else if (action === "alttext") {
+        if (!media?.length) return Alert.alert("Add media first", "Upload a photo or video to generate alt-text.");
+        const result = await generateAIAltText(media[0].uri, content);
+        if (result) setAltText(result);
       }
     } finally {
       setActive(null);
     }
-  };
-
-  const applyHashtag = (tag: string) => {
-    onContent(prev => prev.trim() ? `${prev} ${tag}` : tag);
-    setHashtags(prev => prev.filter(t => t !== tag));
   };
 
   const tools: { id: string; icon: string; label: string }[] = [
@@ -76,6 +78,7 @@ function AIToolbar({ content, mode, onContent }: {
     { id: "enhance", icon: "trending-up", label: "Enhance" },
     { id: "idea", icon: "lightbulb", label: "Inspire" },
     { id: "hashtags", icon: "hash", label: "Tags" },
+    { id: "alttext", icon: "eye", label: "Alt-Text" },
   ];
 
   return (
@@ -103,7 +106,10 @@ function AIToolbar({ content, mode, onContent }: {
           contentContainerStyle={[S.tagRow, { borderBottomColor: colors.border }]}>
           <Text style={[S.tagHint, { color: colors.mutedForeground }]}>Tap to add:</Text>
           {hashtags.map((tag, i) => (
-            <Pressable key={i} onPress={() => applyHashtag(tag)}
+            <Pressable key={i} onPress={() => {
+              onContent((prev: string) => prev.trim() ? `${prev} ${tag}` : tag);
+              setHashtags(prev => prev.filter(t => t !== tag));
+            }}
               style={[S.tagChip, { backgroundColor: colors.primary + "18", borderColor: colors.primary + "44" }]}>
               <Text style={[S.tagChipText, { color: colors.primary }]}>{tag}</Text>
             </Pressable>
@@ -112,6 +118,13 @@ function AIToolbar({ content, mode, onContent }: {
             <Feather name="x" size={14} color={colors.mutedForeground} />
           </Pressable>
         </ScrollView>
+      )}
+
+      {!!altText && (
+        <View style={{ paddingHorizontal: 16, paddingVertical: 10, backgroundColor: "rgba(124,58,237,0.06)", borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border }}>
+          <Text style={{ color: colors.mutedForeground, fontSize: 11, fontWeight: "700", marginBottom: 4 }}>AI ALT-TEXT</Text>
+          <Text style={{ color: colors.foreground, fontSize: 13, lineHeight: 18 }}>{altText}</Text>
+        </View>
       )}
     </View>
   );
@@ -135,27 +148,56 @@ export default function CreateScreen() {
   if (!isAuthenticated) return <Redirect href="/login" />;
 
   const pickMedia = useCallback(async () => {
-    const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (!perm.granted) { Alert.alert("Permission required", "Allow media access to upload."); return; }
-
     const isReel = mode === "reel";
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: isReel ? ImagePicker.MediaTypeOptions.Videos : ImagePicker.MediaTypeOptions.All,
-      allowsMultipleSelection: !isReel,
-      quality: 0.85,
-      videoMaxDuration: isReel ? 60 : 30,
-    });
 
-    if (!result.canceled) {
-      const assets = result.assets;
-      for (const a of assets) {
-        if (a.type === "video" && a.fileSize && a.fileSize > MAX_VIDEO_SIZE) {
-          Alert.alert("File too large", `Videos must be under 100MB. Your file is ${(a.fileSize / 1024 / 1024).toFixed(1)}MB`);
-          return;
-        }
-      }
-      setMedia(isReel ? [assets[0]] : assets.slice(0, 4));
-    }
+    Alert.alert(
+      isReel ? "Add Video" : "Add Media",
+      "Choose a source",
+      [
+        {
+          text: "Camera",
+          onPress: async () => {
+            const perm = await ImagePicker.requestCameraPermissionsAsync();
+            if (!perm.granted) {
+              Alert.alert("Permission required", "Allow camera access in Settings to take photos.");
+              return;
+            }
+            const result = await ImagePicker.launchCameraAsync({
+              mediaTypes: isReel ? ImagePicker.MediaTypeOptions.Videos : ImagePicker.MediaTypeOptions.All,
+              quality: 0.85,
+              videoMaxDuration: isReel ? 60 : 30,
+            });
+            if (!result.canceled) setMedia([result.assets[0]]);
+          },
+        },
+        {
+          text: "Photo Library",
+          onPress: async () => {
+            const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+            if (!perm.granted) {
+              Alert.alert("Permission required", "Allow photo library access in Settings.");
+              return;
+            }
+            const result = await ImagePicker.launchImageLibraryAsync({
+              mediaTypes: isReel ? ImagePicker.MediaTypeOptions.Videos : ImagePicker.MediaTypeOptions.All,
+              allowsMultipleSelection: !isReel,
+              quality: 0.85,
+              videoMaxDuration: isReel ? 60 : 30,
+            });
+            if (!result.canceled) {
+              for (const a of result.assets) {
+                if (a.type === "video" && a.fileSize && a.fileSize > MAX_VIDEO_SIZE) {
+                  Alert.alert("File too large", `Videos must be under 100MB. Your file is ${(a.fileSize / 1024 / 1024).toFixed(1)}MB`);
+                  return;
+                }
+              }
+              setMedia(isReel ? [result.assets[0]] : result.assets.slice(0, 4));
+            }
+          },
+        },
+        { text: "Cancel", style: "cancel" },
+      ]
+    );
   }, [mode]);
 
   const handlePost = async () => {
@@ -174,7 +216,17 @@ export default function CreateScreen() {
 
       for (const asset of media) {
         const ext = asset.uri.split(".").pop()?.toLowerCase() ?? "jpg";
-        const mime = asset.type === "video" ? `video/${ext}` : `image/${ext}`;
+        let mime: string;
+        if (asset.type === "video") {
+          if (ext === "mov") mime = "video/quicktime";
+          else if (ext === "webm") mime = "video/webm";
+          else mime = "video/mp4";
+        } else {
+          if (ext === "png") mime = "image/png";
+          else if (ext === "webp") mime = "image/webp";
+          else if (ext === "gif") mime = "image/gif";
+          else mime = "image/jpeg";
+        }
         const url = await uploadMedia(asset.uri, `${Date.now()}.${ext}`, mime);
         mediaUrls.push(url);
         if (asset.type === "video") { mediaType = "video"; mediaWidth = asset.width ?? null; mediaHeight = asset.height ?? null; }
@@ -202,7 +254,7 @@ export default function CreateScreen() {
       setContent("");
       setMedia([]);
       Alert.alert("Posted! 🎉", `Your ${mode} is now live.`, [
-        { text: "OK", onPress: () => router.replace(mode === "reel" ? "/(tabs)/reels" : "/(tabs)/") }
+        { text: "OK", onPress: () => router.replace(mode === "reel" ? "/(tabs)/reels" : "/(tabs)") }
       ]);
     } catch (e: any) {
       Alert.alert("Error", e.message ?? "Failed to post. Try again.");
@@ -302,9 +354,9 @@ export default function CreateScreen() {
         {/* Media pick */}
         <Pressable onPress={pickMedia}
           style={[S.mediaPickBtn, { backgroundColor: colors.secondary, borderColor: colors.border }]}>
-          <Feather name={mode === "reel" ? "video" : "image"} size={20} color={colors.primary} />
+          <Feather name={mode === "reel" ? "video" : "camera"} size={20} color={colors.primary} />
           <Text style={[S.mediaPickText, { color: colors.primary }]}>
-            {mode === "reel" ? "Pick Video (up to 100MB)" : "Add Photos / Video"}
+            {mode === "reel" ? "Add Video" : "Add Photo / Video"}
           </Text>
         </Pressable>
 
@@ -312,7 +364,7 @@ export default function CreateScreen() {
         <AIToolbar content={content} mode={mode} onContent={(v: any) => {
           if (typeof v === "function") setContent(v);
           else setContent(v);
-        }} />
+        }} media={media} />
 
         {/* Visibility */}
         <View style={[S.visibilityRow, { borderTopColor: colors.border }]}>

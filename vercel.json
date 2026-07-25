@@ -1,0 +1,7 @@
+{
+  "installCommand": "pnpm install",
+  "buildCommand": "cd artifacts/mobile && pnpm run build:web",
+  "outputDirectory": "artifacts/mobile/dist",
+  "framework": null,
+  "regions": ["iad1"]
+}

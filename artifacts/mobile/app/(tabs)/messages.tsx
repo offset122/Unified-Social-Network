@@ -158,7 +158,7 @@ function ConversationRow({
   const isGroup = convo.type === "group";
   const name = isGroup
     ? convo.name ?? "Group"
-    : other?.display_name ?? other?.username ?? "User";
+    : other?.display_name?.trim() || other?.username || "User";
   const avatar = isGroup ? convo.avatar_url : other?.avatar_url;
   const hasUnread = (convo.unread_count ?? 0) > 0;
 
@@ -419,10 +419,11 @@ export default function MessagesScreen() {
                   router.push({
                     pathname: `/chat/${convo.id}`,
                     params: {
-                      peerName:
-                        convo.type === "group"
-                          ? convo.name ?? "Group"
-                          : convo.other_user?.display_name ?? "User",
+                      peerName: convo.type === "group"
+                        ? convo.name ?? "Group"
+                        : convo.other_user?.display_name?.trim() || convo.other_user?.username || "User",
+                      peerAvatar: convo.other_user?.avatar_url ?? "",
+                      peerId: convo.other_user?.id ?? "",
                     },
                   } as any)
                 }

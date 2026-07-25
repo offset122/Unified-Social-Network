@@ -4,7 +4,6 @@ import {
 } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
 import { Feather } from "@expo/vector-icons";
-import { BlurView } from "expo-blur";
 import { useRouter } from "expo-router";
 
 const { height: H } = Dimensions.get("window");
@@ -51,13 +50,10 @@ export default function AuthPromptModal({ visible, onDismiss, reason }: Props) {
   return (
     <Modal transparent visible={visible} animationType="none" statusBarTranslucent onRequestClose={onDismiss}>
       <Animated.View style={[styles.overlay, { opacity }]}>
-        <Pressable style={StyleSheet.absoluteFill} onPress={onDismiss} />
+        <Pressable style={styles.overlay} onPress={onDismiss} />
         <Animated.View style={[styles.sheet, { transform: [{ translateY }] }]}>
-          {Platform.OS !== "web" ? (
-            <BlurView intensity={80} tint="dark" style={StyleSheet.absoluteFill} />
-          ) : (
-            <View style={[StyleSheet.absoluteFill, { backgroundColor: "rgba(9,9,11,0.95)" }]} />
-          )}
+          <View style={[StyleSheet.absoluteFill, { backgroundColor: "rgba(9,9,11,0.95)" }]}>
+          </View>
 
           <View style={styles.handle} />
 
@@ -65,7 +61,7 @@ export default function AuthPromptModal({ visible, onDismiss, reason }: Props) {
             <Feather name="zap" size={28} color="#fff" />
           </LinearGradient>
 
-          <Text style={styles.title}>Join SocialApp</Text>
+          <Text style={styles.title}>Join Vibe</Text>
           <Text style={styles.subtitle}>
             {reason ?? "Create an account to unlock the full experience."}
           </Text>

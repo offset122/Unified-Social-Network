@@ -1,13 +1,15 @@
-import { BlurView } from "expo-blur";
 import { Tabs } from "expo-router";
 import { Feather } from "@expo/vector-icons";
 import React from "react";
-import { Platform, StyleSheet, View, useColorScheme } from "react-native";
+import { Platform, StyleSheet, View, Text } from "react-native";
 import { useColors } from "@/hooks/useColors";
 import AIFloatingButton from "@/components/AIFloatingButton";
+import { useAuth } from "@/lib/auth";
+import { fetchUnreadNotificationCount } from "@/lib/db";
+import { useQuery } from "@tanstack/react-query";
 
-// Lazy-require iOS-only modules so Android never evaluates them
 const isIOS = Platform.OS === "ios";
+
 const isLiquidGlassAvailable: () => boolean = isIOS
   ? require("expo-glass-effect").isLiquidGlassAvailable
   : () => false;
@@ -21,6 +23,13 @@ const NativeTabsModule = isIOS
 function NativeTabLayout() {
   if (!NativeTabsModule) return null;
   const { NativeTabs, Icon, Label } = NativeTabsModule;
+  const { user } = useAuth();
+  const { data: unread = 0 } = useQuery({
+    queryKey: ["notif-count-native"],
+    queryFn: () => fetchUnreadNotificationCount(user?.id ?? ""),
+    enabled: !!user?.id,
+    refetchInterval: 30000,
+  });
   return (
     <NativeTabs>
       <NativeTabs.Trigger name="index">
@@ -42,6 +51,7 @@ function NativeTabLayout() {
       <NativeTabs.Trigger name="messages">
         <Icon sf={{ default: "bubble.left.and.bubble.right", selected: "bubble.left.and.bubble.right.fill" }} />
         <Label>Messages</Label>
+        {unread > 0 && <View style={nativeBadgeStyles.nativeBadge}><Text style={nativeBadgeStyles.nativeBadgeText}>{unread > 99 ? "99+" : unread}</Text></View>}
       </NativeTabs.Trigger>
       <NativeTabs.Trigger name="profile">
         <Icon sf={{ default: "person", selected: "person.fill" }} />
@@ -53,9 +63,14 @@ function NativeTabLayout() {
 
 function ClassicTabLayout() {
   const colors = useColors();
-  const colorScheme = useColorScheme();
-  const isDark = colorScheme === "dark";
   const isWeb = Platform.OS === "web";
+  const { user } = useAuth();
+  const { data: unread = 0 } = useQuery({
+    queryKey: ["notif-count-classic"],
+    queryFn: () => fetchUnreadNotificationCount(user?.id ?? ""),
+    enabled: !!user?.id,
+    refetchInterval: 30000,
+  });
 
   return (
     <Tabs
@@ -65,29 +80,21 @@ function ClassicTabLayout() {
         headerShown: false,
         tabBarStyle: {
           position: "absolute",
-          backgroundColor: isIOS ? "transparent" : colors.background,
+          backgroundColor: colors.background,
           borderTopWidth: isWeb ? 1 : 0,
           borderTopColor: colors.border,
           elevation: 0,
           ...(isWeb ? { height: 84 } : {}),
         },
-        tabBarBackground: () =>
-          isIOS ? (
-            <BlurView
-              intensity={100}
-              tint={isDark ? "dark" : "light"}
-              style={StyleSheet.absoluteFill}
-            />
-          ) : isWeb ? (
-            <View
-              style={[
-                StyleSheet.absoluteFill,
-                { backgroundColor: colors.background },
-              ]}
-            />
-          ) : null,
-      }}
-    >
+        tabBarBackground: () => (
+          <View
+            style={[
+              StyleSheet.absoluteFill,
+              { backgroundColor: colors.background },
+            ]}
+          />
+        ),
+      }}>
       <Tabs.Screen
         name="index"
         options={{
@@ -140,6 +147,7 @@ function ClassicTabLayout() {
         name="messages"
         options={{
           title: "Messages",
+          tabBarBadge: unread > 0 ? (unread > 99 ? "99+" : String(unread)) : undefined,
           tabBarIcon: ({ color }) =>
             isIOS && SymbolView ? (
               <SymbolView name="bubble.left.and.bubble.right" tintColor={color} size={24} />
@@ -180,3 +188,19 @@ export default function TabLayout() {
     </View>
   );
 }
+
+const nativeBadgeStyles = StyleSheet.create({
+  nativeBadge: {
+    position: "absolute",
+    top: -4,
+    right: -8,
+    backgroundColor: "#ef4444",
+    borderRadius: 8,
+    minWidth: 16,
+    height: 16,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 3,
+  },
+  nativeBadgeText: { color: "#fff", fontSize: 9, fontWeight: "800" },
+});

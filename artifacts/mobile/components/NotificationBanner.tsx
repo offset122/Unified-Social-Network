@@ -2,7 +2,6 @@ import React, { useEffect, useRef, useCallback } from "react";
 import {
   View, Text, StyleSheet, Pressable, Animated, Dimensions, Platform, Image,
 } from "react-native";
-import { BlurView } from "expo-blur";
 import { Feather } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -73,12 +72,8 @@ export default function NotificationBanner({ notification, onDismiss, onPress }:
         { top, width: W - 24, transform: [{ translateY }], opacity },
       ]}
     >
-      <Pressable onPress={() => { dismiss(); onPress?.(notification); }} style={styles.pressable}>
-        {Platform.OS !== "web" ? (
-          <BlurView intensity={90} tint="dark" style={StyleSheet.absoluteFill} />
-        ) : (
+<Pressable onPress={() => { dismiss(); onPress?.(notification); }} style={styles.pressable}>
           <View style={[StyleSheet.absoluteFill, { backgroundColor: "rgba(9,9,11,0.95)" }]} />
-        )}
 
         <View style={styles.content}>
           {/* Left: Avatar or icon */}

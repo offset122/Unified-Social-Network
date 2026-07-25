@@ -189,9 +189,28 @@ CREATE TABLE IF NOT EXISTS live_sessions (
   host_id UUID NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
   title TEXT NOT NULL DEFAULT 'Live',
   viewers_count INTEGER NOT NULL DEFAULT 0,
+  likes_count INTEGER NOT NULL DEFAULT 0,
   is_active BOOLEAN NOT NULL DEFAULT true,
+  is_camera_on BOOLEAN NOT NULL DEFAULT true,
+  is_mic_on BOOLEAN NOT NULL DEFAULT true,
   started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   ended_at TIMESTAMPTZ
+);
+
+CREATE TABLE IF NOT EXISTS live_viewers (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  session_id UUID NOT NULL REFERENCES live_sessions(id) ON DELETE CASCADE,
+  user_id UUID NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+  joined_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE(session_id, user_id)
+);
+
+CREATE TABLE IF NOT EXISTS live_join_requests (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  session_id UUID NOT NULL REFERENCES live_sessions(id) ON DELETE CASCADE,
+  requester_id UUID NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+  status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','accepted','rejected')),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 CREATE INDEX IF NOT EXISTS live_sessions_active_idx ON live_sessions(is_active) WHERE is_active = true;
@@ -207,6 +226,10 @@ CREATE TABLE IF NOT EXISTS live_messages (
 );
 
 CREATE INDEX IF NOT EXISTS live_messages_session_idx ON live_messages(session_id, created_at ASC);
+CREATE INDEX IF NOT EXISTS live_viewers_session_idx ON live_viewers(session_id);
+CREATE INDEX IF NOT EXISTS live_viewers_user_idx ON live_viewers(user_id);
+CREATE INDEX IF NOT EXISTS live_join_requests_session_idx ON live_join_requests(session_id, status);
+CREATE INDEX IF NOT EXISTS live_join_requests_requester_idx ON live_join_requests(requester_id);
 
 -- ============================================================
 -- HELPER FUNCTIONS
@@ -290,6 +313,39 @@ CREATE OR REPLACE FUNCTION decrement_live_viewers(session_id UUID)
 RETURNS void LANGUAGE plpgsql SECURITY DEFINER AS $$
 BEGIN UPDATE live_sessions SET viewers_count = GREATEST(0, viewers_count - 1) WHERE id = session_id; END;$$;
 
+CREATE OR REPLACE FUNCTION increment_live_likes(session_id UUID)
+RETURNS void LANGUAGE plpgsql SECURITY DEFINER AS $$
+BEGIN UPDATE live_sessions SET likes_count = GREATEST(0, likes_count + 1) WHERE id = session_id AND is_active = true; END;$$;
+
+CREATE OR REPLACE FUNCTION decrement_live_likes(session_id UUID)
+RETURNS void LANGUAGE plpgsql SECURITY DEFINER AS $$
+BEGIN UPDATE live_sessions SET likes_count = GREATEST(0, likes_count - 1) WHERE id = session_id AND is_active = true; END;$$;
+
+CREATE OR REPLACE FUNCTION upsert_live_viewer(p_session_id UUID, p_user_id UUID)
+RETURNS void LANGUAGE plpgsql SECURITY DEFINER AS $$
+BEGIN
+  INSERT INTO live_viewers (session_id, user_id) VALUES (p_session_id, p_user_id)
+  ON CONFLICT (session_id, user_id) DO NOTHING;
+END;$$;
+
+CREATE OR REPLACE FUNCTION remove_live_viewer(p_session_id UUID, p_user_id UUID)
+RETURNS void LANGUAGE plpgsql SECURITY DEFINER AS $$
+BEGIN
+  DELETE FROM live_viewers WHERE session_id = p_session_id AND user_id = p_user_id;
+END;$$;
+
+CREATE OR REPLACE FUNCTION accept_join_request(p_request_id UUID, p_session_id UUID)
+RETURNS void LANGUAGE plpgsql SECURITY DEFINER AS $$
+BEGIN
+  UPDATE live_join_requests SET status = 'accepted' WHERE id = p_request_id AND session_id = p_session_id;
+END;$$;
+
+CREATE OR REPLACE FUNCTION reject_join_request(p_request_id UUID, p_session_id UUID)
+RETURNS void LANGUAGE plpgsql SECURITY DEFINER AS $$
+BEGIN
+  UPDATE live_join_requests SET status = 'rejected' WHERE id = p_request_id AND session_id = p_session_id;
+END;$$;
+
 -- Auto-create profile on signup
 CREATE OR REPLACE FUNCTION handle_new_user()
 RETURNS TRIGGER LANGUAGE plpgsql SECURITY DEFINER AS $$
@@ -359,6 +415,8 @@ ALTER TABLE messages ENABLE ROW LEVEL SECURITY;
 ALTER TABLE notifications ENABLE ROW LEVEL SECURITY;
 ALTER TABLE live_sessions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE live_messages ENABLE ROW LEVEL SECURITY;
+ALTER TABLE live_viewers ENABLE ROW LEVEL SECURITY;
+ALTER TABLE live_join_requests ENABLE ROW LEVEL SECURITY;
 
 -- Profiles
 CREATE POLICY "Profiles are viewable by everyone" ON profiles FOR SELECT USING (true);
@@ -434,6 +492,18 @@ CREATE POLICY "Anyone can view active live sessions" ON live_sessions FOR SELECT
 CREATE POLICY "Users can create live sessions" ON live_sessions FOR INSERT WITH CHECK (auth.uid() = host_id);
 CREATE POLICY "Hosts can update own sessions" ON live_sessions FOR UPDATE USING (auth.uid() = host_id);
 
+-- Live Viewers
+CREATE POLICY "Anyone can view live viewers" ON live_viewers FOR SELECT USING (true);
+CREATE POLICY "Viewers can join streams" ON live_viewers FOR INSERT WITH CHECK (auth.uid() = user_id);
+CREATE POLICY "Viewers can leave streams" ON live_viewers FOR DELETE USING (auth.uid() = user_id);
+
+-- Live Join Requests
+CREATE POLICY "Anyone can view join requests" ON live_join_requests FOR SELECT USING (true);
+CREATE POLICY "Viewers can request to join" ON live_join_requests FOR INSERT WITH CHECK (auth.uid() = requester_id);
+CREATE POLICY "Hosts can update join requests" ON live_join_requests FOR UPDATE USING (
+  EXISTS (SELECT 1 FROM live_sessions WHERE id = session_id AND host_id = auth.uid())
+);
+
 -- Live Messages
 CREATE POLICY "Anyone can view live chat" ON live_messages FOR SELECT USING (true);
 CREATE POLICY "Authenticated users can send live messages" ON live_messages FOR INSERT WITH CHECK (auth.uid() = user_id);
@@ -465,6 +535,8 @@ CREATE POLICY "Users can delete own uploads" ON storage.objects FOR DELETE USING
 ALTER PUBLICATION supabase_realtime ADD TABLE messages;
 ALTER PUBLICATION supabase_realtime ADD TABLE live_messages;
 ALTER PUBLICATION supabase_realtime ADD TABLE live_sessions;
+ALTER PUBLICATION supabase_realtime ADD TABLE live_viewers;
+ALTER PUBLICATION supabase_realtime ADD TABLE live_join_requests;
 ALTER PUBLICATION supabase_realtime ADD TABLE notifications;
 ALTER PUBLICATION supabase_realtime ADD TABLE posts;
 

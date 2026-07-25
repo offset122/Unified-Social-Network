@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from "react";
 import {
   View, Text, StyleSheet, Pressable, Animated, Dimensions, Image, ActivityIndicator,
-  TextInput, KeyboardAvoidingView, Platform,
+  TextInput, KeyboardAvoidingView, Platform, Alert,
 } from "react-native";
 import { Stack, useRouter, useLocalSearchParams } from "expo-router";
 import { Feather } from "@expo/vector-icons";
@@ -12,6 +12,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useAuth } from "@/lib/auth";
 import { fetchStories, resolveMediaUrl } from "@/lib/db";
 import { supabase } from "@/lib/supabase";
+import { Share } from "react-native";
 
 const STORY_DURATION = 5000;
 
@@ -23,6 +24,10 @@ export default function StoryViewerScreen() {
   const groupIndex = parseInt(params.storyGroupIndex ?? "0", 10);
   const [replyText, setReplyText] = useState("");
   const [replySent, setReplySent] = useState(false);
+  const [touchStartY, setTouchStartY] = useState(0);
+  const [seenCount, setSeenCount] = useState<number | null>(null);
+  const [isPressing, setIsPressing] = useState(false);
+  const pressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const { data: allStories = [] } = useQuery({
     queryKey: ["stories"],
@@ -50,9 +55,57 @@ export default function StoryViewerScreen() {
     progress.setValue(0);
     anim.current = Animated.timing(progress, { toValue: 1, duration: STORY_DURATION, useNativeDriver: false });
     anim.current.start(({ finished }) => { if (finished) goNext(); });
-    if (user?.id) supabase.from("story_views").upsert({ story_id: currentStory.id, viewer_id: user.id }).then(() => {});
+    if (user?.id) supabase.from("story_views").upsert({ story_id: currentStory.id, viewer_id: user.id }).then(() => {
+      if (currentStory.author_id === user.id) {
+        supabase.from("story_views").select("story_id", { count: "exact", head: true }).eq("story_id", currentStory.id).then(({ count }) => setSeenCount(count ?? 0));
+      }
+    });
     return () => { anim.current?.stop(); };
   }, [storyIdx, currentStory?.id]);
+
+  const handleTouchStart = (e: any) => {
+    setTouchStartY(e.nativeEvent.locationY);
+  };
+
+  const handleTouchEnd = (e: any) => {
+    const deltaY = e.nativeEvent.locationY - touchStartY;
+    if (deltaY > 80) {
+      router.back();
+    }
+  };
+
+  const handlePressIn = () => {
+    setIsPressing(true);
+    pressTimer.current = setTimeout(() => {
+      anim.current?.stop();
+    }, 400);
+  };
+
+  const handlePressOut = () => {
+    setIsPressing(false);
+    if (pressTimer.current) clearTimeout(pressTimer.current);
+    if (replyText.trim()) return;
+    anim.current = Animated.timing(progress, { toValue: 1, duration: STORY_DURATION, useNativeDriver: false });
+    anim.current.start(({ finished }) => { if (finished) goNext(); });
+  };
+
+  const handleDeleteStory = async () => {
+    if (!currentStory || !user?.id || currentStory.author_id !== user.id) return;
+    try {
+      await supabase.from("stories").delete().eq("id", currentStory.id);
+      router.back();
+    } catch (e: any) {
+      Alert.alert("Error", e.message ?? "Could not delete story");
+    }
+  };
+
+  const handleStoryMenu = () => {
+    if (!isOwn) return;
+    Alert.alert("Story Options", undefined, [
+      { text: "Cancel", style: "cancel" },
+      { text: "Delete Story", style: "destructive", onPress: handleDeleteStory },
+    ]);
+  };
 
   const goNext = () => {
     if (!group) return;
@@ -120,16 +173,23 @@ export default function StoryViewerScreen() {
   const isVideo = currentStory.media_type === "video";
   const mediaUri = resolveMediaUrl(currentStory.media_url);
   const authorName = group.user?.display_name ?? "User";
+  const isOwn = currentStory.author_id === user?.id;
 
   return (
-    <View style={{ flex: 1, backgroundColor: "#000" }}>
+    <View
+      style={{ flex: 1, backgroundColor: "#000" }}
+      onTouchStart={handleTouchStart}
+      onTouchEnd={handleTouchEnd}
+    >
       <Stack.Screen options={{ headerShown: false }} />
 
       {isVideo ? (
         <Video source={{ uri: mediaUri }} style={StyleSheet.absoluteFill}
-          resizeMode={ResizeMode.COVER} shouldPlay isLooping={false} isMuted={false} />
+          resizeMode={ResizeMode.COVER} shouldPlay={!isPressing} isLooping={false} isMuted={false} />
       ) : (
-        <Image source={{ uri: mediaUri }} style={StyleSheet.absoluteFill} resizeMode="cover" />
+        <Pressable onPressIn={handlePressIn} onPressOut={handlePressOut} style={StyleSheet.absoluteFill}>
+          <Image source={{ uri: mediaUri }} style={StyleSheet.absoluteFill} resizeMode="cover" />
+        </Pressable>
       )}
 
       <LinearGradient colors={["rgba(0,0,0,0.6)", "transparent"]}
@@ -156,9 +216,19 @@ export default function StoryViewerScreen() {
             )}
           </View>
           <Text style={styles.storyAuthor}>{authorName}</Text>
-          <Pressable onPress={() => router.back()} hitSlop={8} style={{ marginLeft: "auto" }}>
-            <Feather name="x" size={24} color="#fff" />
-          </Pressable>
+          {isOwn && seenCount !== null && (
+            <Text style={styles.seenCount}>Seen by {seenCount}</Text>
+          )}
+          {isOwn && (
+            <Pressable onPress={handleStoryMenu} hitSlop={8} style={{ marginLeft: "auto" }}>
+              <Feather name="more-horizontal" size={24} color="#fff" />
+            </Pressable>
+          )}
+          {!isOwn && (
+            <Pressable onPress={() => router.back()} hitSlop={8} style={{ marginLeft: "auto" }}>
+              <Feather name="x" size={24} color="#fff" />
+            </Pressable>
+          )}
         </View>
       </LinearGradient>
 
@@ -216,6 +286,7 @@ const styles = StyleSheet.create({
   progressFill: { height: "100%", backgroundColor: "#fff", borderRadius: 2 },
   storyHeader: { flexDirection: "row", alignItems: "center", gap: 10 },
   storyAuthor: { color: "#fff", fontWeight: "700", fontSize: 14, textShadowColor: "rgba(0,0,0,0.5)", textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 3 },
+  seenCount: { color: "rgba(255,255,255,0.7)", fontSize: 12, fontWeight: "600" },
   tapZones: { ...StyleSheet.absoluteFillObject, flexDirection: "row", zIndex: 5 },
   tapLeft: { flex: 1 },
   tapRight: { flex: 1 },

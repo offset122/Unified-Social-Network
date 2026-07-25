@@ -12,14 +12,16 @@ import React, { useEffect, useState, type ReactNode } from "react";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { KeyboardProvider } from "react-native-keyboard-controller";
 import { SafeAreaProvider } from "react-native-safe-area-context";
-import { View } from "react-native";
+import { View, ActivityIndicator } from "react-native";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { AuthProvider, useAuth } from "@/lib/auth";
 import { ThemeProvider } from "@/lib/theme";
+import { ChatThemeProvider } from "@/lib/chatTheme";
 import WelcomeModal from "@/components/WelcomeModal";
 import NotificationBanner from "@/components/NotificationBanner";
 import { mapDbNotificationToApp, type AppNotification } from "@/lib/notifications";
 import { supabase } from "@/lib/supabase";
+import VibeLogo from "@/components/VibeLogo";
 
 SplashScreen.preventAutoHideAsync();
 
@@ -35,12 +37,15 @@ function RootLayoutNav() {
       <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
       <Stack.Screen name="login" options={{ headerShown: false }} />
       <Stack.Screen name="chat/[chatId]" options={{ headerShown: false }} />
+      <Stack.Screen name="chat-settings" options={{ headerShown: false }} />
       <Stack.Screen name="call/[chatId]" options={{ headerShown: false }} />
+      <Stack.Screen name="incoming-call" options={{ headerShown: false, presentation: "fullScreenModal" }} />
       <Stack.Screen name="post/[postId]" options={{ headerShown: false }} />
       <Stack.Screen name="user/[userId]" options={{ headerShown: false }} />
       <Stack.Screen name="create-story" options={{ headerShown: false }} />
       <Stack.Screen name="new-message" options={{ headerShown: false }} />
       <Stack.Screen name="blocked-users" options={{ headerShown: false }} />
+      <Stack.Screen name="auth/callback" options={{ headerShown: false }} />
       <Stack.Screen name="+not-found" />
     </Stack>
   );
@@ -61,6 +66,25 @@ function AppShell({ children }: { children: ReactNode }) {
       else router.push("/notifications" as any);
     } catch { }
   };
+
+  // Listen for incoming call broadcasts
+  useEffect(() => {
+    if (!isAuthenticated || !user) return;
+    const callChannel = supabase.channel(`call-ring:${user.id}`)
+      .on("broadcast", { event: "call-ring" }, ({ payload }: any) => {
+        router.push({
+          pathname: "/incoming-call",
+          params: {
+            callerName: payload.callerName ?? "Unknown",
+            callerAvatar: payload.callerAvatar ?? "",
+            callType: payload.callType ?? "audio",
+            chatId: payload.chatId ?? "",
+          },
+        } as any);
+      })
+      .subscribe();
+    return () => { supabase.removeChannel(callChannel); };
+  }, [isAuthenticated, user?.id]);
 
   useEffect(() => {
     if (!isAuthenticated || !user) return;
@@ -123,7 +147,14 @@ export default function RootLayout() {
     }
   }, [fontsLoaded, fontError]);
 
-  if (!fontsLoaded && !fontError) return null;
+  if (!fontsLoaded && !fontError) {
+    return (
+      <View style={{ flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: "#6366f1" }}>
+        <VibeLogo size={80} showText={true} />
+        <ActivityIndicator size="small" color="#ffffff" style={{ marginTop: 24 }} />
+      </View>
+    );
+  }
 
   return (
     <ErrorBoundary>
@@ -132,11 +163,13 @@ export default function RootLayout() {
           <QueryClientProvider client={queryClient}>
             <KeyboardProvider>
               <ThemeProvider>
+                <ChatThemeProvider>
                 <AuthProvider>
                   <AppShell>
                     <RootLayoutNav />
                   </AppShell>
                 </AuthProvider>
+                </ChatThemeProvider>
               </ThemeProvider>
             </KeyboardProvider>
           </QueryClientProvider>

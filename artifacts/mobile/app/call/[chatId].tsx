@@ -31,13 +31,14 @@ export default function CallScreen() {
   const router = useRouter();
 
   const isVideo = params.isVideo === "true";
-  const peerName = params.peerName ?? "User";
+  const peerName = String(params.peerName ?? "User").replace(/[<>"'`]/g, "").slice(0, 60) || "User";
 
   const [callStatus, setCallStatus] = useState<"calling" | "connected" | "ended">("calling");
   const [duration, setDuration] = useState(0);
   const [isMuted, setIsMuted] = useState(false);
   const [isSpeaker, setIsSpeaker] = useState(false);
   const [isCameraOff, setIsCameraOff] = useState(false);
+  const [isVideoCall, setIsVideoCall] = useState(isVideo);
   const signalChannel = useRef<ReturnType<typeof supabase.channel> | null>(null);
 
   useEffect(() => {
@@ -54,18 +55,11 @@ export default function CallScreen() {
       setTimeout(() => router.back(), 800);
     }).subscribe(async (status) => {
       if (status === "SUBSCRIBED") {
-        // Announce ringing to the peer
         await ch.send({ type: "broadcast", event: "call-ring", payload: { callerId: user.id, isVideo } });
       }
     });
 
-    // Auto-answer simulation for demo (remove when real callee UI is added)
-    const demoTimer = setTimeout(async () => {
-      await ch.send({ type: "broadcast", event: "call-answer", payload: {} });
-    }, 3000);
-
     return () => {
-      clearTimeout(demoTimer);
       supabase.removeChannel(ch);
     };
   }, [chatId, user?.id]);
@@ -88,9 +82,17 @@ export default function CallScreen() {
     setTimeout(() => router.back(), 800);
   };
 
+  const handleFlipCamera = () => {
+    Alert.alert("Flip Camera", "Camera flipped (preview not available in demo).");
+  };
+
   const handleMore = () => {
     Alert.alert("More options", undefined, [
-      { text: isVideo ? "Switch to audio" : "Switch to video", onPress: () => {} },
+      {
+        text: isVideoCall ? "Switch to audio" : "Switch to video",
+        onPress: () => setIsVideoCall(v => !v),
+      },
+      ...(isVideoCall ? [{ text: "Flip camera", onPress: handleFlipCamera }] : []),
       { text: "Add person", onPress: () => router.push("/new-message" as any) },
       { text: "Cancel", style: "cancel" },
     ]);
@@ -100,7 +102,7 @@ export default function CallScreen() {
     <View style={styles.container}>
       <Stack.Screen options={{ headerShown: false }} />
       <LinearGradient
-        colors={isVideo ? ["#0f0a1e", "#1a0533", "#2d1b69"] : ["#1e1b4b", "#2d1b69", "#0f0a1e"]}
+        colors={isVideoCall ? ["#0f0a1e", "#1a0533", "#2d1b69"] : ["#1e1b4b", "#2d1b69", "#0f0a1e"]}
         style={StyleSheet.absoluteFill}
       />
 
@@ -111,15 +113,22 @@ export default function CallScreen() {
 
       {/* Call type badge */}
       <View style={[styles.callTypeBadge, { top: insets.top + 12 }]}>
-        <Feather name={isVideo ? "video" : "phone"} size={13} color="#fff" />
-        <Text style={styles.callTypeTxt}>{isVideo ? "Video Call" : "Voice Call"}</Text>
+        <Feather name={isVideoCall ? "video" : "phone"} size={13} color="#fff" />
+        <Text style={styles.callTypeTxt}>{isVideoCall ? "Video Call" : "Voice Call"}</Text>
       </View>
 
       {/* Peer info */}
       <View style={styles.peerSection}>
-        <View style={[styles.avatarGlow, { shadowColor: "#7c3aed" }]}>
-          <Avatar name={peerName} size={120} />
-        </View>
+        {isVideoCall && isCameraOff ? (
+          <View style={[styles.videoOffPlaceholder, { backgroundColor: colors.card }]}>
+            <Avatar name={peerName} size={140} />
+            <Text style={styles.videoOffLabel}>Camera is off</Text>
+          </View>
+        ) : (
+          <View style={[styles.avatarGlow, { shadowColor: "#7c3aed" }]}>
+            <Avatar name={peerName} size={120} />
+          </View>
+        )}
         <Text style={styles.peerName}>{peerName}</Text>
         <Text style={[styles.callStatus, { color: callStatus === "connected" ? "#22c55e" : "#a78bfa" }]}>
           {callStatus === "calling" ? "Calling..." : callStatus === "connected" ? formatDuration(duration) : "Call ended"}
@@ -134,7 +143,7 @@ export default function CallScreen() {
             <Text style={styles.ctrlLabel}>{isMuted ? "Unmute" : "Mute"}</Text>
           </Pressable>
 
-          {isVideo && (
+          {isVideoCall && (
             <Pressable onPress={() => setIsCameraOff(c => !c)} style={[styles.ctrlBtn, isCameraOff && styles.ctrlActive]}>
               <Feather name={isCameraOff ? "video-off" : "video"} size={24} color="#fff" />
               <Text style={styles.ctrlLabel}>{isCameraOff ? "Cam On" : "Cam Off"}</Text>
@@ -166,6 +175,8 @@ const styles = StyleSheet.create({
   callTypeBadge: { position: "absolute", flexDirection: "row", alignItems: "center", gap: 5, backgroundColor: "rgba(255,255,255,0.15)", paddingHorizontal: 12, paddingVertical: 5, borderRadius: 20, zIndex: 10 },
   callTypeTxt: { color: "#fff", fontSize: 12, fontWeight: "600" },
   peerSection: { flex: 1, alignItems: "center", justifyContent: "center", gap: 16 },
+  videoOffPlaceholder: { width: 180, height: 180, borderRadius: 90, alignItems: "center", justifyContent: "center", gap: 12 },
+  videoOffLabel: { color: "rgba(255,255,255,0.7)", fontSize: 14, fontWeight: "600" },
   avatarGlow: { shadowOffset: { width: 0, height: 0 }, shadowOpacity: 0.6, shadowRadius: 30, elevation: 20 },
   peerName: { color: "#fff", fontSize: 28, fontWeight: "800", letterSpacing: -0.5 },
   callStatus: { fontSize: 16, fontWeight: "500" },

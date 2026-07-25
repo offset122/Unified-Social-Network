@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useState } from "react";
 import {
   View, Text, StyleSheet, FlatList, ActivityIndicator,
   Pressable, Image, Platform,
@@ -9,7 +9,7 @@ import { useColors } from "@/hooks/useColors";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/lib/auth";
-import { resolveMediaUrl, timeAgo } from "@/lib/db";
+import { resolveMediaUrl, timeAgo, generateAINotificationDigest } from "@/lib/db";
 import { supabase } from "@/lib/supabase";
 import { LinearGradient } from "expo-linear-gradient";
 
@@ -23,13 +23,17 @@ type Notif = {
 };
 
 const NOTIF_ICONS: Record<string, { icon: any; color: string; label: string }> = {
-  follow:  { icon: "user-plus",      color: "#7c3aed", label: "followed you" },
-  like:    { icon: "heart",          color: "#ef4444", label: "liked your post" },
-  comment: { icon: "message-circle", color: "#3b82f6", label: "commented on your post" },
-  reply:   { icon: "corner-up-right",color: "#06b6d4", label: "replied to your comment" },
-  mention: { icon: "at-sign",        color: "#8b5cf6", label: "mentioned you" },
-  message: { icon: "send",           color: "#10b981", label: "sent you a message" },
-  live:    { icon: "radio",          color: "#ef4444", label: "went live" },
+  follow:      { icon: "user-plus",       color: "#7c3aed", label: "followed you" },
+  like:        { icon: "heart",           color: "#ef4444", label: "liked your post" },
+  comment:     { icon: "message-circle",  color: "#3b82f6", label: "commented on your post" },
+  reply:       { icon: "corner-up-right", color: "#06b6d4", label: "replied to your comment" },
+  mention:     { icon: "at-sign",         color: "#8b5cf6", label: "mentioned you" },
+  message:     { icon: "send",            color: "#10b981", label: "sent you a message" },
+  live:        { icon: "radio",           color: "#ef4444", label: "went live" },
+  report:      { icon: "flag",            color: "#f59e0b", label: "reported your post" },
+  new_post:    { icon: "edit-3",          color: "#6366f1", label: "shared a new post" },
+  audio_call:  { icon: "phone",           color: "#22c55e", label: "called you" },
+  video_call:  { icon: "video",           color: "#22c55e", label: "video called you" },
 };
 
 async function fetchNotifications(userId: string): Promise<Notif[]> {
@@ -62,12 +66,17 @@ function NotifAvatar({ name, avatarUrl }: { name: string; avatarUrl?: string | n
   );
 }
 
+type FilterType = "all" | "like" | "comment" | "follow" | "message";
+
 export default function NotificationsScreen() {
   const { user } = useAuth();
   const colors = useColors();
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const qc = useQueryClient();
+  const [filter, setFilter] = useState<FilterType>("all");
+  const [aiDigest, setAiDigest] = useState("");
+  const [loadingDigest, setLoadingDigest] = useState(false);
 
   const { data: notifs = [], isLoading } = useQuery({
     queryKey: ["notifications", user?.id],
@@ -85,6 +94,28 @@ export default function NotificationsScreen() {
 
   const unreadCount = (notifs as Notif[]).filter(n => !n.is_read).length;
 
+  const FILTERS: { key: FilterType; label: string }[] = [
+    { key: "all", label: "All" },
+    { key: "like", label: "Likes" },
+    { key: "comment", label: "Comments" },
+    { key: "follow", label: "Follows" },
+    { key: "message", label: "Messages" },
+  ];
+
+  const filtered = filter === "all"
+    ? (notifs as Notif[])
+    : (notifs as Notif[]).filter(n => n.type === filter || (filter === "like" && n.type === "like") || (filter === "comment" && (n.type === "comment" || n.type === "reply" || n.type === "mention")) || (filter === "follow" && n.type === "follow") || (filter === "message" && n.type === "message"));
+
+  const handleAIDigest = async () => {
+    setLoadingDigest(true);
+    setAiDigest("");
+    try {
+      setAiDigest(await generateAINotificationDigest(filtered as Notif[]));
+    } finally {
+      setLoadingDigest(false);
+    }
+  };
+
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
       <Stack.Screen options={{ headerShown: false }} />
@@ -93,16 +124,40 @@ export default function NotificationsScreen() {
           <Feather name="arrow-left" size={22} color={colors.foreground} />
         </Pressable>
         <Text style={[styles.title, { color: colors.foreground }]}>Notifications</Text>
-        {unreadCount > 0 && (
-          <Pressable onPress={() => markAllMut.mutate()} hitSlop={8}>
-            <Text style={{ color: colors.primary, fontSize: 13, fontWeight: "600" }}>Mark all read</Text>
-          </Pressable>
-        )}
+        <Pressable onPress={handleAIDigest} hitSlop={8}>
+          <Feather name="zap" size={18} color={colors.primary} />
+        </Pressable>
       </View>
+
+      {/* Filter tabs */}
+      <View style={{ flexDirection: "row", paddingHorizontal: 12, paddingVertical: 8, gap: 8, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border }}>
+        {FILTERS.map(f => (
+          <Pressable key={f.key} onPress={() => setFilter(f.key)}
+            style={{ paddingHorizontal: 12, paddingVertical: 6, borderRadius: 16, backgroundColor: filter === f.key ? colors.primary : colors.secondary, borderWidth: filter === f.key ? 0 : 1, borderColor: colors.border }}>
+            <Text style={{ color: filter === f.key ? "#fff" : colors.mutedForeground, fontSize: 12, fontWeight: "700" }}>{f.label}</Text>
+          </Pressable>
+        ))}
+      </View>
+
+      {/* AI Digest */}
+      {(loadingDigest || aiDigest) && (
+        <View style={{ paddingHorizontal: 16, paddingVertical: 10, backgroundColor: "rgba(124,58,237,0.06)", borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border }}>
+          {loadingDigest && <ActivityIndicator size="small" color="#7c3aed" />}
+          {!!aiDigest && (
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+              <Feather name="zap" size={14} color="#7c3aed" />
+              <Text style={{ color: colors.foreground, fontSize: 13, flex: 1 }}>{aiDigest}</Text>
+              <Pressable onPress={() => setAiDigest("")} hitSlop={6}>
+                <Feather name="x" size={13} color={colors.mutedForeground} />
+              </Pressable>
+            </View>
+          )}
+        </View>
+      )}
 
       {isLoading ? (
         <View style={styles.center}><ActivityIndicator color={colors.primary} size="large" /></View>
-      ) : (notifs as Notif[]).length === 0 ? (
+      ) : filtered.length === 0 ? (
         <View style={styles.empty}>
           <LinearGradient colors={[colors.primary + "22", colors.primary + "08"]}
             style={{ width: 80, height: 80, borderRadius: 40, alignItems: "center", justifyContent: "center", marginBottom: 12 }}>
@@ -113,7 +168,7 @@ export default function NotificationsScreen() {
         </View>
       ) : (
         <FlatList
-          data={notifs as Notif[]}
+          data={filtered}
           keyExtractor={n => n.id}
           contentContainerStyle={{ paddingBottom: insets.bottom + 80 }}
           renderItem={({ item: n }) => {
@@ -135,6 +190,8 @@ export default function NotificationsScreen() {
                   } else if ((n.type === "like" || n.type === "comment" || n.type === "reply" || n.type === "mention") && (n as any).post_id) {
                     router.push(`/post/${(n as any).post_id}` as any);
                   } else if (n.type === "message") {
+                    router.push("/(tabs)/messages" as any);
+                  } else if (n.type === "audio_call" || n.type === "video_call") {
                     router.push("/(tabs)/messages" as any);
                   } else if (n.type === "live") {
                     router.push("/live-sessions" as any);

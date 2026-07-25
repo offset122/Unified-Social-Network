@@ -14,6 +14,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/lib/auth";
 import { useColors } from "@/hooks/useColors";
 import { supabase } from "@/lib/supabase";
+import { Share } from "react-native";
 import {
   fetchProfile, fetchUserPosts, followUser, unfollowUser, isFollowing,
   blockUser, getOrCreateDM, resolveMediaUrl, formatCount, timeAgo,
@@ -377,7 +378,7 @@ export default function UserProfileScreen() {
   const [postTab, setPostTab] = useState<"posts" | "reels">("posts");
   const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
   const [followLoading, setFollowLoading] = useState(false);
-  const [postList, setPostList] = useState<Post[]>([]);
+  const [deletedIds, setDeletedIds] = useState<Set<string>>(new Set());
 
   const { data: profile, isLoading: profileLoading } = useQuery({
     queryKey: ["profile", userId],
@@ -391,9 +392,7 @@ export default function UserProfileScreen() {
     enabled: !!userId,
   });
 
-  React.useEffect(() => {
-    setPostList(posts as Post[]);
-  }, [posts]);
+  const postList = (posts as Post[]).filter(p => !deletedIds.has(p.id));
 
   const { data: following = false, refetch: refetchFollow } = useQuery({
     queryKey: ["is-following", user?.id, userId],
@@ -463,7 +462,7 @@ export default function UserProfileScreen() {
   };
 
   const handleDeleted = (id: string) => {
-    setPostList(p => p.filter(x => x.id !== id));
+    setDeletedIds(prev => new Set([...prev, id]));
   };
 
   const ListHeader = () => (
@@ -471,6 +470,11 @@ export default function UserProfileScreen() {
       {/* Cover */}
       <LinearGradient colors={["#1e1b4b", "#2d1b69", "#1e1b4b"]} style={[styles.cover, { backgroundColor: colors.secondary }]}>
         {profile.cover_url && <Image source={{ uri: resolveMediaUrl(profile.cover_url) }} style={StyleSheet.absoluteFill} resizeMode="cover" />}
+        {isOwnProfile && (
+          <Pressable onPress={() => router.push("/edit-profile" as any)} style={[styles.coverEditBtn, { backgroundColor: "rgba(0,0,0,0.35)" }]} hitSlop={8}>
+            <Feather name="camera" size={16} color="#fff" />
+          </Pressable>
+        )}
         <View style={styles.avatarPosn}>
           <Avatar name={profile.display_name} size={88} avatarUrl={profile.avatar_url} />
         </View>
@@ -585,14 +589,20 @@ export default function UserProfileScreen() {
           </Pressable>
           <Text style={[styles.topTitle, { color: colors.foreground }]}>{profile.username}</Text>
           {!isOwnProfile ? (
-            <Pressable hitSlop={8} style={styles.topBtn}
-              onPress={() => Alert.alert("Options", undefined, [
-                { text: "Block", style: "destructive", onPress: handleBlock },
-                { text: "Report", onPress: handleReport },
-                { text: "Cancel", style: "cancel" },
-              ])}>
-              <Feather name="more-horizontal" size={22} color={colors.foreground} />
-            </Pressable>
+            <View style={{ flexDirection: "row", gap: 4 }}>
+              <Pressable hitSlop={8} style={styles.topBtn}
+                onPress={() => Share.share({ message: `Check out ${profile.display_name} on Vibe! Vibe://user/${profile.id}`, title: profile.display_name })}>
+                <Feather name="share" size={18} color={colors.foreground} />
+              </Pressable>
+              <Pressable hitSlop={8} style={styles.topBtn}
+                onPress={() => Alert.alert("Options", undefined, [
+                  { text: "Block", style: "destructive", onPress: handleBlock },
+                  { text: "Report", onPress: handleReport },
+                  { text: "Cancel", style: "cancel" },
+                ])}>
+                <Feather name="more-horizontal" size={22} color={colors.foreground} />
+              </Pressable>
+            </View>
           ) : <View style={styles.topBtn} />}
         </View>
 
@@ -628,14 +638,20 @@ export default function UserProfileScreen() {
         </Pressable>
         <Text style={[styles.topTitle, { color: colors.foreground }]}>{profile.username}</Text>
         {!isOwnProfile ? (
-          <Pressable hitSlop={8} style={styles.topBtn}
-            onPress={() => Alert.alert("Options", undefined, [
-              { text: "Block", style: "destructive", onPress: handleBlock },
-              { text: "Report", onPress: handleReport },
-              { text: "Cancel", style: "cancel" },
-            ])}>
-            <Feather name="more-horizontal" size={22} color={colors.foreground} />
-          </Pressable>
+          <View style={{ flexDirection: "row", gap: 4 }}>
+            <Pressable hitSlop={8} style={styles.topBtn}
+              onPress={() => Share.share({ message: `Check out ${profile.display_name} on Vibe! Vibe://user/${profile.id}`, title: profile.display_name })}>
+              <Feather name="share" size={18} color={colors.foreground} />
+            </Pressable>
+            <Pressable hitSlop={8} style={styles.topBtn}
+              onPress={() => Alert.alert("Options", undefined, [
+                { text: "Block", style: "destructive", onPress: handleBlock },
+                { text: "Report", onPress: handleReport },
+                { text: "Cancel", style: "cancel" },
+              ])}>
+              <Feather name="more-horizontal" size={22} color={colors.foreground} />
+            </Pressable>
+          </View>
         ) : <View style={styles.topBtn} />}
       </View>
 
@@ -670,6 +686,7 @@ const styles = StyleSheet.create({
   topBtn: { width: 40, height: 40, alignItems: "center", justifyContent: "center" },
   topTitle: { flex: 1, fontSize: 16, fontWeight: "700", textAlign: "center" },
   cover: { height: 150, position: "relative" },
+  coverEditBtn: { position: "absolute", top: 10, right: 10, width: 34, height: 34, borderRadius: 17, alignItems: "center", justifyContent: "center" },
   avatarPosn: { position: "absolute", bottom: -46, left: 18 },
   info: { paddingHorizontal: 18, paddingTop: 56, paddingBottom: 14, borderBottomWidth: StyleSheet.hairlineWidth },
   nameRow: { flexDirection: "row", alignItems: "flex-start", marginBottom: 6 },

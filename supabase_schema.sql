@@ -302,17 +302,17 @@ create policy "notifs_update" on public.notifications for update using (auth.uid
 
 -- conversations (members only)
 create policy "convos_select" on public.conversations for select using (
-  exists (select 1 from public.conversation_members where conversation_id = id and user_id = auth.uid())
+  auth.uid() = created_by
+  or exists (select 1 from public.conversation_members where conversation_id = id and user_id = auth.uid())
 );
 create policy "convos_insert" on public.conversations for insert with check (auth.uid() = created_by);
 create policy "convos_update" on public.conversations for update using (
   exists (select 1 from public.conversation_members where conversation_id = id and user_id = auth.uid())
 );
 
--- conversation_members
+-- conversation_members (non-recursive: each user sees only their own rows)
 create policy "conv_members_select" on public.conversation_members for select using (
-  user_id = auth.uid() or
-  exists (select 1 from public.conversation_members cm2 where cm2.conversation_id = conversation_id and cm2.user_id = auth.uid())
+  user_id = auth.uid()
 );
 create policy "conv_members_insert" on public.conversation_members for insert with check (true);
 create policy "conv_members_update" on public.conversation_members for update using (

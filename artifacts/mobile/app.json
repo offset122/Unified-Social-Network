@@ -1,38 +1,49 @@
 {
   "expo": {
-    "name": "SocialApp",
-    "slug": "socialapp",
+    "name": "Vibe",
+    "slug": "vibe",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
-    "scheme": "socialapp",
+    "scheme": "vibe",
     "userInterfaceStyle": "automatic",
-    "newArchEnabled": false,
+    "newArchEnabled": true,
     "runtimeVersion": {
       "policy": "sdkVersion"
     },
     "splash": {
       "image": "./assets/images/icon.png",
       "resizeMode": "contain",
-      "backgroundColor": "#ffffff"
+      "backgroundColor": "#6366f1"
     },
     "ios": {
       "supportsTablet": false,
       "infoPlist": {
-        "NSUserNotificationUsageDescription": "Allow SocialApp to send you notifications for messages, calls, and activity."
+        "NSUserNotificationUsageDescription": "Allow Vibe to send you notifications for messages, calls, and activity.",
+        "NSCameraUsageDescription": "Vibe needs camera access to take photos and videos for posts and reels.",
+        "NSPhotoLibraryUsageDescription": "Vibe needs photo library access to upload photos and videos.",
+        "NSMicrophoneUsageDescription": "Vibe needs microphone access to record videos."
       },
-      "bundleIdentifier": "com.socialapp.mobile"
+      "bundleIdentifier": "com.vibe.mobile"
     },
     "android": {
-      "package": "com.socialapp.mobile",
+      "package": "com.vibe.mobile",
       "permissions": [
         "android.permission.RECEIVE_BOOT_COMPLETED",
         "android.permission.VIBRATE",
-        "android.permission.POST_NOTIFICATIONS"
+        "android.permission.POST_NOTIFICATIONS",
+        "android.permission.CAMERA",
+        "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.WRITE_EXTERNAL_STORAGE",
+        "android.permission.READ_MEDIA_IMAGES",
+        "android.permission.READ_MEDIA_VIDEO",
+        "android.permission.RECORD_AUDIO"
       ]
     },
     "web": {
-      "favicon": "./assets/images/icon.png"
+      "favicon": "./assets/images/icon.png",
+      "bundler": "metro",
+      "output": "static"
     },
     "plugins": [
       [
@@ -44,7 +55,23 @@
       "expo-font",
       "expo-web-browser",
       "expo-secure-store",
-      "expo-av"
+      "expo-av",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Vibe needs access to your photos to upload images and videos.",
+          "cameraPermission": "Vibe needs camera access to take photos and videos.",
+          "microphonePermission": "Vibe needs microphone access to record videos."
+        }
+      ],
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/images/icon.png",
+          "sound": true,
+          "enableBackgroundFetch": false
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true

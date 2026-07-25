@@ -49,7 +49,14 @@ export default function ChangePasswordScreen() {
 
   return (
     <View style={[styles.container, { backgroundColor: colors.background, paddingBottom: insets.bottom }]}>
-      <Stack.Screen options={{ title: "Change Password" }} />
+      <Stack.Screen options={{ headerShown: false }} />
+      <View style={[styles.customHeader, { paddingTop: insets.top + 8, borderBottomColor: colors.border }]}>
+        <Pressable onPress={() => router.back()} hitSlop={8}>
+          <Feather name="arrow-left" size={22} color={colors.foreground} />
+        </Pressable>
+        <Text style={[styles.customHeaderTitle, { color: colors.foreground }]}>Change Password</Text>
+        <View style={{ width: 30 }} />
+      </View>
       <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
         <View style={[styles.section, { borderColor: colors.border }]}>
           <Text style={[styles.sectionTitle, { color: colors.mutedForeground }]}>CURRENT PASSWORD</Text>
@@ -141,6 +148,8 @@ export default function ChangePasswordScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
+  customHeader: { flexDirection: "row", alignItems: "center", paddingHorizontal: 16, paddingBottom: 12, borderBottomWidth: StyleSheet.hairlineWidth, gap: 12 },
+  customHeaderTitle: { flex: 1, textAlign: "center", fontSize: 17, fontWeight: "700" },
   content: { padding: 16, gap: 20 },
   section: { borderRadius: 14, overflow: "hidden" },
   sectionTitle: { fontSize: 11, fontWeight: "700", letterSpacing: 0.8, marginBottom: 8 },

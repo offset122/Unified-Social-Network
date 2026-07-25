@@ -1,7 +1,7 @@
 import React, { useState, useCallback } from "react";
 import {
   View, Text, StyleSheet, TextInput, FlatList, Pressable,
-  ActivityIndicator, Image,
+  ActivityIndicator, Image, Alert,
 } from "react-native";
 import { Stack, useRouter } from "expo-router";
 import { Feather } from "@expo/vector-icons";
@@ -10,6 +10,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useColors } from "@/hooks/useColors";
 import { useAuth } from "@/lib/auth";
 import { searchUsers, getOrCreateDM, resolveMediaUrl, formatCount, type Profile } from "@/lib/db";
+import { supabase } from "@/lib/supabase";
 
 function Avatar({ name, avatarUrl, size }: { name: string; avatarUrl?: string | null; size: number }) {
   const [err, setErr] = useState(false);
@@ -41,17 +42,28 @@ export default function NewMessageScreen() {
     enabled: query.length >= 1,
   });
 
+  const { data: suggested = [] } = useQuery({
+    queryKey: ["suggested-contacts"],
+    queryFn: async () => {
+      const { data } = await supabase.from("profiles").select("*").order("created_at", { ascending: false }).limit(10);
+      return (data ?? []) as Profile[];
+    },
+    enabled: query.length === 0,
+  });
+
   const handleOpen = useCallback(async (profile: Profile) => {
     if (!user?.id) return;
     setOpening(profile.id);
     try {
       const convoId = await getOrCreateDM(user.id, profile.id);
+      const name = profile.display_name?.trim() || profile.username;
       router.replace({
         pathname: `/chat/${convoId}`,
-        params: { peerName: profile.display_name, peerAvatar: profile.avatar_url ?? "" },
+        params: { peerName: name, peerAvatar: profile.avatar_url ?? "", peerId: profile.id },
       } as any);
-    } catch {
+    } catch (e: any) {
       setOpening(null);
+      Alert.alert("Error", e?.message ?? "Could not start conversation");
     }
   }, [user?.id]);
 
@@ -86,9 +98,14 @@ export default function NewMessageScreen() {
         <View style={styles.center}><ActivityIndicator color={colors.primary} /></View>
       ) : (
         <FlatList
-          data={results as Profile[]}
+          data={query.length >= 1 ? (results as Profile[]) : (suggested as Profile[])}
           keyExtractor={p => p.id}
           contentContainerStyle={{ paddingBottom: insets.bottom + 20 }}
+          ListHeaderComponent={
+            query.length === 0 ? (
+              <Text style={[styles.sectionLabel, { color: colors.mutedForeground }]}>Suggested</Text>
+            ) : null
+          }
           ListEmptyComponent={
             query.length > 0 ? (
               <View style={styles.center}>
@@ -137,6 +154,7 @@ const styles = StyleSheet.create({
     borderRadius: 14, borderWidth: StyleSheet.hairlineWidth,
   },
   searchInput: { flex: 1, fontSize: 15 },
+  sectionLabel: { fontSize: 11, fontWeight: "700", textTransform: "uppercase", letterSpacing: 0.7, paddingHorizontal: 16, paddingVertical: 8 },
   center: { flex: 1, alignItems: "center", justifyContent: "center", paddingVertical: 60, gap: 8 },
   row: {
     flexDirection: "row", alignItems: "center", gap: 12,

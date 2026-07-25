@@ -11,7 +11,8 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useQueryClient } from "@tanstack/react-query";
 import { useColors } from "@/hooks/useColors";
 import { useAuth } from "@/lib/auth";
-import { uploadMedia, createStory } from "@/lib/db";
+import { uploadMedia, resolveMediaUrl } from "@/lib/db";
+import { supabase } from "@/lib/supabase";
 
 export default function CreateStoryScreen() {
   const { user } = useAuth();
@@ -63,7 +64,12 @@ export default function CreateStoryScreen() {
       const isVideo = asset.type === "video";
       const mime = isVideo ? `video/${ext}` : `image/${ext}`;
       const url = await uploadMedia(asset.uri, `story_${Date.now()}.${ext}`, mime);
-      await createStory(user.id, url, isVideo ? "video" : "image");
+      await supabase.from("stories").insert({
+        author_id: user.id,
+        media_url: url,
+        media_type: isVideo ? "video" : "image",
+        expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+      });
       qc.invalidateQueries({ queryKey: ["stories"] });
       router.replace("/(tabs)" as any);
     } catch (e: any) {
@@ -77,12 +83,15 @@ export default function CreateStoryScreen() {
     <View style={[styles.container, { backgroundColor: colors.background }]}>
       <Stack.Screen options={{ headerShown: false }} />
 
-      {/* Header */}
-      <View style={[styles.header, { paddingTop: insets.top + 8, borderBottomColor: colors.border }]}>
-        <Pressable onPress={() => router.back()} hitSlop={8}>
-          <Feather name="x" size={22} color={colors.foreground} />
-        </Pressable>
-        <Text style={[styles.headerTitle, { color: colors.foreground }]}>New Story</Text>
+       {/* Header */}
+       <View style={[styles.header, { paddingTop: insets.top + 8, borderBottomColor: colors.border }]}>
+         <Pressable onPress={() => asset ? Alert.alert("Discard story?", "Your unsaved story will be lost.", [
+           { text: "Keep Editing", style: "cancel" },
+           { text: "Discard", style: "destructive", onPress: () => router.back() },
+         ]) : router.back()} hitSlop={8}>
+           <Feather name="x" size={22} color={colors.foreground} />
+         </Pressable>
+         <Text style={[styles.headerTitle, { color: colors.foreground }]}>New Story</Text>
         <Pressable
           onPress={handleShare}
           disabled={!asset || posting}

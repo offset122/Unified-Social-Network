@@ -1,4 +1,6 @@
 import { getEnvValue, supabase } from "./supabase";
+import 'react-native-get-random-values';
+import { v4 as uuidv4 } from 'uuid';
 
 const SUPABASE_URL = getEnvValue("EXPO_PUBLIC_SUPABASE_URL", "SUPABASE_URL");
 
@@ -58,6 +60,7 @@ export type Message = {
   created_at: string; profiles?: Profile;
   reply_to?: { id: string; content: string; media_type: string | null; sender_id: string } | null;
   shared_post?: { id: string; content: string; media_urls: string[]; media_type: string | null; author_id: string } | null;
+  reactions?: { emoji: string; count: number; selfReacted: boolean }[];
 };
 
 export type Conversation = {
@@ -68,11 +71,21 @@ export type Conversation = {
 
 export type LiveSession = {
   id: string; host_id: string; title: string; viewers_count: number;
-  is_active: boolean; started_at: string; ended_at: string | null; profiles?: Profile;
+  likes_count: number; is_active: boolean; is_camera_on: boolean; is_mic_on: boolean;
+  started_at: string; ended_at: string | null; profiles?: Profile;
 };
 
 export type LiveMessage = {
   id: string; session_id: string; user_id: string; content: string; created_at: string; profiles?: Profile;
+};
+
+export type LiveViewer = {
+  id: string; session_id: string; user_id: string; joined_at: string; profiles?: Profile;
+};
+
+export type LiveJoinRequest = {
+  id: string; session_id: string; requester_id: string;
+  status: "pending" | "accepted" | "rejected"; created_at: string; profiles?: Profile;
 };
 
 export type Notification = {
@@ -84,22 +97,30 @@ export type Notification = {
 // ─── Feed ─────────────────────────────────────────────────────────────────────
 
 export async function fetchFeed(userId: string, cursor?: string): Promise<Post[]> {
-  let q = supabase.from("posts").select("*, profiles(*)").eq("is_reel", false).eq("visibility", "public").order("created_at", { ascending: false }).limit(20);
-  if (cursor) q = q.lt("created_at", cursor);
-  const { data } = await q;
+  const q = supabase.from("posts").select("*, profiles!posts_author_id_fkey(*)").eq("is_reel", false).eq("visibility", "public").order("created_at", { ascending: false }).limit(20);
+  const finalQ = cursor ? q.lt("created_at", cursor) : q;
+  const { data, error } = await finalQ;
+  if (error) throw new Error(`Failed to fetch feed: ${error.message}`);
   if (!data) return [];
-  const liked = await fetchUserLikes(userId, data.map(p => p.id));
-  const saved = await fetchUserSaves(userId, data.map(p => p.id));
+  const ids = data.map(p => p.id);
+  const [liked, saved] = await Promise.all([
+    fetchUserLikes(userId, ids).catch(() => new Set<string>()),
+    fetchUserSaves(userId, ids).catch(() => new Set<string>()),
+  ]);
   return data.map(p => ({ ...p, media_urls: p.media_urls ?? [], is_liked: liked.has(p.id), is_saved: saved.has(p.id) }));
 }
 
 export async function fetchReels(userId: string, cursor?: string): Promise<Post[]> {
-  let q = supabase.from("posts").select("*, profiles(*)").eq("is_reel", true).eq("visibility", "public").order("created_at", { ascending: false }).limit(10);
-  if (cursor) q = q.lt("created_at", cursor);
-  const { data } = await q;
+  const q = supabase.from("posts").select("*, profiles!posts_author_id_fkey(*)").eq("is_reel", true).eq("visibility", "public").order("created_at", { ascending: false }).limit(10);
+  const finalQ = cursor ? q.lt("created_at", cursor) : q;
+  const { data, error } = await finalQ;
+  if (error) throw new Error(`Failed to fetch reels: ${error.message}`);
   if (!data) return [];
-  const liked = await fetchUserLikes(userId, data.map(p => p.id));
-  const saved = await fetchUserSaves(userId, data.map(p => p.id));
+  const ids = data.map(p => p.id);
+  const [liked, saved] = await Promise.all([
+    fetchUserLikes(userId, ids).catch(() => new Set<string>()),
+    fetchUserSaves(userId, ids).catch(() => new Set<string>()),
+  ]);
   return data.map(p => ({ ...p, media_urls: p.media_urls ?? [], is_liked: liked.has(p.id), is_saved: saved.has(p.id) }));
 }
 
@@ -152,7 +173,7 @@ export async function updatePostVisibility(postId: string, authorId: string, vis
 // ─── Comments ─────────────────────────────────────────────────────────────────
 
 export async function fetchComments(postId: string): Promise<Comment[]> {
-  const { data } = await supabase.from("comments").select("*, profiles(*)").eq("post_id", postId).is("parent_id", null).order("created_at", { ascending: true });
+  const { data } = await supabase.from("comments").select("*, profiles!comments_author_id_fkey(*)").eq("post_id", postId).is("parent_id", null).order("created_at", { ascending: true });
   return data ?? [];
 }
 
@@ -176,7 +197,7 @@ export async function fetchUserPosts(userId: string, isReel = false): Promise<Po
 }
 
 export async function fetchSavedPosts(userId: string): Promise<Post[]> {
-  const { data } = await supabase.from("saves").select("posts(*, profiles(*))").eq("user_id", userId).order("created_at", { ascending: false });
+  const { data } = await supabase.from("saves").select("posts(*, profiles!posts_author_id_fkey(*))").eq("user_id", userId).order("created_at", { ascending: false });
   return (data ?? []).map((r: any) => r.posts ? { ...r.posts, media_urls: r.posts.media_urls ?? [] } : null).filter(Boolean) as Post[];
 }
 
@@ -232,13 +253,13 @@ export async function fetchConversations(userId: string): Promise<Conversation[]
   const enriched = await Promise.all((convos as Conversation[]).map(async (convo) => {
     let otherUser: Profile | undefined;
     if (convo.type === "dm") {
-      const { data: members } = await supabase
-        .from("conversation_members")
-        .select("user_id, profiles(*)")
-        .eq("conversation_id", convo.id)
-        .neq("user_id", userId)
-        .limit(1);
-      otherUser = (members?.[0] as any)?.profiles ?? undefined;
+      // Use RPC to get the other member's user_id (bypasses RLS on conversation_members)
+      const { data: otherId } = await supabase
+        .rpc("get_dm_other_user", { p_conversation_id: convo.id, p_user_id: userId });
+      if (otherId) {
+        const { data: p } = await supabase.from("profiles").select("*").eq("id", otherId).single();
+        otherUser = p ?? undefined;
+      }
     }
     const { data: lastMsgData } = await supabase
       .from("messages")
@@ -265,73 +286,34 @@ export async function fetchConversations(userId: string): Promise<Conversation[]
 }
 
 export async function getOrCreateDM(userId: string, otherId: string): Promise<string> {
-  // 1. Try the RPC shortcut first
-  try {
-    const { data: existing } = await supabase.rpc("get_dm_conversation", { user1: userId, user2: otherId });
-    if (existing) return existing as string;
-  } catch {}
-
-  // 2. Manual lookup — find existing shared DM via membership rows
-  const { data: myConvos, error: myErr } = await supabase
-    .from("conversation_members")
-    .select("conversation_id")
-    .eq("user_id", userId);
-
-  if (myErr) {
-    const code = (myErr as any)?.code ?? "";
-    if (code === "42P01" || myErr.message?.includes("does not exist")) {
-      throw new Error("Messaging tables are missing. Please run missing_tables.sql in Supabase.");
+  // Step 1: check for existing DM via security-definer RPC (bypasses RLS)
+  const { data: existing, error: rpcErr } = await supabase.rpc("get_dm_conversation", { user1: userId, user2: otherId });
+  if (rpcErr) {
+    const code = (rpcErr as any)?.code ?? "";
+    if (code === "42883" || rpcErr.message?.includes("does not exist")) {
+      throw new Error("[Step 1] RPC get_dm_conversation missing — run fix_messaging.sql in Supabase.");
     }
-    throw new Error(myErr.message ?? "Could not load conversations");
+    throw new Error(`[Step 1 RPC] ${rpcErr.message}`);
   }
+  if (existing) return existing as string;
 
-  if (myConvos?.length) {
-    const myIds = (myConvos as any[]).map(r => r.conversation_id as string);
-    const { data: shared } = await supabase
-      .from("conversation_members")
-      .select("conversation_id")
-      .eq("user_id", otherId)
-      .in("conversation_id", myIds);
-
-    if (shared?.length) {
-      const sharedIds = (shared as any[]).map(r => r.conversation_id as string);
-      const { data: dmConvo } = await supabase
-        .from("conversations")
-        .select("id")
-        .eq("type", "dm")
-        .in("id", sharedIds)
-        .limit(1)
-        .maybeSingle();
-      if ((dmConvo as any)?.id) return (dmConvo as any).id as string;
-    }
-  }
-
-  // 3. Create a new DM — generate UUID client-side so we never need to
-  //    read the row back through the SELECT RLS policy (which would fail
-  //    because the user isn't in conversation_members yet at that point).
-  const newId = crypto.randomUUID();
-
+  // Step 2: create conversation row
+  const newId = uuidv4();
   const { error: createErr } = await supabase
     .from("conversations")
     .insert({ id: newId, type: "dm", created_by: userId });
-
   if (createErr) {
-    if (createErr.code === "42P01" || createErr.message?.includes("does not exist")) {
-      throw new Error("Messaging tables are missing. Please run missing_tables.sql in Supabase.");
-    }
-    throw new Error(createErr.message ?? "Failed to create conversation");
+    throw new Error(`[Step 2 INSERT conversations] ${createErr.message} (code: ${(createErr as any).code})`);
   }
 
-  // 4. Add both users as members
+  // Step 3: add both members
   const { error: memberErr } = await supabase.from("conversation_members").insert([
     { conversation_id: newId, user_id: userId },
     { conversation_id: newId, user_id: otherId },
   ]);
-
   if (memberErr) {
-    // Roll back the orphaned conversation
     await supabase.from("conversations").delete().eq("id", newId);
-    throw new Error(memberErr.message ?? "Failed to add conversation members");
+    throw new Error(`[Step 3 INSERT members] ${memberErr.message} (code: ${(memberErr as any).code})`);
   }
 
   return newId;
@@ -345,7 +327,7 @@ export async function createGroupConversation(creatorId: string, name: string, m
 }
 
 export async function fetchConversationMembers(conversationId: string): Promise<Profile[]> {
-  const { data } = await supabase.from("conversation_members").select("profiles(*)").eq("conversation_id", conversationId);
+  const { data } = await supabase.from("conversation_members").select("profiles!conversation_members_user_id_fkey(*)").eq("conversation_id", conversationId);
   return (data ?? []).map((r: any) => r.profiles).filter(Boolean);
 }
 
@@ -395,7 +377,7 @@ export async function sendMessage(
   content: string,
   opts?: { mediaUrl?: string; mediaType?: string; replyToId?: string; postId?: string }
 ) {
-  const msgId = crypto.randomUUID();
+  const msgId = uuidv4();
   const { error } = await supabase.from("messages").insert({
     id: msgId,
     conversation_id: conversationId,
@@ -421,6 +403,56 @@ export async function deleteMessage(messageId: string, senderId: string) {
     .eq("id", messageId)
     .eq("sender_id", senderId);
   if (error) throw new Error(error.message);
+}
+
+export async function toggleReaction(messageId: string, userId: string, emoji: string) {
+  // Check if reaction already exists
+  const { data: existing } = await supabase
+    .from("message_reactions")
+    .select("id")
+    .eq("message_id", messageId)
+    .eq("user_id", userId)
+    .eq("emoji", emoji)
+    .maybeSingle();
+
+  if (existing) {
+    const { error } = await supabase
+      .from("message_reactions")
+      .delete()
+      .eq("id", existing.id);
+    if (error) throw new Error(error.message);
+  } else {
+    const { error } = await supabase
+      .from("message_reactions")
+      .insert({ message_id: messageId, user_id: userId, emoji });
+    if (error) throw new Error(error.message);
+  }
+}
+
+export async function fetchReactionsForConversation(
+  messageIds: string[],
+  currentUserId: string
+): Promise<Map<string, { emoji: string; count: number; selfReacted: boolean }[]>> {
+  if (!messageIds.length) return new Map();
+  const { data } = await supabase
+    .from("message_reactions")
+    .select("message_id, user_id, emoji")
+    .in("message_id", messageIds);
+
+  const map = new Map<string, { emoji: string; count: number; selfReacted: boolean }[]>();
+  for (const row of data ?? []) {
+    const r = row as { message_id: string; user_id: string; emoji: string };
+    const existing = map.get(r.message_id) ?? [];
+    const entry = existing.find(e => e.emoji === r.emoji);
+    if (entry) {
+      entry.count++;
+      if (r.user_id === currentUserId) entry.selfReacted = true;
+    } else {
+      existing.push({ emoji: r.emoji, count: 1, selfReacted: r.user_id === currentUserId });
+    }
+    map.set(r.message_id, existing);
+  }
+  return map;
 }
 
 export async function markConversationRead(conversationId: string, userId: string) {
@@ -453,12 +485,33 @@ export async function fetchBlockedUsers(userId: string): Promise<Profile[]> {
 
 // ─── Upload ───────────────────────────────────────────────────────────────────
 
+const ALLOWED_BUCKETS = new Set(["media", "chat-media", "avatars"]);
+const ALLOWED_MIME_TYPES = new Set(["image/jpeg","image/png","image/webp","image/gif","video/mp4","video/quicktime","video/webm","audio/mpeg","audio/ogg","audio/webm","audio/aac","audio/x-m4a","application/pdf"]);
+
 export async function uploadMedia(fileUri: string, fileName: string, mimeType: string, bucket = "media"): Promise<string> {
-  const response = await fetch(fileUri);
-  const blob = await response.blob();
-  const path = `${Date.now()}_${fileName}`;
-  const { error } = await supabase.storage.from(bucket).upload(path, blob, { contentType: mimeType, upsert: true });
-  if (error) throw new Error(error.message);
+  if (!ALLOWED_BUCKETS.has(bucket)) throw new Error("Invalid storage bucket.");
+  if (!ALLOWED_MIME_TYPES.has(mimeType)) throw new Error("Unsupported file type.");
+  const safeFileName = fileName.replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 100);
+  const path = `${Date.now()}_${safeFileName}`;
+
+  // Use expo-file-system to read local file URIs (file:// / content://)
+  // fetch() cannot handle local URIs on Android/iOS
+  if (fileUri.startsWith("file://") || fileUri.startsWith("content://")) {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const FileSystem = require("expo-file-system");
+    const base64 = await FileSystem.readAsStringAsync(fileUri, { encoding: FileSystem.EncodingType.Base64 });
+    const binary = Uint8Array.from(atob(base64), c => c.charCodeAt(0));
+    const { error } = await supabase.storage.from(bucket).upload(path, binary, { contentType: mimeType, upsert: true });
+    if (error) throw new Error(error.message);
+  } else if (fileUri.startsWith("http://") || fileUri.startsWith("https://")) {
+    const response = await fetch(fileUri);
+    const blob = await response.blob();
+    const { error } = await supabase.storage.from(bucket).upload(path, blob, { contentType: mimeType, upsert: true });
+    if (error) throw new Error(error.message);
+  } else {
+    throw new Error("Invalid file URI.");
+  }
+
   return getPublicUrl(bucket, path);
 }
 
@@ -481,20 +534,20 @@ export async function markAllNotificationsRead(userId: string) {
 // ─── Stories ─────────────────────────────────────────────────────────────────
 
 export async function fetchStories(userId: string) {
-  const { data } = await supabase.from("stories").select("*, profiles(*)").gt("expires_at", new Date().toISOString()).order("created_at", { ascending: false }).limit(50);
+  const { data } = await supabase.from("stories").select("*, profiles!stories_author_id_fkey(*)").gt("expires_at", new Date().toISOString()).order("created_at", { ascending: false }).limit(50);
   return data ?? [];
 }
 
 // ─── Live Sessions ────────────────────────────────────────────────────────────
 
 export async function fetchLiveSessions(): Promise<LiveSession[]> {
-  const { data } = await supabase.from("live_sessions").select("*, profiles(*)").eq("is_active", true).order("viewers_count", { ascending: false });
+  const { data } = await supabase.from("live_sessions").select("*, profiles!live_sessions_host_id_fkey(*)").eq("is_active", true).order("viewers_count", { ascending: false });
   return (data ?? []) as LiveSession[];
 }
 
 export async function startLiveSession(hostId: string, title: string): Promise<LiveSession> {
   await supabase.from("live_sessions").update({ is_active: false, ended_at: new Date().toISOString() }).eq("host_id", hostId).eq("is_active", true);
-  const { data, error } = await supabase.from("live_sessions").insert({ host_id: hostId, title, is_active: true, viewers_count: 0 }).select("*, profiles(*)").single();
+  const { data, error } = await supabase.from("live_sessions").insert({ host_id: hostId, title, is_active: true, viewers_count: 0, likes_count: 0, is_camera_on: true, is_mic_on: true }).select("*, profiles!live_sessions_host_id_fkey(*)").single();
   if (error) throw new Error(error.message);
   return data as LiveSession;
 }
@@ -503,15 +556,70 @@ export async function endLiveSession(sessionId: string) {
   await supabase.from("live_sessions").update({ is_active: false, ended_at: new Date().toISOString() }).eq("id", sessionId);
 }
 
+export async function updateLiveSessionState(sessionId: string, updates: { is_camera_on?: boolean; is_mic_on?: boolean }) {
+  const { error } = await supabase.from("live_sessions").update(updates).eq("id", sessionId);
+  if (error) throw new Error(error.message);
+}
+
+export async function likeLiveSession(userId: string, sessionId: string) {
+  await supabase.from("live_likes").upsert({ user_id: userId, session_id: sessionId }).select().maybeSingle();
+  await supabase.rpc("increment_live_likes", { session_id: sessionId });
+}
+
+export async function unlikeLiveSession(userId: string, sessionId: string) {
+  await supabase.from("live_likes").delete().eq("user_id", userId).eq("session_id", sessionId);
+  await supabase.rpc("decrement_live_likes", { session_id: sessionId });
+}
+
+export async function hasLikedLiveSession(userId: string, sessionId: string): Promise<boolean> {
+  if (!userId) return false;
+  const { data } = await supabase.from("live_likes").select("user_id").eq("user_id", userId).eq("session_id", sessionId).maybeSingle();
+  return !!data;
+}
+
 export async function fetchLiveMessages(sessionId: string): Promise<LiveMessage[]> {
-  const { data } = await supabase.from("live_messages").select("*, profiles(*)").eq("session_id", sessionId).order("created_at", { ascending: true }).limit(100);
+  const { data } = await supabase.from("live_messages").select("*, profiles!live_messages_user_id_fkey(*)").eq("session_id", sessionId).order("created_at", { ascending: true }).limit(100);
   return (data ?? []) as LiveMessage[];
 }
 
 export async function sendLiveMessage(sessionId: string, userId: string, content: string): Promise<LiveMessage> {
-  const { data, error } = await supabase.from("live_messages").insert({ session_id: sessionId, user_id: userId, content }).select("*, profiles(*)").single();
+  const { data, error } = await supabase.from("live_messages").insert({ session_id: sessionId, user_id: userId, content }).select("*, profiles!live_messages_user_id_fkey(*)").single();
   if (error) throw new Error(error.message);
   return data as LiveMessage;
+}
+
+export async function fetchLiveViewers(sessionId: string): Promise<LiveViewer[]> {
+  const { data } = await supabase.from("live_viewers").select("*, profiles!live_viewers_user_id_fkey(*)").eq("session_id", sessionId).order("joined_at", { ascending: true });
+  return (data ?? []) as LiveViewer[];
+}
+
+export async function joinLiveSession(userId: string, sessionId: string) {
+  await supabase.rpc("upsert_live_viewer", { p_session_id: sessionId, p_user_id: userId });
+  await supabase.rpc("increment_live_viewers", { session_id: sessionId });
+}
+
+export async function leaveLiveSession(userId: string, sessionId: string) {
+  await supabase.rpc("remove_live_viewer", { p_session_id: sessionId, p_user_id: userId });
+  await supabase.rpc("decrement_live_viewers", { session_id: sessionId });
+}
+
+export async function requestToJoinLive(userId: string, sessionId: string) {
+  const { data, error } = await supabase.from("live_join_requests").insert({ session_id: sessionId, requester_id: userId, status: "pending" }).select().single();
+  if (error) throw new Error(error.message);
+  return data as LiveJoinRequest;
+}
+
+export async function fetchJoinRequests(sessionId: string): Promise<LiveJoinRequest[]> {
+  const { data } = await supabase.from("live_join_requests").select("*, profiles!live_join_requests_requester_id_fkey(*)").eq("session_id", sessionId).eq("status", "pending").order("created_at", { ascending: true });
+  return (data ?? []) as LiveJoinRequest[];
+}
+
+export async function acceptJoinRequest(requestId: string, sessionId: string) {
+  await supabase.rpc("accept_join_request", { p_request_id: requestId, p_session_id: sessionId });
+}
+
+export async function rejectJoinRequest(requestId: string, sessionId: string) {
+  await supabase.rpc("reject_join_request", { p_request_id: requestId, p_session_id: sessionId });
 }
 
 // ─── AI (OpenRouter) ─────────────────────────────────────────────────────────
@@ -523,7 +631,7 @@ async function callAI(system: string, userMsg: string, maxTokens = 150): Promise
     const resp = await fetch("https://openrouter.ai/api/v1/chat/completions", {
       method: "POST",
       headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ model: "openrouter/auto:free", messages: [{ role: "system", content: system }, { role: "user", content: userMsg }], max_tokens: maxTokens }),
+      body: JSON.stringify({ model: "google/gemma-4-26b-a4b-it:free", messages: [{ role: "system", content: system }, { role: "user", content: userMsg }], max_tokens: maxTokens }),
     });
     if (!resp.ok) return "";
     const json = await resp.json() as any;
@@ -576,21 +684,111 @@ export async function generateProfileInsights(stats: { totalPosts: number; total
 export async function chatWithAI(messages: { role: "user" | "assistant"; content: string }[]): Promise<string> {
   const key = getEnvValue("EXPO_PUBLIC_OPENROUTER_KEY");
   if (!key) return "Sorry, AI is not available right now.";
+  const body = {
+    messages: [
+      { role: "system", content: "You are a helpful, friendly AI assistant built into a social media app. Keep responses concise and engaging." },
+      ...messages,
+    ],
+    max_tokens: 300,
+  };
+  const models = ["google/gemma-4-26b-a4b-it:free", "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free"];
+  for (const model of models) {
+    try {
+      const resp = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json", "HTTP-Referer": "https://vibe.ai", "X-Title": "Vibe AI" },
+        body: JSON.stringify({ ...body, model }),
+      });
+      if (!resp.ok) continue;
+      const json = await resp.json() as any;
+      const content = json.choices?.[0]?.message?.content?.trim();
+      if (content) return content;
+    } catch {}
+  }
+  return "Sorry, something went wrong. Try again.";
+}
+
+export async function adjustAITone(text: string, tone: "formal" | "casual" | "funny" | "flirty"): Promise<string> {
+  const prompts: Record<string, string> = {
+    formal: "Rewrite the following message in a polite, professional tone. Keep it short.",
+    casual: "Rewrite the following message in a chill, everyday tone. Keep it short.",
+    funny: "Rewrite the following message in a playful, humorous tone. Keep it short.",
+    flirty: "Rewrite the following message in a light, flirty tone. Keep it short.",
+  };
+  return callAI(prompts[tone] || prompts.casual, `Message: "${text}"`, 120);
+}
+
+export async function summarizeAIChat(messages: { role: string; content: string }[]): Promise<string> {
+  const convo = messages.slice(-20).map(m => `${m.role}: ${m.content}`).join("\n");
+  return callAI("Summarize the following chat in 1-2 short sentences.", `Chat:\n${convo}`, 120);
+}
+
+export async function translateAIText(text: string, targetLang: string): Promise<string> {
+  return callAI(`Translate the following text to ${targetLang}. Return ONLY the translated text.`, text, 200);
+}
+
+export async function generateAIAltText(imageUri: string, caption?: string): Promise<string> {
+  return callAI("You describe images for accessibility. Write a concise alt-text description under 125 chars.",
+    `Image context: ${caption || "user uploaded image"}. Describe this image for screen readers.`, 100);
+}
+
+export async function summarizeAIComments(comments: { content: string }[]): Promise<string> {
+  if (!comments.length) return "No comments yet.";
+  const text = comments.slice(0, 50).map(c => c.content).join("\n");
+  return callAI("Summarize these comments in 1-2 sentences. Focus on the main sentiment and topics.",
+    `Comments:\n${text}`, 150);
+}
+
+export async function analyzeAISentiment(text: string): Promise<{ label: string; emoji: string }> {
+  const out = await callAI('Return ONLY a JSON object: {"label":"positive|neutral|negative","emoji":"😀|😐|😞"}', `Text: "${text}"`, 60);
   try {
-    const resp = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-      method: "POST",
-      headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model: "openrouter/auto:free",
-        messages: [
-          { role: "system", content: "You are a helpful, friendly AI assistant built into a social media app. Keep responses concise and engaging." },
-          ...messages,
-        ],
-        max_tokens: 300,
-      }),
-    });
-    if (!resp.ok) return "Sorry, something went wrong. Try again.";
-    const json = await resp.json() as any;
-    return json.choices?.[0]?.message?.content?.trim() ?? "Sorry, I couldn't respond.";
-  } catch { return "Sorry, something went wrong. Try again."; }
+    const parsed = JSON.parse(out);
+    if (parsed?.label && parsed?.emoji) return parsed;
+  } catch {}
+  return { label: "neutral", emoji: "😐" };
+}
+
+export async function generateAIContentStrategy(stats: { totalPosts: number; totalLikes: number; totalViews: number; imagePosts: number; videoPosts: number; textPosts: number }): Promise<string> {
+  return callAI("You are a social media growth coach. Give 2-3 short, actionable insights based on post stats. Be specific and encouraging. Under 250 chars total.",
+    `Stats: ${stats.totalPosts} posts, ${stats.totalLikes} likes, ${stats.totalViews} views, ${stats.imagePosts} image posts, ${stats.videoPosts} video posts, ${stats.textPosts} text posts.`, 200);
+}
+
+export async function generateAIBioRefresh(displayName: string, recentTopics: string[]): Promise<string> {
+  const topics = recentTopics.slice(0, 5).join(", ") || "lifestyle, tech, travel";
+  return callAI("You are a social media profile writer. Write a catchy, authentic bio under 120 chars based on the user's name and recent topics. No quotes in output.",
+    `Name: ${displayName}. Recent topics: ${topics}.`, 120);
+}
+
+export async function generateAIOnboardingTip(userName: string): Promise<string> {
+  return callAI("You are a friendly social media onboarding coach. Give a short, specific tip for a new user. One sentence.",
+    `New user: ${userName || "there"}.`, 80);
+}
+
+export async function generateAINotificationDigest(notifications: { type: string; profiles?: { display_name?: string } | null }[]): Promise<string> {
+  if (!notifications.length) return "You're all caught up! No new notifications.";
+  const counts: Record<string, number> = {};
+  const names: Record<string, string> = {};
+  for (const n of notifications) {
+    counts[n.type] = (counts[n.type] || 0) + 1;
+    if (n.profiles?.display_name && !names[n.type]) names[n.type] = n.profiles.display_name;
+  }
+  const parts = Object.entries(counts).map(([type, count]) => {
+    const who = names[type] ? ` from ${names[type]}` : "";
+    return `${count} ${type}${who}`;
+  }).slice(0, 4);
+  return callAI("Rewrite this notification summary in a friendly, concise way. Under 150 chars.",
+    `Notifications: ${parts.join(", ")}.`, 120);
+}
+
+export async function generateAISemanticSearch(query: string): Promise<string[]> {
+  const text = await callAI('Suggest 3 natural-language search queries related to this topic for a social media app. Return ONLY a JSON array of strings.', `Topic: "${query}"`, 80);
+  try { const a = JSON.parse(text); return Array.isArray(a) ? a.slice(0, 3) : []; } catch { return []; }
+}
+
+export async function generateAITrendingInsights(tag: string): Promise<string> {
+  return callAI("You are a social media trend analyst. Explain why this hashtag might be trending in 1-2 short sentences. Be informative but concise.", `Hashtag: ${tag}`, 120);
+}
+
+export async function generateAIVideoHook(context: string): Promise<string> {
+  return callAI("You are a social media video creator. Suggest an attention-grabbing hook/title for a short video reel. Under 80 chars.", `Video context: ${context || "lifestyle/social video"}`, 80);
 }

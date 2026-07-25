@@ -11,6 +11,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useColors } from "@/hooks/useColors";
 import { useAuth } from "@/lib/auth";
 import { searchUsers, createGroupConversation, resolveMediaUrl, type Profile } from "@/lib/db";
+import { supabase } from "@/lib/supabase";
 
 function Avatar({ name, avatarUrl, size }: { name: string; avatarUrl?: string | null; size: number }) {
   const [err, setErr] = useState(false);
@@ -37,6 +38,7 @@ export default function CreateGroupScreen() {
   const [name, setName] = useState("");
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState<Profile[]>([]);
+  const [groupIcon, setGroupIcon] = useState("📢");
   const [creating, setCreating] = useState(false);
   const [step, setStep] = useState<"members" | "name">("members");
 
@@ -56,13 +58,10 @@ export default function CreateGroupScreen() {
 
   const handleCreate = async () => {
     if (!name.trim() || !user?.id) return;
-    if (selected.length === 0) {
-      Alert.alert("Add members", "Select at least one person to add to the group.");
-      return;
-    }
     setCreating(true);
     try {
       const convoId = await createGroupConversation(user.id, name.trim(), selected.map(p => p.id));
+      await supabase.from("conversations").update({ avatar_url: groupIcon }).eq("id", convoId);
       router.replace({ pathname: `/chat/${convoId}`, params: { peerName: name.trim() } } as any);
     } catch (e: any) {
       Alert.alert("Error", e.message);
@@ -93,6 +92,18 @@ export default function CreateGroupScreen() {
               ? <ActivityIndicator color="#fff" size="small" />
               : <Text style={{ color: "#fff", fontWeight: "700" }}>Create</Text>}
           </Pressable>
+        </View>
+
+        {/* Group avatar picker */}
+        <View style={{ paddingHorizontal: 20, marginTop: 16 }}>
+          <Text style={[styles.label, { color: colors.mutedForeground }]}>Group Icon</Text>
+          <View style={styles.iconRow}>
+            {["📢", "👥", "💬", "🎉", "🔥", "⭐"].map(emoji => (
+              <Pressable key={emoji} onPress={() => setGroupIcon(emoji)} style={[styles.iconBtn, groupIcon === emoji && { backgroundColor: colors.primary }]}>
+                <Text style={styles.iconText}>{emoji}</Text>
+              </Pressable>
+            ))}
+          </View>
         </View>
 
         {/* Selected members preview */}
@@ -141,7 +152,7 @@ export default function CreateGroupScreen() {
           }}
           style={[styles.actionBtn, { backgroundColor: selected.length > 0 ? colors.primary : colors.muted }]}
         >
-          <Text style={{ color: "#fff", fontWeight: "700" }}>Next</Text>
+          <Text style={{ color: "#fff", fontWeight: "700" }}>Next ({selected.length})</Text>
         </Pressable>
       </View>
 
@@ -193,24 +204,27 @@ export default function CreateGroupScreen() {
               </View>
             ) : null
           }
-          renderItem={({ item: p }) => (
-            <Pressable
-              onPress={() => toggle(p)}
-              style={[styles.userRow, { borderBottomColor: colors.border }]}
-            >
-              <Avatar name={p.display_name} avatarUrl={p.avatar_url} size={44} />
-              <View style={{ flex: 1 }}>
-                <Text style={[styles.userName, { color: colors.foreground }]}>{p.display_name}</Text>
-                <Text style={[styles.userHandle, { color: colors.mutedForeground }]}>@{p.username}</Text>
-              </View>
-              <View style={[
-                styles.checkCircle,
-                { borderColor: colors.primary, backgroundColor: "transparent" },
-              ]}>
-                <Feather name="check" size={14} color={colors.primary} style={{ opacity: 0.15 }} />
-              </View>
-            </Pressable>
-          )}
+          renderItem={({ item: p }) => {
+            const isSelected = selected.find(s => s.id === p.id);
+            return (
+              <Pressable
+                onPress={() => toggle(p)}
+                style={[styles.userRow, { borderBottomColor: colors.border }]}
+              >
+                <Avatar name={p.display_name} avatarUrl={p.avatar_url} size={44} />
+                <View style={{ flex: 1 }}>
+                  <Text style={[styles.userName, { color: colors.foreground }]}>{p.display_name}</Text>
+                  <Text style={[styles.userHandle, { color: colors.mutedForeground }]}>@{p.username}</Text>
+                </View>
+                <View style={[
+                  styles.checkCircle,
+                  { borderColor: colors.primary, backgroundColor: isSelected ? colors.primary : "transparent" },
+                ]}>
+                  {isSelected && <Feather name="check" size={14} color="#fff" />}
+                </View>
+              </Pressable>
+            );
+          }}
         />
       )}
     </View>
@@ -254,4 +268,7 @@ const styles = StyleSheet.create({
   },
   label: { fontSize: 12, fontWeight: "700", textTransform: "uppercase", letterSpacing: 0.6, marginBottom: 8 },
   input: { borderWidth: 1.5, borderRadius: 14, paddingHorizontal: 14, paddingVertical: 13, fontSize: 15 },
+  iconRow: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
+  iconBtn: { width: 44, height: 44, borderRadius: 12, borderWidth: 1, alignItems: "center", justifyContent: "center" },
+  iconText: { fontSize: 22 },
 });
