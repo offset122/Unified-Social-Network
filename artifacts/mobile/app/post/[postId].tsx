@@ -13,21 +13,12 @@ import { LinearGradient } from "expo-linear-gradient";
 import { useColors } from "@/hooks/useColors";
 import { useAuth } from "@/lib/auth";
 import {
-  fetchComments, createComment, likePost, unlikePost, savePost, unsavePost,
+  fetchComments, createComment, likePost, unlikePost, savePost, unsavePost, fetchPost,
   resolveMediaUrl, timeAgo, formatCount, summarizeAIComments, analyzeAISentiment,
   type Comment, type Profile,
 } from "@/lib/db";
 import AICommentSuggestions from "@/components/ai/AICommentSuggestions";
 import { supabase } from "@/lib/supabase";
-
-async function fetchPost(postId: string) {
-  const { data } = await supabase
-    .from("posts")
-    .select("*, profiles(*)")
-    .eq("id", postId)
-    .single();
-  return data;
-}
 
 function Avatar({ name, avatarUrl, size }: { name: string; avatarUrl?: string | null; size: number }) {
   const [err, setErr] = useState(false);

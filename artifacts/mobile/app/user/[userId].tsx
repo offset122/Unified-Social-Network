@@ -16,7 +16,7 @@ import { useColors } from "@/hooks/useColors";
 import { supabase } from "@/lib/supabase";
 import { Share } from "react-native";
 import {
-  fetchProfile, fetchUserPosts, followUser, unfollowUser, isFollowing,
+  fetchProfile, fetchUserPosts, fetchPost, followUser, unfollowUser, isFollowing,
   blockUser, getOrCreateDM, resolveMediaUrl, formatCount, timeAgo,
   deletePost, updatePostVisibility,
   type Post, type Profile,
@@ -388,7 +388,7 @@ export default function UserProfileScreen() {
 
   const { data: posts = [] } = useQuery({
     queryKey: ["user-posts", userId, postTab],
-    queryFn: () => fetchUserPosts(userId as string, postTab === "reels"),
+    queryFn: () => fetchUserPosts(userId as string, user?.id, postTab === "reels"),
     enabled: !!userId,
   });
 

@@ -13,7 +13,7 @@ import GuestScreen from "@/components/GuestScreen";
 import { useColors } from "@/hooks/useColors";
 import { useColorScheme } from "react-native";
 import {
-  fetchProfile, fetchUserPosts, fetchSavedPosts, resolveMediaUrl,
+  fetchProfile, fetchUserPosts, fetchSavedPosts, fetchPost, resolveMediaUrl,
   formatCount, timeAgo, deletePost, generateProfileInsights, generateAIBioRefresh,
   type Post, type Profile,
 } from "@/lib/db";
@@ -234,7 +234,7 @@ export default function ProfileScreen() {
     queryKey: ["my-posts", user?.id, postTab],
     queryFn: () => {
       if (postTab === "saved") return fetchSavedPosts(user?.id ?? "");
-      return fetchUserPosts(user?.id ?? "", postTab === "reels");
+      return fetchUserPosts(user?.id ?? "", user?.id, postTab === "reels");
     },
     enabled: !!user?.id,
   });

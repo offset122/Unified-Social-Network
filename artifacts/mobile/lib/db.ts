@@ -191,9 +191,23 @@ export async function fetchProfile(userId: string): Promise<Profile | null> {
   return data;
 }
 
-export async function fetchUserPosts(userId: string, isReel = false): Promise<Post[]> {
-  const { data } = await supabase.from("posts").select("*").eq("author_id", userId).eq("is_reel", isReel).order("created_at", { ascending: false });
+export async function fetchUserPosts(authorId: string, viewerId?: string, isReel = false): Promise<Post[]> {
+  let query = supabase.from("posts").select("*").eq("author_id", authorId).eq("is_reel", isReel);
+  if (viewerId && viewerId !== authorId) {
+    query = query.eq("visibility", "public");
+  }
+  const { data } = await query.order("created_at", { ascending: false });
   return (data ?? []).map(p => ({ ...p, media_urls: p.media_urls ?? [] }));
+}
+
+export async function fetchPost(postId: string): Promise<Post | null> {
+  const { data, error } = await supabase
+    .from("posts")
+    .select("*, profiles!posts_author_id_fkey(*)")
+    .eq("id", postId)
+    .single();
+  if (error) throw new Error(error.message);
+  return data;
 }
 
 export async function fetchSavedPosts(userId: string): Promise<Post[]> {
@@ -624,7 +638,7 @@ export async function rejectJoinRequest(requestId: string, sessionId: string) {
 
 // ─── AI (OpenRouter) ─────────────────────────────────────────────────────────
 
-async function callAI(system: string, userMsg: string, maxTokens = 150): Promise<string> {
+export async function callAI(system: string, userMsg: string, maxTokens = 150): Promise<string> {
   const key = getEnvValue("EXPO_PUBLIC_OPENROUTER_KEY");
   if (!key) return "";
   try {
