@@ -1,0 +1,38 @@
+diff --git a/build/ExpoFontUtils.web.js b/build/ExpoFontUtils.web.js
+index bbd07b7b3ec87cec48bbf6829d77f1b532f07e90..ee06c39fed7534c278ba3e2f040a8fb90dde842c 100644
+--- a/build/ExpoFontUtils.web.js
++++ b/build/ExpoFontUtils.web.js
+@@ -1,8 +1,6 @@
+-import { NativeModule, registerWebModule, UnavailabilityError } from 'expo-modules-core';
+-class ExpoFontUtils extends NativeModule {
+-    async renderToImageAsync(glyphs, options) {
+-        throw new UnavailabilityError('expo-font', 'renderToImageAsync');
+-    }
++class ExpoFontUtils {
++  async renderToImageAsync(glyphs, options) {
++    throw new (require('expo-modules-core').UnavailabilityError || class extends Error {})('expo-font', 'renderToImageAsync');
++  }
+ }
+-export default registerWebModule(ExpoFontUtils, 'ExpoFontUtils');
+-//# sourceMappingURL=ExpoFontUtils.web.js.map
+\ No newline at end of file
++export default ExpoFontUtils;
+
+diff --git a/build/ExpoFontLoader.web.js b/build/ExpoFontLoader.web.js
+index 8a9b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b..1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d 100644
+--- a/build/ExpoFontLoader.web.js
++++ b/build/ExpoFontLoader.web.js
+@@ -1,5 +1,4 @@
+-import { CodedError, registerWebModule } from 'expo-modules-core';
++import { CodedError } from 'expo-modules-core';
+ import FontObserver from 'fontfaceobserver';
+ import { FontDisplay } from './Font.types';
+@@ -148,7 +147,7 @@ const toExport = isServer
+     ? ExpoFontLoader
+     : // @ts-expect-error: registerWebModule calls `new` on the module implementation.
+         // Normally that'd be a class but that doesn't work on server, so we use a function instead.
+-        // TS doesn't like that but we don't need it to be a class.
+-        registerWebModule(createExpoFontLoader, 'ExpoFontLoader');
++        // TS doesn't like that but we don't need it to be a class.
++        createExpoFontLoader;
+ export default toExport;
