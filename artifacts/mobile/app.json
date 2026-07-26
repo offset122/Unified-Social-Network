@@ -1,7 +1,7 @@
 {
   "expo": {
-    "name": "Vibe",
-    "slug": "vibe",
+    "name":"socialapp",
+    "slug": "socialapp",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
@@ -24,10 +24,10 @@
         "NSPhotoLibraryUsageDescription": "Vibe needs photo library access to upload photos and videos.",
         "NSMicrophoneUsageDescription": "Vibe needs microphone access to record videos."
       },
-      "bundleIdentifier": "com.vibe.mobile"
+      "bundleIdentifier": "com.socialapp.mobile"
     },
     "android": {
-      "package": "com.vibe.mobile",
+      "package": "com.socialapp.mobile",
       "permissions": [
         "android.permission.RECEIVE_BOOT_COMPLETED",
         "android.permission.VIBRATE",
