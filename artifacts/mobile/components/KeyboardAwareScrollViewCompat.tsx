@@ -14,7 +14,7 @@ export function KeyboardAwareScrollViewCompat({
   if (Platform.OS === "web") {
     return (
       <ScrollView keyboardShouldPersistTaps={keyboardShouldPersistTaps} {...props}>
-        {children}
+        {children as any}
       </ScrollView>
     );
   }
@@ -23,7 +23,7 @@ export function KeyboardAwareScrollViewCompat({
       keyboardShouldPersistTaps={keyboardShouldPersistTaps}
       {...props}
     >
-      {children}
+      {children as any}
     </KeyboardAwareScrollView>
   );
 }
