@@ -1,0 +1,8 @@
+[build]
+  base = "."
+  publish = "artifacts/mobile/dist"
+  command = "pnpm --filter @workspace/mobile... run build:web"
+
+[build.environment]
+  NODE_ENV = "production"
+  NODE_OPTIONS = "--require ./artifacts/mobile/polyfills.js"
