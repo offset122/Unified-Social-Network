@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import { View, Text, Pressable, StyleSheet, ScrollView, Switch, Alert, Linking } from "react-native";
 import { Stack, useRouter } from "expo-router";
 import { Feather } from "@expo/vector-icons";
+import Constants from "expo-constants";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useColors } from "@/hooks/useColors";
 import { useTheme } from "@/lib/theme";
@@ -43,7 +44,9 @@ export default function SettingsScreen() {
                   onPress: async () => {
                     try {
                       if (user?.id) {
-                        await supabase.from("profiles").delete().eq("id", user.id);
+                        // Deletes profile + all owned rows server-side, then signs out
+                        const { error } = await supabase.rpc("delete_user");
+                        if (error) throw error;
                         await supabase.auth.signOut();
                       }
                     } catch (e: any) {
@@ -143,17 +146,20 @@ export default function SettingsScreen() {
         <View style={styles.section}>
           <Text style={[styles.sectionLabel, { color: colors.mutedForeground }]}>Support</Text>
           <View style={[styles.group, { backgroundColor: colors.card, borderColor: colors.border }]}>
-            <Pressable onPress={() => Linking.openURL("https://vibe.example.com/help")}
+            <Pressable onPress={() => Linking.openURL("https://vibe.app/help")}
               style={[styles.row, { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border }]}>
               <Feather name="help-circle" size={17} color="#7c3aed" />
               <Text style={[styles.rowLabel, { color: colors.foreground }]}>Help & Support</Text>
               <Feather name="external-link" size={16} color={colors.mutedForeground} style={{ marginLeft: "auto" }} />
             </Pressable>
-            <Pressable onPress={() => Alert.alert("Vibe", "Version 2.0.0\n\nBuilt with React Native & Expo.\n\nTerms: vibe.example.com/terms\nPrivacy: vibe.example.com/privacy")}
+            <Pressable onPress={() => {
+              const v = Constants.expoConfig?.version ?? "1.0.0";
+              Alert.alert("Vibe", `Version ${v}\n\nBuilt with React Native & Expo.\n\nTerms: vibe.app/terms\nPrivacy: vibe.app/privacy`);
+            }}
               style={styles.row}>
               <Feather name="info" size={17} color="#7c3aed" />
               <Text style={[styles.rowLabel, { color: colors.foreground }]}>About</Text>
-              <Text style={{ color: colors.mutedForeground, fontSize: 13, marginLeft: "auto" }}>v2.0.0</Text>
+              <Text style={{ color: colors.mutedForeground, fontSize: 13, marginLeft: "auto" }}>v{Constants.expoConfig?.version ?? "1.0.0"}</Text>
             </Pressable>
           </View>
         </View>

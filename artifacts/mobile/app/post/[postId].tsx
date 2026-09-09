@@ -15,6 +15,7 @@ import { useAuth } from "@/lib/auth";
 import {
   fetchComments, createComment, likePost, unlikePost, savePost, unsavePost, fetchPost,
   resolveMediaUrl, timeAgo, formatCount, summarizeAIComments, analyzeAISentiment,
+  deletePost, updatePostVisibility, createReport,
   type Comment, type Profile,
 } from "@/lib/db";
 import AICommentSuggestions from "@/components/ai/AICommentSuggestions";
@@ -99,6 +100,72 @@ export default function PostDetailScreen() {
     await fn(user.id, post.id);
   };
 
+  const isOwnPost = !!user?.id && post?.author_id === user.id;
+
+  const handleOwnerMenu = () => {
+    if (!post || !user?.id) return;
+    Alert.alert("Post Options", undefined, [
+      {
+        text: "Change Visibility",
+        onPress: () => {
+          Alert.alert("Set Visibility", "Who can see this post?", [
+            { text: "Public", onPress: () => changeVisibility("public") },
+            { text: "Followers Only", onPress: () => changeVisibility("followers") },
+            { text: "Private", onPress: () => changeVisibility("private") },
+            { text: "Cancel", style: "cancel" },
+          ]);
+        },
+      },
+      {
+        text: "Delete Post", style: "destructive",
+        onPress: () => {
+          Alert.alert("Delete Post", "This cannot be undone.", [
+            { text: "Cancel", style: "cancel" },
+            {
+              text: "Delete", style: "destructive",
+              onPress: async () => {
+                try {
+                  await deletePost(post.id, user.id);
+                  qc.invalidateQueries({ queryKey: ["feed"] });
+                  qc.invalidateQueries({ queryKey: ["my-posts"] });
+                  router.back();
+                } catch { Alert.alert("Error", "Could not delete post"); }
+              },
+            },
+          ]);
+        },
+      },
+      { text: "Cancel", style: "cancel" },
+    ]);
+  };
+
+  const changeVisibility = async (v: "public" | "followers" | "private") => {
+    if (!post || !user?.id) return;
+    try {
+      await updatePostVisibility(post.id, user.id, v);
+      qc.invalidateQueries({ queryKey: ["post", postId] });
+      qc.invalidateQueries({ queryKey: ["feed"] });
+    } catch { Alert.alert("Error", "Could not update visibility"); }
+  };
+
+  const handleReportMenu = () => {
+    if (!post || !user?.id) return;
+    Alert.alert("Report Post", "Why are you reporting this post?", [
+      { text: "Spam", onPress: () => submitReport("spam") },
+      { text: "Inappropriate", onPress: () => submitReport("inappropriate") },
+      { text: "Harassment", onPress: () => submitReport("harassment") },
+      { text: "Cancel", style: "cancel" },
+    ]);
+  };
+
+  const submitReport = async (reason: "spam" | "inappropriate" | "harassment" | "other") => {
+    if (!post || !user?.id) return;
+    try {
+      await createReport(user.id, post.id, reason);
+      Alert.alert("Reported", "Thank you. Our moderation team will review this.");
+    } catch { Alert.alert("Error", "Could not submit report."); }
+  };
+
   const submitComment = async () => {
     if (!commentText.trim() || !user?.id || !post) return;
     setSubmitting(true);
@@ -158,7 +225,17 @@ export default function PostDetailScreen() {
       <View style={[styles.header, { paddingTop: insets.top + 8, borderBottomColor: colors.border }]}>
         <Pressable onPress={() => router.back()} hitSlop={8}><Feather name="arrow-left" size={22} color={colors.foreground} /></Pressable>
         <Text style={[styles.headerTitle, { color: colors.foreground }]}>Post</Text>
-        <View style={{ width: 30 }} />
+        {user?.id ? (
+          isOwnPost ? (
+            <Pressable onPress={handleOwnerMenu} hitSlop={8}>
+              <Feather name="more-horizontal" size={22} color={colors.foreground} />
+            </Pressable>
+          ) : (
+            <Pressable onPress={handleReportMenu} hitSlop={8}>
+              <Feather name="flag" size={20} color={colors.mutedForeground} />
+            </Pressable>
+          )
+        ) : <View style={{ width: 24 }} />}
       </View>
 
       <ScrollView contentContainerStyle={{ paddingBottom: insets.bottom + 80 }}>
@@ -223,7 +300,7 @@ export default function PostDetailScreen() {
           <Pressable style={styles.actionBtn} onPress={async () => {
             try {
               setSharesCount(s => s + 1);
-              const result = await Share.share({ message: post.content ? `${post.content} — shared via Vibe` : "Check this out on Vibe!" });
+              const result = await Share.share({ message: post.content ? `${post.content} — https://vibe.app/post/${post.id}` : `Check this out on Vibe! https://vibe.app/post/${post.id}` });
               if (result.action === Share.sharedAction) {
                 if (user?.id && post?.id) {
                   await supabase.from("posts").update({ shares_count: (post.shares_count ?? 0) + 1 }).eq("id", post.id);

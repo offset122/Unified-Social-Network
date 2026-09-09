@@ -36,7 +36,8 @@ export function formatCount(n: number): string {
 
 export type Profile = {
   id: string; username: string; display_name: string; bio: string | null;
-  avatar_url: string | null; cover_url: string | null; followers_count: number;
+  avatar_url: string | null; cover_url: string | null; website: string | null;
+  location: string | null; pronouns: string | null; followers_count: number;
   following_count: number; posts_count: number; is_admin: boolean; is_banned: boolean; created_at: string;
 };
 
@@ -96,8 +97,20 @@ export type Notification = {
 
 // ─── Feed ─────────────────────────────────────────────────────────────────────
 
+// Ids of users the given user has blocked (and who blocked them)
+export async function fetchBlockedIds(userId: string): Promise<string[]> {
+  if (!userId) return [];
+  const [{ data: blocked }, { data: blockedBy }] = await Promise.all([
+    supabase.from("blocks").select("blocked_id").eq("blocker_id", userId),
+    supabase.from("blocks").select("blocker_id").eq("blocked_id", userId),
+  ]);
+  return [...(blocked ?? []).map(r => r.blocked_id), ...(blockedBy ?? []).map(r => r.blocker_id)];
+}
+
 export async function fetchFeed(userId: string, cursor?: string): Promise<Post[]> {
-  const q = supabase.from("posts").select("*, profiles!posts_author_id_fkey(*)").eq("is_reel", false).eq("visibility", "public").order("created_at", { ascending: false }).limit(20);
+  const blockedIds = await fetchBlockedIds(userId);
+  let q = supabase.from("posts").select("*, profiles!posts_author_id_fkey(*)").eq("is_reel", false).eq("visibility", "public").order("created_at", { ascending: false }).limit(20);
+  if (blockedIds.length) q = q.not("author_id", "in.", `(${blockedIds.join(",")})`);
   const finalQ = cursor ? q.lt("created_at", cursor) : q;
   const { data, error } = await finalQ;
   if (error) throw new Error(`Failed to fetch feed: ${error.message}`);
@@ -111,7 +124,9 @@ export async function fetchFeed(userId: string, cursor?: string): Promise<Post[]
 }
 
 export async function fetchReels(userId: string, cursor?: string): Promise<Post[]> {
-  const q = supabase.from("posts").select("*, profiles!posts_author_id_fkey(*)").eq("is_reel", true).eq("visibility", "public").order("created_at", { ascending: false }).limit(10);
+  const blockedIds = await fetchBlockedIds(userId);
+  let q = supabase.from("posts").select("*, profiles!posts_author_id_fkey(*)").eq("is_reel", true).eq("visibility", "public").order("created_at", { ascending: false }).limit(10);
+  if (blockedIds.length) q = q.not("author_id", "in.", `(${blockedIds.join(",")})`);
   const finalQ = cursor ? q.lt("created_at", cursor) : q;
   const { data, error } = await finalQ;
   if (error) throw new Error(`Failed to fetch reels: ${error.message}`);
@@ -241,9 +256,53 @@ export async function isFollowing(followerId: string, followingId: string): Prom
 
 // ─── Search ───────────────────────────────────────────────────────────────────
 
-export async function searchUsers(query: string): Promise<Profile[]> {
+export async function searchUsers(query: string, viewerId?: string): Promise<Profile[]> {
   const { data } = await supabase.from("profiles").select("*").or(`username.ilike.%${query}%,display_name.ilike.%${query}%`).limit(20);
-  return data ?? [];
+  let results = (data ?? []) as Profile[];
+  if (viewerId && results.length) {
+    const blockedIds = new Set(await fetchBlockedIds(viewerId));
+    if (blockedIds.size) results = results.filter(p => !blockedIds.has(p.id));
+  }
+  return results;
+}
+
+// ─── Reports (moderation) ────────────────────────────────────────────────────
+
+export type Report = {
+  id: string; reporter_id: string; post_id: string | null; message_id: string | null;
+  reason: "spam" | "inappropriate" | "harassment" | "other"; details: string | null;
+  status: "pending" | "resolved" | "dismissed"; created_at: string;
+  reporter?: Profile; post?: Post | null;
+};
+
+export async function createReport(
+  reporterId: string,
+  postId: string,
+  reason: "spam" | "inappropriate" | "harassment" | "other",
+  details?: string,
+) {
+  const { error } = await supabase.from("reports").insert({
+    reporter_id: reporterId, post_id: postId, reason, details: details ?? null,
+  });
+  if (error) throw new Error(error.message);
+}
+
+export async function fetchReports(): Promise<Report[]> {
+  const { data, error } = await supabase
+    .from("reports")
+    .select("*, reporter:reporter_id(*), post:post_id(*)")
+    .eq("status", "pending")
+    .order("created_at", { ascending: false })
+    .limit(50);
+  if (error) throw new Error(error.message);
+  return (data ?? []) as unknown as Report[];
+}
+
+export async function resolveReport(reportId: string, status: "resolved" | "dismissed", adminId: string) {
+  const { error } = await supabase.from("reports").update({
+    status, resolved_by: adminId, resolved_at: new Date().toISOString(),
+  }).eq("id", reportId);
+  if (error) throw new Error(error.message);
 }
 
 // ─── Conversations ────────────────────────────────────────────────────────────
@@ -639,6 +698,25 @@ export async function rejectJoinRequest(requestId: string, sessionId: string) {
 // ─── AI (OpenRouter) ─────────────────────────────────────────────────────────
 
 export async function callAI(system: string, userMsg: string, maxTokens = 150): Promise<string> {
+  // Preferred: Supabase Edge Function proxy keeps the OpenRouter key off the client.
+  // Fallback: direct call with EXPO_PUBLIC_OPENROUTER_KEY (dev only — key ships in bundle).
+  try {
+    const { data: sessionData } = await supabase.auth.getSession();
+    const token = sessionData?.session?.access_token;
+    const resp = await fetch(`${SUPABASE_URL}/functions/v1/ai-proxy`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify({ system, message: userMsg, maxTokens }),
+    });
+    if (resp.ok) {
+      const json = await resp.json() as any;
+      return json.content?.trim() ?? "";
+    }
+  } catch { /* fall through to direct call */ }
+
   const key = getEnvValue("EXPO_PUBLIC_OPENROUTER_KEY");
   if (!key) return "";
   try {

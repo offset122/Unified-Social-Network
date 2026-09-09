@@ -215,7 +215,7 @@ function ReelCard({ item, isVisible }: { item: Post; isVisible: boolean }) {
     const prev = sharesCount;
     try {
       setSharesCount(c => c + 1);
-      const result = await Share.share({ message: `🎬 Check out this reel by @${profile?.username}: ${item.content}` });
+      const result = await Share.share({ message: `🎬 Check out this reel by @${profile?.username}: ${item.content} https://vibe.app/reel/${item.id}` });
       if (result.action === Share.sharedAction) {
         await supabase.from("posts").update({ shares_count: prev + 1 }).eq("id", item.id);
       } else {
@@ -360,6 +360,10 @@ export default function ReelsScreen() {
   const isWeb = Platform.OS === "web";
   const [visibleIndex, setVisibleIndex] = useState(0);
   const [tabFocused, setTabFocused] = useState(true);
+  const [reels, setReels] = useState<Post[]>([]);
+  const [cursor, setCursor] = useState<string | undefined>(undefined);
+  const [hasMore, setHasMore] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
 
   // Stop all videos when navigating away from this tab
   useFocusEffect(
@@ -372,11 +376,38 @@ export default function ReelsScreen() {
     }, [])
   );
 
-  const { data = [], isLoading, isError, error, refetch } = useQuery({
-    queryKey: ["reels"],
+  const { data: firstPage = [], isLoading, isError, error, refetch } = useQuery({
+    queryKey: ["reels", user?.id ?? ""],
     queryFn: () => fetchReels(user?.id ?? ""),
-    enabled: isAuthenticated || isGuest || true,
+    enabled: true,
   });
+
+  // Sync first page into local list; reset on user change / refetch
+  useEffect(() => {
+    setReels(firstPage as Post[]);
+    const last = (firstPage as Post[])[(firstPage as Post[]).length - 1];
+    setCursor(last?.created_at);
+    setHasMore(((firstPage as Post[]).length ?? 0) >= 10);
+  }, [firstPage]);
+
+  const loadMore = useCallback(async () => {
+    if (loadingMore || !cursor || !hasMore) return;
+    setLoadingMore(true);
+    try {
+      const next = await fetchReels(user?.id ?? "", cursor);
+      setReels(prev => {
+        const seen = new Set(prev.map(p => p.id));
+        const fresh = next.filter(p => !seen.has(p.id));
+        return [...prev, ...fresh];
+      });
+      if (next.length < 10) setHasMore(false);
+      else setCursor(next[next.length - 1].created_at);
+    } catch {
+      setHasMore(false);
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [loadingMore, cursor, hasMore, user?.id]);
 
   const onViewableItemsChanged = useCallback(({ viewableItems }: any) => {
     if (!tabFocused) return;
@@ -414,7 +445,7 @@ export default function ReelsScreen() {
             <Text style={S.createFirstText}>Retry</Text>
           </Pressable>
         </View>
-      ) : (data as Post[]).length === 0 ? (
+      ) : reels.length === 0 ? (
         <View style={S.emptyWrap}>
           <LinearGradient colors={["#1a0533", "#0f0a1e"]} style={StyleSheet.absoluteFill} />
           <Feather name="film" size={64} color="rgba(255,255,255,0.25)" />
@@ -431,11 +462,24 @@ export default function ReelsScreen() {
         </View>
       ) : (
         <FlatList
-          data={data as Post[]}
+          data={reels}
           keyExtractor={item => item.id}
           renderItem={({ item, index }) => (
             <ReelCard item={item} isVisible={tabFocused && visibleIndex === index} />
           )}
+          onEndReached={loadMore}
+          onEndReachedThreshold={0.6}
+          ListFooterComponent={
+            loadingMore ? (
+              <View style={{ paddingVertical: 24, alignItems: "center" }}>
+                <ActivityIndicator color="rgba(255,255,255,0.7)" size="small" />
+              </View>
+            ) : !hasMore && reels.length > 0 ? (
+              <View style={{ paddingVertical: 28, alignItems: "center" }}>
+                <Text style={{ color: "rgba(255,255,255,0.4)", fontSize: 13 }}>You're all caught up</Text>
+              </View>
+            ) : null
+          }
           snapToInterval={REEL_HEIGHT}
           decelerationRate={Platform.OS === "ios" ? 0.992 : "fast"}
           snapToAlignment="start"

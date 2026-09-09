@@ -24,13 +24,15 @@ function Avatar({ name, size }: { name: string; size: number }) {
 
 export default function CallScreen() {
   const { chatId } = useLocalSearchParams<{ chatId: string }>();
-  const params = useLocalSearchParams<{ peerName?: string; peerAvatar?: string; isVideo?: string }>();
+  const params = useLocalSearchParams<{ peerName?: string; peerAvatar?: string; isVideo?: string; peerId?: string; role?: string }>();
   const { user } = useAuth();
   const colors = useColors();
   const insets = useSafeAreaInsets();
   const router = useRouter();
 
   const isVideo = params.isVideo === "true";
+  const role = params.role === "callee" ? "callee" : "caller";
+  const peerId = params.peerId ?? "";
   const peerName = String(params.peerName ?? "User").replace(/[<>"'`]/g, "").slice(0, 60) || "User";
 
   const [callStatus, setCallStatus] = useState<"calling" | "connected" | "ended">("calling");
@@ -40,29 +42,56 @@ export default function CallScreen() {
   const [isCameraOff, setIsCameraOff] = useState(false);
   const [isVideoCall, setIsVideoCall] = useState(isVideo);
   const signalChannel = useRef<ReturnType<typeof supabase.channel> | null>(null);
+  const ringChannel = useRef<ReturnType<typeof supabase.channel> | null>(null);
 
   useEffect(() => {
     if (!user?.id || !chatId) return;
 
-    // Signaling channel — both peers join, caller sends "ringing", callee sends "answer"
+    // Signaling channel — caller + callee join; callee answers/declines on it.
     const ch = supabase.channel(`call-signal-${chatId}`);
     signalChannel.current = ch;
 
     ch.on("broadcast", { event: "call-answer" }, () => {
       setCallStatus("connected");
+    }).on("broadcast", { event: "call-decline" }, () => {
+      setCallStatus("ended");
+      setTimeout(() => router.back(), 800);
     }).on("broadcast", { event: "call-end" }, () => {
       setCallStatus("ended");
       setTimeout(() => router.back(), 800);
     }).subscribe(async (status) => {
-      if (status === "SUBSCRIBED") {
-        await ch.send({ type: "broadcast", event: "call-ring", payload: { callerId: user.id, isVideo } });
+      if (status !== "SUBSCRIBED") return;
+      if (role === "callee") {
+        // Callee just accepted the ring — answer on the signal channel.
+        await ch.send({ type: "broadcast", event: "call-answer", payload: {} });
+        return;
       }
+      // Caller: ring the peer via their global ring channel (AppShell listens
+      // on `call-ring:${userId}` and opens the incoming-call screen).
+      if (!peerId) return;
+      const rc = supabase.channel(`call-ring:${peerId}`);
+      ringChannel.current = rc;
+      await new Promise<void>((resolve) => {
+        rc.subscribe((s: string) => { if (s === "SUBSCRIBED") resolve(); });
+      });
+      await rc.send({
+        type: "broadcast",
+        event: "call-ring",
+        payload: {
+          callerId: user.id,
+          callerName: [user.firstName, user.lastName].filter(Boolean).join(" ") || "Someone",
+          callerAvatar: user.profileImageUrl ?? "",
+          callType: isVideo ? "video" : "audio",
+          chatId,
+        },
+      });
     });
 
     return () => {
       supabase.removeChannel(ch);
+      if (ringChannel.current) supabase.removeChannel(ringChannel.current);
     };
-  }, [chatId, user?.id]);
+  }, [chatId, user?.id, role, peerId]);
 
   useEffect(() => {
     if (callStatus !== "connected") return;

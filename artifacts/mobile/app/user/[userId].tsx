@@ -591,7 +591,7 @@ export default function UserProfileScreen() {
           {!isOwnProfile ? (
             <View style={{ flexDirection: "row", gap: 4 }}>
               <Pressable hitSlop={8} style={styles.topBtn}
-                onPress={() => Share.share({ message: `Check out ${profile.display_name} on Vibe! Vibe://user/${profile.id}`, title: profile.display_name })}>
+                onPress={() => Share.share({ message: `Check out ${profile.display_name} on Vibe! https://vibe.app/user/${profile.id}`, title: profile.display_name })}>
                 <Feather name="share" size={18} color={colors.foreground} />
               </Pressable>
               <Pressable hitSlop={8} style={styles.topBtn}

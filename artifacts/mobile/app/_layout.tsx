@@ -79,6 +79,7 @@ function AppShell({ children }: { children: ReactNode }) {
             callerAvatar: payload.callerAvatar ?? "",
             callType: payload.callType ?? "audio",
             chatId: payload.chatId ?? "",
+            callerId: payload.callerId ?? "",
           },
         } as any);
       })

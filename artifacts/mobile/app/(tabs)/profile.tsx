@@ -360,7 +360,7 @@ export default function ProfileScreen() {
           <View style={styles.quickActions}>
             <Pressable onPress={async () => {
               const { Share } = await import("react-native");
-              Share.share({ message: `Check out ${displayName}'s profile on Vibe!` });
+              Share.share({ message: `Check out ${displayName}'s profile on Vibe! https://vibe.app/user/${user?.id}` });
             }} style={[styles.quickBtn, { backgroundColor: colors.primary }]}>
               <Feather name="share-2" size={15} color="#fff" />
               <Text style={styles.quickBtnText}>Share Profile</Text>

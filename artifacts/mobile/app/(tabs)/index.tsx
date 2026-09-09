@@ -20,7 +20,7 @@ import {
   fetchFeed, fetchStories, likePost, unlikePost, savePost, unsavePost,
   createComment, fetchComments, resolveMediaUrl, uploadMedia,
   fetchUnreadNotificationCount, generateAICaption, timeAgo, formatCount,
-  deletePost, updatePostVisibility, followUser, unfollowUser, isFollowing,
+  deletePost, updatePostVisibility, followUser, unfollowUser, isFollowing, createReport,
   type Post, type Comment, type Profile,
 } from "@/lib/db";
 import AICommentSuggestions from "@/components/ai/AICommentSuggestions";
@@ -288,6 +288,19 @@ function PostCard({ post, userId, colors, onRequireAuth, onDeleted, followUserId
     finally { setFollowLoading(false); }
   };
 
+  const submitReport = async (
+    postId: string,
+    reason: "spam" | "inappropriate" | "harassment" | "other",
+  ) => {
+    if (!userId) { onRequireAuth?.(); return; }
+    try {
+      await createReport(userId, postId, reason);
+      Alert.alert("Reported", "Thank you. Our moderation team will review this.");
+    } catch {
+      Alert.alert("Error", "Could not submit report. Please try again.");
+    }
+  };
+
   const handleMore = () => {
     if (!userId) { onRequireAuth?.(); return; }
     if (isOwn) {
@@ -343,8 +356,9 @@ function PostCard({ post, userId, colors, onRequireAuth, onDeleted, followUserId
       ]);
     } else {
       Alert.alert("Report Post", "Why are you reporting this post?", [
-        { text: "Spam", onPress: async () => { await supabase.from("notifications").insert({ user_id: post.author_id, actor_id: userId, type: "report", post_id: post.id, is_read: false } as any); Alert.alert("Reported", "Thank you. Our team will review this."); } },
-        { text: "Inappropriate", onPress: async () => { await supabase.from("notifications").insert({ user_id: post.author_id, actor_id: userId, type: "report", post_id: post.id, is_read: false } as any); Alert.alert("Reported", "Thank you. Our team will review this."); } },
+        { text: "Spam", onPress: () => submitReport(post.id, "spam") },
+        { text: "Inappropriate", onPress: () => submitReport(post.id, "inappropriate") },
+        { text: "Harassment", onPress: () => submitReport(post.id, "harassment") },
         { text: "Cancel", style: "cancel" },
       ]);
     }
@@ -486,7 +500,7 @@ function PostCard({ post, userId, colors, onRequireAuth, onDeleted, followUserId
             if (!userId) { onRequireAuth?.(); return; }
             try {
               setShares(s => s + 1);
-              const result = await Share.share({ message: post.content ? `${post.content} — shared via Vibe` : "Check this out on Vibe!" });
+              const result = await Share.share({ message: post.content ? `${post.content} — https://vibe.app/post/${post.id}` : `Check this out on Vibe! https://vibe.app/post/${post.id}` });
               if (result.action === Share.sharedAction) {
                 await supabase.from("posts").update({ shares_count: shares + 1 }).eq("id", post.id);
               } else {
