@@ -38,6 +38,9 @@ export default function EditProfileScreen() {
         setDisplayName(p.display_name ?? "");
         setUsername(p.username ?? "");
         setBio(p.bio ?? "");
+        setWebsite((p as any).website ?? "");
+        setLocation((p as any).location ?? "");
+        setPronouns((p as any).pronouns ?? "");
         setAvatarUri(p.avatar_url ? resolveMediaUrl(p.avatar_url) : null);
         setCoverUri(p.cover_url ? resolveMediaUrl(p.cover_url) : null);
       }

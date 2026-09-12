@@ -12,6 +12,7 @@ import { useAuth } from "@/lib/auth";
 import { resolveMediaUrl, timeAgo, generateAINotificationDigest } from "@/lib/db";
 import { supabase } from "@/lib/supabase";
 import { LinearGradient } from "expo-linear-gradient";
+import { useEffect } from "react";
 
 type Notif = {
   id: string;
@@ -47,6 +48,11 @@ async function fetchNotifications(userId: string): Promise<Notif[]> {
 }
 
 async function markAllRead(userId: string) {
+  // Atomic server-side RPC (falls back to client update if RPC not yet deployed)
+  try {
+    const { error } = await supabase.rpc("mark_all_notifications_read");
+    if (!error) return;
+  } catch { /* fall through */ }
   await supabase.from("notifications").update({ is_read: true }).eq("user_id", userId).eq("is_read", false);
 }
 
@@ -83,6 +89,23 @@ export default function NotificationsScreen() {
     queryFn: () => fetchNotifications(user?.id ?? ""),
     enabled: !!user?.id,
   });
+
+  // Live updates: refetch as new notifications arrive (banner already shows them app-wide)
+  useEffect(() => {
+    if (!user?.id) return;
+    const ch = supabase
+      .channel(`notifications-list:${user.id}`)
+      .on(
+        "postgres_changes" as any,
+        { event: "*", schema: "public", table: "notifications", filter: `user_id=eq.${user.id}` },
+        () => {
+          qc.invalidateQueries({ queryKey: ["notifications", user.id] });
+          qc.invalidateQueries({ queryKey: ["notif-count"] });
+        },
+      )
+      .subscribe();
+    return () => { supabase.removeChannel(ch); };
+  }, [user?.id]);
 
   const markAllMut = useMutation({
     mutationFn: () => markAllRead(user?.id ?? ""),
@@ -124,9 +147,20 @@ export default function NotificationsScreen() {
           <Feather name="arrow-left" size={22} color={colors.foreground} />
         </Pressable>
         <Text style={[styles.title, { color: colors.foreground }]}>Notifications</Text>
-        <Pressable onPress={handleAIDigest} hitSlop={8}>
-          <Feather name="zap" size={18} color={colors.primary} />
-        </Pressable>
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 14 }}>
+          {unreadCount > 0 && (
+            <Pressable onPress={() => markAllMut.mutate()} disabled={markAllMut.isPending} hitSlop={6}>
+              {markAllMut.isPending ? (
+                <ActivityIndicator size="small" color={colors.primary} />
+              ) : (
+                <Text style={{ color: colors.primary, fontSize: 12, fontWeight: "700" }}>Mark all read</Text>
+              )}
+            </Pressable>
+          )}
+          <Pressable onPress={handleAIDigest} hitSlop={8}>
+            <Feather name="zap" size={18} color={colors.primary} />
+          </Pressable>
+        </View>
       </View>
 
       {/* Filter tabs */}

@@ -6,6 +6,7 @@ import {
 import { Stack, useLocalSearchParams, useRouter } from "expo-router";
 import { Feather } from "@expo/vector-icons";
 import { AntDesign } from "@expo/vector-icons";
+import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Video, ResizeMode } from "expo-av";
@@ -14,27 +15,16 @@ import { useColors } from "@/hooks/useColors";
 import { useAuth } from "@/lib/auth";
 import {
   fetchComments, createComment, likePost, unlikePost, savePost, unsavePost, fetchPost,
+  incrementPostViews, incrementPostShares, followUser, unfollowUser, isFollowing,
   resolveMediaUrl, timeAgo, formatCount, summarizeAIComments, analyzeAISentiment,
+  deletePost, updatePostVisibility, createReport,
   type Comment, type Profile,
 } from "@/lib/db";
 import AICommentSuggestions from "@/components/ai/AICommentSuggestions";
+import { Avatar } from "@/components/Avatar";
+import * as Haptics from "expo-haptics";
+import { Platform } from "react-native";
 import { supabase } from "@/lib/supabase";
-
-function Avatar({ name, avatarUrl, size }: { name: string; avatarUrl?: string | null; size: number }) {
-  const [err, setErr] = useState(false);
-  const initials = name.split(" ").map(w => w[0]).join("").slice(0, 2).toUpperCase();
-  const hue = name.split("").reduce((a, c) => a + c.charCodeAt(0), 0) % 360;
-  if (avatarUrl && !err) {
-    return <Image source={{ uri: resolveMediaUrl(avatarUrl) }}
-      style={{ width: size, height: size, borderRadius: size / 2 }} onError={() => setErr(true)} />;
-  }
-  return (
-    <View style={{ width: size, height: size, borderRadius: size / 2,
-      backgroundColor: `hsl(${hue},55%,45%)`, alignItems: "center", justifyContent: "center" }}>
-      <Text style={{ color: "#fff", fontSize: size * 0.38, fontWeight: "700" }}>{initials}</Text>
-    </View>
-  );
-}
 
 export default function PostDetailScreen() {
   const { postId } = useLocalSearchParams<{ postId: string }>();
@@ -48,6 +38,7 @@ export default function PostDetailScreen() {
   const [submitting, setSubmitting] = useState(false);
   const [isLiked, setIsLiked] = useState(false);
   const [isSaved, setIsSaved] = useState(false);
+  const [followLoading, setFollowLoading] = useState(false);
   const [sharesCount, setSharesCount] = useState(0);
   const [postSummary, setPostSummary] = useState("");
   const [loadingPostSummary, setLoadingPostSummary] = useState(false);
@@ -68,15 +59,31 @@ export default function PostDetailScreen() {
     enabled: !!postId,
   });
 
+  // Hydrate like/save from the post row (fetched with viewer flags when available)
+  const postRef = post as any;
   React.useEffect(() => {
-    if (post && user?.id) {
-      supabase.from("likes").select("user_id").eq("user_id", user.id).eq("post_id", post.id).maybeSingle()
-        .then(({ data }) => setIsLiked(!!data));
-      supabase.from("saves").select("user_id").eq("user_id", user.id).eq("post_id", post.id).maybeSingle()
-        .then(({ data }) => setIsSaved(!!data));
-      setSharesCount(post.shares_count ?? 0);
+    if (!post) return;
+    if (typeof postRef.is_liked === "boolean") setIsLiked(postRef.is_liked);
+    if (typeof postRef.is_saved === "boolean") setIsSaved(postRef.is_saved);
+    setSharesCount(post.shares_count ?? 0);
+  }, [post?.id]);
+
+  // Live follow state
+  const { data: following = false } = useQuery({
+    queryKey: ["is-following", user?.id, post?.author_id],
+    queryFn: () => isFollowing(user!.id, post!.author_id),
+    enabled: !!user?.id && !!post?.author_id && user.id !== post.author_id,
+  });
+  const isFollowingAuthor = following as boolean;
+
+  // Count a view once per session
+  const viewedRef = useRef(false);
+  React.useEffect(() => {
+    if (post?.id && !viewedRef.current) {
+      viewedRef.current = true;
+      incrementPostViews(post.id);
     }
-  }, [post?.id, user?.id]);
+  }, [post?.id]);
 
   const likeScale = useRef(new Animated.Value(1)).current;
 
@@ -87,6 +94,7 @@ export default function PostDetailScreen() {
       Animated.spring(likeScale, { toValue: 1.5, useNativeDriver: true, speed: 80, bounciness: 14 }),
       Animated.spring(likeScale, { toValue: 1, useNativeDriver: true, speed: 80 }),
     ]).start();
+    if (Platform.OS !== "web") Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
     const fn = next ? likePost : unlikePost;
     await fn(user.id, post.id);
     qc.invalidateQueries({ queryKey: ["post", postId] });
@@ -96,17 +104,101 @@ export default function PostDetailScreen() {
     if (!user?.id || !post) return;
     const next = !isSaved; setIsSaved(next);
     const fn = next ? savePost : unsavePost;
-    await fn(user.id, post.id);
+    try { await fn(user.id, post.id); } catch { setIsSaved(!next); }
   };
+
+  const handleFollowToggle = async () => {
+    if (!user?.id || !post) return;
+    const next = !isFollowingAuthor;
+    setFollowLoading(true);
+    try {
+      if (next) await followUser(user.id, post.author_id);
+      else await unfollowUser(user.id, post.author_id);
+      qc.invalidateQueries({ queryKey: ["is-following", user.id, post.author_id] });
+    } finally {
+      setFollowLoading(false);
+    }
+  };
+
+  const isOwnPost = !!user?.id && post?.author_id === user.id;
+
+  const handleOwnerMenu = () => {
+    if (!post || !user?.id) return;
+    Alert.alert("Post Options", undefined, [
+      {
+        text: "Change Visibility",
+        onPress: () => {
+          Alert.alert("Set Visibility", "Who can see this post?", [
+            { text: "Public", onPress: () => changeVisibility("public") },
+            { text: "Followers Only", onPress: () => changeVisibility("followers") },
+            { text: "Private", onPress: () => changeVisibility("private") },
+            { text: "Cancel", style: "cancel" },
+          ]);
+        },
+      },
+      {
+        text: "Delete Post", style: "destructive",
+        onPress: () => {
+          Alert.alert("Delete Post", "This cannot be undone.", [
+            { text: "Cancel", style: "cancel" },
+            {
+              text: "Delete", style: "destructive",
+              onPress: async () => {
+                try {
+                  await deletePost(post.id, user.id);
+                  qc.invalidateQueries({ queryKey: ["feed"] });
+                  qc.invalidateQueries({ queryKey: ["my-posts"] });
+                  router.back();
+                } catch { Alert.alert("Error", "Could not delete post"); }
+              },
+            },
+          ]);
+        },
+      },
+      { text: "Cancel", style: "cancel" },
+    ]);
+  };
+
+  const changeVisibility = async (v: "public" | "followers" | "private") => {
+    if (!post || !user?.id) return;
+    try {
+      await updatePostVisibility(post.id, user.id, v);
+      qc.invalidateQueries({ queryKey: ["post", postId] });
+      qc.invalidateQueries({ queryKey: ["feed"] });
+    } catch { Alert.alert("Error", "Could not update visibility"); }
+  };
+
+  const handleReportMenu = () => {
+    if (!post || !user?.id) return;
+    Alert.alert("Report Post", "Why are you reporting this post?", [
+      { text: "Spam", onPress: () => submitReport("spam") },
+      { text: "Inappropriate", onPress: () => submitReport("inappropriate") },
+      { text: "Harassment", onPress: () => submitReport("harassment") },
+      { text: "Cancel", style: "cancel" },
+    ]);
+  };
+
+  const submitReport = async (reason: "spam" | "inappropriate" | "harassment" | "other") => {
+    if (!post || !user?.id) return;
+    try {
+      await createReport(user.id, post.id, reason);
+      Alert.alert("Reported", "Thank you. Our moderation team will review this.");
+    } catch { Alert.alert("Error", "Could not submit report."); }
+  };
+
+  const [commentError, setCommentError] = useState("");
 
   const submitComment = async () => {
     if (!commentText.trim() || !user?.id || !post) return;
     setSubmitting(true);
+    setCommentError("");
     try {
       await createComment(post.id, user.id, commentText.trim());
       setCommentText("");
       qc.invalidateQueries({ queryKey: ["post-comments", postId] });
       qc.invalidateQueries({ queryKey: ["post", postId] });
+    } catch (e: any) {
+      setCommentError(e?.message ?? "Could not post comment. Please try again.");
     } finally { setSubmitting(false); }
   };
 
@@ -158,7 +250,17 @@ export default function PostDetailScreen() {
       <View style={[styles.header, { paddingTop: insets.top + 8, borderBottomColor: colors.border }]}>
         <Pressable onPress={() => router.back()} hitSlop={8}><Feather name="arrow-left" size={22} color={colors.foreground} /></Pressable>
         <Text style={[styles.headerTitle, { color: colors.foreground }]}>Post</Text>
-        <View style={{ width: 30 }} />
+        {user?.id ? (
+          isOwnPost ? (
+            <Pressable onPress={handleOwnerMenu} hitSlop={8}>
+              <Feather name="more-horizontal" size={22} color={colors.foreground} />
+            </Pressable>
+          ) : (
+            <Pressable onPress={handleReportMenu} hitSlop={8}>
+              <Feather name="flag" size={20} color={colors.mutedForeground} />
+            </Pressable>
+          )
+        ) : <View style={{ width: 24 }} />}
       </View>
 
       <ScrollView contentContainerStyle={{ paddingBottom: insets.bottom + 80 }}>
@@ -170,9 +272,18 @@ export default function PostDetailScreen() {
             <Text style={[styles.authorMeta, { color: colors.mutedForeground }]}>@{profile?.username} · {timeAgo(post.created_at)}</Text>
           </View>
           {user?.id && user.id !== post.author_id && (
-            <View style={[styles.followBtn, { borderColor: colors.primary }]}>
-              <Text style={{ color: colors.primary, fontSize: 12, fontWeight: "700" }}>Follow</Text>
-            </View>
+            <Pressable
+              onPress={handleFollowToggle}
+              disabled={followLoading}
+              style={[styles.followBtn, { borderColor: isFollowingAuthor ? colors.border : colors.primary, backgroundColor: isFollowingAuthor ? colors.secondary : "transparent" }]}
+              accessibilityRole="button"
+              accessibilityState={{ selected: isFollowingAuthor }}
+              accessibilityLabel={isFollowingAuthor ? "Unfollow" : "Follow"}
+            >
+              <Text style={{ color: isFollowingAuthor ? colors.mutedForeground : colors.primary, fontSize: 12, fontWeight: "700" }}>
+                {followLoading ? "..." : isFollowingAuthor ? "Following" : "Follow"}
+              </Text>
+            </Pressable>
           )}
         </Pressable>
 
@@ -223,11 +334,9 @@ export default function PostDetailScreen() {
           <Pressable style={styles.actionBtn} onPress={async () => {
             try {
               setSharesCount(s => s + 1);
-              const result = await Share.share({ message: post.content ? `${post.content} — shared via Vibe` : "Check this out on Vibe!" });
+              const result = await Share.share({ message: post.content ? `${post.content} — https://vibe.app/post/${post.id}` : `Check this out on Vibe! https://vibe.app/post/${post.id}` });
               if (result.action === Share.sharedAction) {
-                if (user?.id && post?.id) {
-                  await supabase.from("posts").update({ shares_count: (post.shares_count ?? 0) + 1 }).eq("id", post.id);
-                }
+                if (post?.id) await incrementPostShares(post.id);
               } else {
                 setSharesCount(s => s - 1);
               }
@@ -236,8 +345,8 @@ export default function PostDetailScreen() {
             <Feather name="share-2" size={20} color={colors.mutedForeground} />
             <Text style={[styles.actionCount, { color: colors.mutedForeground }]}>{formatCount(sharesCount)}</Text>
           </Pressable>
-          <Pressable onPress={handleSave} style={{ marginLeft: "auto" }}>
-            <Feather name="bookmark" size={22} color={isSaved ? colors.primary : colors.mutedForeground} />
+          <Pressable onPress={handleSave} style={{ marginLeft: "auto" }} accessibilityRole="button" accessibilityState={{ selected: isSaved }} accessibilityLabel={isSaved ? "Remove from saved" : "Save post"}>
+            <Ionicons name={isSaved ? "bookmark" : "bookmark-outline"} size={22} color={isSaved ? colors.primary : colors.mutedForeground} />
           </Pressable>
         </View>
 
@@ -292,10 +401,14 @@ export default function PostDetailScreen() {
           postContent={post?.content ?? ""}
           onSelect={t => setCommentText(t)}
         />
+        {!!commentError && (
+          <Text style={{ color: "#ef4444", fontSize: 12, marginBottom: 6 }}>{commentError}</Text>
+        )}
         <TextInput
           style={[styles.commentInput, { color: colors.foreground, backgroundColor: colors.secondary, borderColor: colors.border }]}
           placeholder="Add a comment..." placeholderTextColor={colors.mutedForeground}
           value={commentText} onChangeText={setCommentText}
+          multiline
         />
         <Pressable onPress={submitComment} disabled={submitting || !commentText.trim()}
           style={[styles.sendBtn, { backgroundColor: commentText.trim() ? "#7c3aed" : colors.muted }]}>
@@ -326,7 +439,7 @@ const styles = StyleSheet.create({
   commentAuthor: { fontSize: 13, fontWeight: "700", marginBottom: 2 },
   commentText: { fontSize: 14, lineHeight: 20 },
   commentTime: { fontSize: 11, marginTop: 4 },
-  commentInputBar: { flexDirection: "row", gap: 10, paddingHorizontal: 12, paddingTop: 10, borderTopWidth: StyleSheet.hairlineWidth },
-  commentInput: { flex: 1, borderWidth: 1.5, borderRadius: 22, paddingHorizontal: 14, paddingVertical: 10, fontSize: 15 },
+  commentInputBar: { flexDirection: "row", gap: 10, paddingHorizontal: 12, paddingTop: 10, borderTopWidth: StyleSheet.hairlineWidth, alignItems: "flex-end" },
+  commentInput: { flex: 1, borderWidth: 1.5, borderRadius: 22, paddingHorizontal: 14, paddingVertical: 10, fontSize: 15, maxHeight: 110 },
   sendBtn: { width: 40, height: 40, borderRadius: 20, alignItems: "center", justifyContent: "center" },
 });

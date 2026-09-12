@@ -5,6 +5,7 @@ import {
   Inter_700Bold,
   useFonts,
 } from "@expo-google-fonts/inter";
+import { bootLog } from "@/lib/bootLog";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Stack, useRouter } from "expo-router";
 import * as SplashScreen from "expo-splash-screen";
@@ -45,6 +46,7 @@ function RootLayoutNav() {
       <Stack.Screen name="create-story" options={{ headerShown: false }} />
       <Stack.Screen name="new-message" options={{ headerShown: false }} />
       <Stack.Screen name="blocked-users" options={{ headerShown: false }} />
+      <Stack.Screen name="diagnostics" options={{ headerShown: false }} />
       <Stack.Screen name="auth/callback" options={{ headerShown: false }} />
       <Stack.Screen name="+not-found" />
     </Stack>
@@ -69,6 +71,10 @@ function AppShell({ children }: { children: ReactNode }) {
 
   // Listen for incoming call broadcasts
   useEffect(() => {
+    bootLog.boot(`AppShell: authenticated=${isAuthenticated} user=${user?.id ? user.id.slice(0, 8) : "none"}`);
+  }, [isAuthenticated, user?.id]);
+
+  useEffect(() => {
     if (!isAuthenticated || !user) return;
     const callChannel = supabase.channel(`call-ring:${user.id}`)
       .on("broadcast", { event: "call-ring" }, ({ payload }: any) => {
@@ -79,6 +85,7 @@ function AppShell({ children }: { children: ReactNode }) {
             callerAvatar: payload.callerAvatar ?? "",
             callType: payload.callType ?? "audio",
             chatId: payload.chatId ?? "",
+            callerId: payload.callerId ?? "",
           },
         } as any);
       })
@@ -142,6 +149,10 @@ export default function RootLayout() {
   });
 
   useEffect(() => {
+    bootLog.boot(`fonts: loaded=${fontsLoaded} error=${fontError ? fontError.message : "none"}`);
+  }, [fontsLoaded, fontError]);
+
+  useEffect(() => {
     if (fontsLoaded || fontError) {
       SplashScreen.hideAsync();
     }
@@ -158,6 +169,7 @@ export default function RootLayout() {
 
   return (
     <ErrorBoundary>
+      <ProviderMountLogger>
       <GestureHandlerRootView style={{ flex: 1 }}>
         <SafeAreaProvider>
           <QueryClientProvider client={queryClient}>
@@ -175,6 +187,14 @@ export default function RootLayout() {
           </QueryClientProvider>
         </SafeAreaProvider>
       </GestureHandlerRootView>
+      </ProviderMountLogger>
     </ErrorBoundary>
   );
+}
+
+function ProviderMountLogger({ children }: { children: ReactNode }) {
+  useEffect(() => {
+    bootLog.boot("providers mounted: fonts ok, entering router");
+  }, []);
+  return <>{children}</>;
 }

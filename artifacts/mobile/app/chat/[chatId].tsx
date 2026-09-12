@@ -595,6 +595,10 @@ export default function ChatScreen() {
   const [showChatMenu, setShowChatMenu] = useState(false);
   const [loadingAI, setLoadingAI] = useState(false);
   const [peerOnline, setPeerOnline] = useState(false);
+  const [peerTyping, setPeerTyping] = useState(false);
+  const typingChannelRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
+  const typingClearRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const typingSentRef = useRef(false);
   const [muted, setMuted] = useState(false);
   const [searchMode, setSearchMode] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
@@ -685,8 +689,19 @@ export default function ChatScreen() {
         { event: "*", schema: "public", table: "message_reactions" },
         () => { qc.invalidateQueries({ queryKey: ["chat-messages", chatId] }); }
       )
+      .on("broadcast", { event: "typing" }, ({ payload }: any) => {
+        if (payload?.userId && payload.userId !== user?.id) {
+          setPeerTyping(true);
+          if (typingClearRef.current) clearTimeout(typingClearRef.current);
+          typingClearRef.current = setTimeout(() => setPeerTyping(false), 3000);
+        }
+      })
+      .on("broadcast", { event: "stop-typing" }, ({ payload }: any) => {
+        if (payload?.userId && payload.userId !== user?.id) setPeerTyping(false);
+      })
       .subscribe();
-    return () => { supabase.removeChannel(ch); };
+    typingChannelRef.current = ch;
+    return () => { supabase.removeChannel(ch); typingChannelRef.current = null; };
   }, [chatId, user?.id]);
 
   useEffect(() => {
@@ -990,14 +1005,14 @@ export default function ChatScreen() {
 
         <View style={styles.headerActions}>
           <Pressable
-            onPress={() => router.push({ pathname: `/call/${chatId}`, params: { peerName } } as any)}
+            onPress={() => router.push({ pathname: `/call/${chatId}`, params: { peerName, peerId: params.peerId ?? "", role: "caller" } } as any)}
             style={styles.headerIconBtn}
           >
             <Feather name="phone" size={19} color={C.text} />
           </Pressable>
           <Pressable
             onPress={() =>
-              router.push({ pathname: `/call/${chatId}`, params: { peerName, isVideo: "true" } } as any)
+              router.push({ pathname: `/call/${chatId}`, params: { peerName, peerId: params.peerId ?? "", isVideo: "true", role: "caller" } } as any)
             }
             style={[styles.headerIconBtn, styles.headerIconBtnPrimary]}
           >
@@ -1045,6 +1060,17 @@ export default function ChatScreen() {
               />
             );
           }}
+          ListFooterComponent={
+            peerTyping && !searchQuery.trim() ? (
+              <View style={styles.typingRow}>
+                <View style={styles.typingBubble}>
+                  <View style={[styles.typingDot, { opacity: 0.35 }]} />
+                  <View style={[styles.typingDot, { opacity: 0.55 }]} />
+                  <View style={[styles.typingDot, { opacity: 0.8 }]} />
+                </View>
+              </View>
+            ) : null
+          }
           ListEmptyComponent={
             <View style={styles.emptyChat}>
               <LinearGradient
@@ -1234,7 +1260,28 @@ export default function ChatScreen() {
           placeholder="Message…"
           placeholderTextColor={C.textDim}
           value={text}
-          onChangeText={(t) => { setText(t); if (!t) setAiSuggestions([]); }}
+          onChangeText={(t) => {
+            setText(t);
+            if (!t) setAiSuggestions([]);
+            // Broadcast typing state (debounced: send once per burst, stop when cleared)
+            const ch = typingChannelRef.current;
+            if (ch) {
+              if (t && !typingSentRef.current) {
+                typingSentRef.current = true;
+                ch.send({ type: "broadcast", event: "typing", payload: { userId: user?.id } });
+              } else if (!t && typingSentRef.current) {
+                typingSentRef.current = false;
+                ch.send({ type: "broadcast", event: "stop-typing", payload: { userId: user?.id } });
+              }
+              if (typingClearRef.current) clearTimeout(typingClearRef.current);
+              typingClearRef.current = setTimeout(() => {
+                if (typingSentRef.current) {
+                  typingSentRef.current = false;
+                  ch.send({ type: "broadcast", event: "stop-typing", payload: { userId: user?.id } });
+                }
+              }, 2500);
+            }
+          }}
           multiline
         />
 
@@ -1359,7 +1406,7 @@ export default function ChatScreen() {
                 label: "Voice Call",
                 onPress: () => {
                   setShowChatMenu(false);
-                  router.push({ pathname: `/call/${chatId}`, params: { peerName } } as any);
+                  router.push({ pathname: `/call/${chatId}`, params: { peerName, peerId: params.peerId ?? "", role: "caller" } } as any);
                 },
               },
               {
@@ -1367,7 +1414,7 @@ export default function ChatScreen() {
                 label: "Video Call",
                 onPress: () => {
                   setShowChatMenu(false);
-                  router.push({ pathname: `/call/${chatId}`, params: { peerName, isVideo: "true" } } as any);
+                  router.push({ pathname: `/call/${chatId}`, params: { peerName, peerId: params.peerId ?? "", isVideo: "true", role: "caller" } } as any);
                 },
               },
             ] as const).map((item) => (
@@ -1994,6 +2041,28 @@ const styles = StyleSheet.create({
   },
 
   // Search bar
+  typingRow: {
+    paddingHorizontal: 14,
+    paddingVertical: 6,
+    alignItems: "flex-start",
+  },
+  typingBubble: {
+    flexDirection: "row",
+    gap: 5,
+    backgroundColor: C.surface,
+    borderWidth: 1,
+    borderColor: C.border,
+    borderRadius: 18,
+    borderBottomLeftRadius: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+  },
+  typingDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 4,
+    backgroundColor: C.textDim,
+  },
   searchBar: {
     flexDirection: "row",
     alignItems: "center",

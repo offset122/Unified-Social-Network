@@ -5,19 +5,34 @@ import { Feather } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { resolveMediaUrl } from "@/lib/db";
+import { supabase } from "@/lib/supabase";
 
 export default function IncomingCallScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const params = useLocalSearchParams<{
     callerName?: string; callerAvatar?: string;
-    callType?: string; chatId?: string;
+    callType?: string; chatId?: string; callerId?: string;
   }>();
 
   const callerName = params.callerName ?? "Unknown";
   const callerAvatar = params.callerAvatar ?? null;
   const callType = params.callType ?? "audio";
   const chatId = params.chatId ?? "";
+  const callerId = params.callerId ?? "";
+
+  // Notify the caller when this ring is declined so their screen ends cleanly.
+  const declineCall = async () => {
+    if (!callerId || !chatId) return;
+    try {
+      const ch = supabase.channel(`call-signal-${chatId}`);
+      await new Promise<void>((resolve) => {
+        ch.subscribe((s: string) => { if (s === "SUBSCRIBED") resolve(); });
+      });
+      await ch.send({ type: "broadcast", event: "call-decline", payload: {} });
+      setTimeout(() => supabase.removeChannel(ch), 1000);
+    } catch { /* best-effort */ }
+  };
 
   const pulseAnim = useRef(new Animated.Value(1)).current;
   const pulse2Anim = useRef(new Animated.Value(1)).current;
@@ -70,6 +85,7 @@ export default function IncomingCallScreen() {
   const handleDecline = () => {
     Vibration.cancel();
     if (dismissTimer.current) clearTimeout(dismissTimer.current);
+    declineCall();
     router.back();
   };
 
