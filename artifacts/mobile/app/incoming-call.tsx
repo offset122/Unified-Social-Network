@@ -12,7 +12,7 @@ export default function IncomingCallScreen() {
   const router = useRouter();
   const params = useLocalSearchParams<{
     callerName?: string; callerAvatar?: string;
-    callType?: string; chatId?: string;
+    callType?: string; chatId?: string; callerId?: string;
   }>();
 
   const callerName = params.callerName ?? "Unknown";

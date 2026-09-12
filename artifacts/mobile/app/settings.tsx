@@ -13,7 +13,7 @@ export default function SettingsScreen() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
   const router = useRouter();
-  const { colorScheme, toggleTheme } = useTheme();
+  const { colorScheme, themeMode, setTheme, useSystemTheme } = useTheme();
   const { logout, user } = useAuth();
   const isDark = colorScheme === "dark";
 
@@ -76,10 +76,31 @@ export default function SettingsScreen() {
         <View style={styles.section}>
           <Text style={[styles.sectionLabel, { color: colors.mutedForeground }]}>Appearance</Text>
           <View style={[styles.group, { backgroundColor: colors.card, borderColor: colors.border }]}>
-            <View style={styles.row}>
+            <View style={[styles.row, { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border }]}>
               <Feather name="moon" size={17} color="#7c3aed" />
-              <Text style={[styles.rowLabel, { color: colors.foreground }]}>Dark Mode</Text>
-              <Switch value={isDark} onValueChange={toggleTheme} trackColor={{ true: "#7c3aed" }} />
+              <Text style={[styles.rowLabel, { color: colors.foreground }]}>Theme</Text>
+              <View style={{ flexDirection: "row", gap: 8 }}>
+                {([
+                  { label: "System", value: "system" as const, onPress: useSystemTheme },
+                  { label: "Light", value: "light" as const, onPress: () => setTheme("light") },
+                  { label: "Dark", value: "dark" as const, onPress: () => setTheme("dark") },
+                ]).map((opt) => {
+                  const active = themeMode === opt.value;
+                  return (
+                    <Pressable
+                      key={opt.value}
+                      onPress={opt.onPress}
+                      style={{
+                        paddingHorizontal: 12, paddingVertical: 6, borderRadius: 999,
+                        backgroundColor: active ? "#7c3aed" : "transparent",
+                        borderWidth: 1, borderColor: active ? "#7c3aed" : colors.border,
+                      }}
+                    >
+                      <Text style={{ color: active ? "#fff" : colors.mutedForeground, fontSize: 12, fontWeight: "600" }}>{opt.label}</Text>
+                    </Pressable>
+                  );
+                })}
+              </View>
             </View>
           </View>
         </View>
