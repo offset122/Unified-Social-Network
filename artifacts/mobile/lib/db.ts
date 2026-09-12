@@ -175,6 +175,29 @@ export async function incrementPostViews(postId: string) {
   supabase.rpc("increment_post_views" as any, { post_id: postId });
 }
 
+// Atomic server-side counter — avoids lost updates from concurrent client writes.
+export async function incrementPostShares(postId: string) {
+  await supabase.rpc("increment_post_shares" as any, { post_id: postId });
+}
+
+// Server-side ranked feed ("For You") — engagement score with recency decay,
+// paginated by cursor so it composes with the pager just like the latest feed.
+export async function fetchRankedFeed(userId: string, cursor?: string): Promise<Post[]> {
+  const { data, error } = await supabase.rpc("fetch_ranked_feed" as any, {
+    p_user_id: userId,
+    p_cursor_created: cursor ?? null,
+  });
+  if (error) throw new Error(`Failed to fetch ranked feed: ${error.message}`);
+  if (!data) return [];
+  const posts = (data as any[]).map((p) => ({ ...p, media_urls: p.media_urls ?? [] }));
+  const ids = posts.map((p) => p.id);
+  const [liked, saved] = await Promise.all([
+    fetchUserLikes(userId, ids).catch(() => new Set<string>()),
+    fetchUserSaves(userId, ids).catch(() => new Set<string>()),
+  ]);
+  return posts.map((p) => ({ ...p, is_liked: liked.has(p.id), is_saved: saved.has(p.id) }));
+}
+
 export async function deletePost(postId: string, authorId: string) {
   const { error } = await supabase.from("posts").delete().eq("id", postId).eq("author_id", authorId);
   if (error) throw new Error(error.message);

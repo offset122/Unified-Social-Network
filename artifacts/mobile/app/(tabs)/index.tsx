@@ -1,10 +1,11 @@
-import React, { useState, useCallback, useRef, useEffect } from "react";
+import React, { useState, useCallback, useRef, useEffect, useMemo } from "react";
 import {
   View, Text, StyleSheet, FlatList, Pressable, Platform,
   RefreshControl, ScrollView, Image, Animated, Dimensions,
   Modal, TextInput, ActivityIndicator, Alert,
 } from "react-native";
 import * as ImagePicker from "expo-image-picker";
+import * as Haptics from "expo-haptics";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Link, Redirect, useRouter } from "expo-router";
 import { Feather } from "@expo/vector-icons";
@@ -20,10 +21,12 @@ import {
   fetchFeed, fetchStories, likePost, unlikePost, savePost, unsavePost,
   createComment, fetchComments, resolveMediaUrl, uploadMedia,
   fetchUnreadNotificationCount, generateAICaption, timeAgo, formatCount,
+  fetchRankedFeed, incrementPostShares,
   deletePost, updatePostVisibility, followUser, unfollowUser, isFollowing, createReport,
   type Post, type Comment, type Profile,
 } from "@/lib/db";
 import AICommentSuggestions from "@/components/ai/AICommentSuggestions";
+import { Avatar } from "@/components/Avatar";
 import { supabase } from "@/lib/supabase";
 import { Share } from "react-native";
 import VibeLogo from "@/components/VibeLogo";
@@ -32,27 +35,6 @@ const { width: SCREEN_WIDTH } = Dimensions.get("window");
 const isTablet = SCREEN_WIDTH >= 768;
 const CARD_MARGIN = isTablet ? 24 : 12;
 const MAX_CARD_WIDTH = isTablet ? 600 : SCREEN_WIDTH;
-
-// ─── Avatar ───────────────────────────────────────────────────────────────────
-
-function Avatar({ name, avatarUrl, size }: { name: string; avatarUrl?: string | null; size: number }) {
-  const [err, setErr] = useState(false);
-  const initials = name.split(" ").map(w => w[0]).join("").slice(0, 2).toUpperCase();
-  const hue = name.split("").reduce((a, c) => a + c.charCodeAt(0), 0) % 360;
-  if (avatarUrl && !err) {
-    return (
-      <Image source={{ uri: resolveMediaUrl(avatarUrl) }}
-        style={{ width: size, height: size, borderRadius: size / 2 }}
-        onError={() => setErr(true)} />
-    );
-  }
-  return (
-    <LinearGradient colors={["#7c3aed", "#4f46e5"]}
-      style={{ width: size, height: size, borderRadius: size / 2, alignItems: "center", justifyContent: "center" }}>
-      <Text style={{ color: "#fff", fontSize: size * 0.36, fontWeight: "700" }}>{initials}</Text>
-    </LinearGradient>
-  );
-}
 
 // ─── Story Bar ────────────────────────────────────────────────────────────────
 
@@ -122,9 +104,9 @@ function StoryBar({ userId }: { userId: string }) {
 
 // ─── Comment Sheet ────────────────────────────────────────────────────────────
 
-function CommentSheet({ postId, visible, onClose, userId, colors }: {
+function CommentSheet({ postId, visible, onClose, userId, colors, onRequireAuth }: {
   postId: string; visible: boolean; onClose: () => void;
-  userId: string; colors: any;
+  userId: string; colors: any; onRequireAuth?: () => void;
 }) {
   const qc = useQueryClient();
   const [text, setText] = useState("");
@@ -135,15 +117,20 @@ function CommentSheet({ postId, visible, onClose, userId, colors }: {
     enabled: visible && !!postId,
   });
 
+  const [submitError, setSubmitError] = useState("");
+
   const handleSubmit = async () => {
     if (!text.trim()) return;
-    if (!userId) return;
+    if (!userId) { onRequireAuth?.(); return; }
     setSubmitting(true);
+    setSubmitError("");
     try {
       await createComment(postId, userId, text.trim());
       setText("");
       qc.invalidateQueries({ queryKey: ["comments", postId] });
       qc.invalidateQueries({ queryKey: ["feed"] });
+    } catch (e: any) {
+      setSubmitError(e?.message ?? "Could not post comment. Please try again.");
     } finally {
       setSubmitting(false);
     }
@@ -173,6 +160,9 @@ function CommentSheet({ postId, visible, onClose, userId, colors }: {
           ListEmptyComponent={<Text style={{ textAlign: "center", color: colors.mutedForeground, marginTop: 40 }}>No comments yet. Be first!</Text>}
         />
         <View style={[styles.commentInput, { borderTopColor: colors.border, backgroundColor: colors.background }]}>
+          {!!submitError && (
+            <Text style={{ color: "#ef4444", fontSize: 12, paddingHorizontal: 12, paddingBottom: 4 }}>{submitError}</Text>
+          )}
           <AICommentSuggestions
             postContent={(comments as Comment[])[0]?.content ?? ""}
             onSelect={t => setText(t)}
@@ -227,7 +217,7 @@ function VisibilityBadge({ visibility }: { visibility: string }) {
 
 // ─── Post Card ────────────────────────────────────────────────────────────────
 
-function PostCard({ post, userId, colors, onRequireAuth, onDeleted, followUserId }: {
+const PostCard = React.memo(function PostCard({ post, userId, colors, onRequireAuth, onDeleted, followUserId }: {
   post: Post; userId: string; colors: any; onRequireAuth?: () => void;
   onDeleted?: (id: string) => void;
   followUserId?: string;
@@ -263,6 +253,7 @@ function PostCard({ post, userId, colors, onRequireAuth, onDeleted, followUserId
         Animated.spring(likeScale, { toValue: 1.5, useNativeDriver: true, speed: 80, bounciness: 14 }),
         Animated.spring(likeScale, { toValue: 1, useNativeDriver: true, speed: 80 }),
       ]).start();
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
     }
     const fn = next ? likePost : unlikePost;
     fn(userId, post.id).catch(() => { setLiked(!next); setLikes(l => l + (next ? -1 : 1)); });
@@ -502,7 +493,7 @@ function PostCard({ post, userId, colors, onRequireAuth, onDeleted, followUserId
               setShares(s => s + 1);
               const result = await Share.share({ message: post.content ? `${post.content} — https://vibe.app/post/${post.id}` : `Check this out on Vibe! https://vibe.app/post/${post.id}` });
               if (result.action === Share.sharedAction) {
-                await supabase.from("posts").update({ shares_count: shares + 1 }).eq("id", post.id);
+                await incrementPostShares(post.id);
               } else {
                 setShares(s => s - 1);
               }
@@ -524,7 +515,37 @@ function PostCard({ post, userId, colors, onRequireAuth, onDeleted, followUserId
         </Text>
       )}
 
-      <CommentSheet postId={post.id} visible={commentOpen} onClose={() => setCommentOpen(false)} userId={userId} colors={colors} />
+      <CommentSheet postId={post.id} visible={commentOpen} onClose={() => setCommentOpen(false)} userId={userId} colors={colors} onRequireAuth={onRequireAuth} />
+    </View>
+  );
+});
+
+// ─── Skeletons ────────────────────────────────────────────────────────────────
+
+function SkeletonCard({ colors }: { colors: any }) {
+  const base = (w: string | number, h: number, r = 8) => ({
+    width: w as any, height: h, borderRadius: r,
+    backgroundColor: colors.muted, opacity: 0.5,
+  });
+  return (
+    <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]}>
+      <View style={{ flexDirection: "row", alignItems: "center", padding: 14, gap: 10 }}>
+        <View style={base(42, 42, 21)} />
+        <View style={{ flex: 1, gap: 6 }}>
+          <View style={base(120, 12, 6)} />
+          <View style={base(80, 10, 5)} />
+        </View>
+      </View>
+      <View style={{ paddingHorizontal: 14, paddingBottom: 12, gap: 6 }}>
+        <View style={base("90%", 12, 6)} />
+        <View style={base("60%", 12, 6)} />
+      </View>
+      <View style={[base("100%", 200, 0), { borderRadius: 0 }]} />
+      <View style={{ flexDirection: "row", gap: 18, padding: 14 }}>
+        <View style={base(60, 16, 8)} />
+        <View style={base(60, 16, 8)} />
+        <View style={base(60, 16, 8)} />
+      </View>
     </View>
   );
 }
@@ -560,9 +581,13 @@ export default function HomeScreen() {
   const [hasMore, setHasMore] = useState(true);
   const [feedMode, setFeedMode] = useState<"latest" | "foryou">("latest");
 
+  const [isRefreshing, setIsRefreshing] = useState(false);
+
   const { data, isLoading, error, isError, refetch } = useQuery({
-    queryKey: ["feed"],
-    queryFn: () => fetchFeed(user?.id ?? "", undefined),
+    queryKey: ["feed", feedMode],
+    queryFn: () => (feedMode === "foryou"
+      ? fetchRankedFeed(user?.id ?? "", undefined)
+      : fetchFeed(user?.id ?? "", undefined)),
     enabled: isAuthenticated || isGuest || true,
   });
 
@@ -586,15 +611,6 @@ export default function HomeScreen() {
   }, [data]);
 
   useEffect(() => {
-    if (feedMode === "foryou") {
-      setPosts(prev => [...prev].sort((a, b) =>
-        ((b.likes_count ?? 0) + (b.comments_count ?? 0) * 2 + (b.views_count ?? 0) * 0.5) -
-        ((a.likes_count ?? 0) + (a.comments_count ?? 0) * 2 + (a.views_count ?? 0) * 0.5)
-      ));
-    }
-  }, [feedMode]);
-
-  useEffect(() => {
     if (!user?.id) return;
     const channelName = `feed-updates-${user.id}-${Date.now()}`;
     const channel = supabase.channel(channelName)
@@ -608,7 +624,9 @@ export default function HomeScreen() {
     if (loadingMore || !cursor || !hasMore) return;
     setLoadingMore(true);
     try {
-      const more = await fetchFeed(user?.id ?? "", cursor);
+      const more = feedMode === "foryou"
+        ? await fetchRankedFeed(user?.id ?? "", cursor)
+        : await fetchFeed(user?.id ?? "", cursor);
       if (more.length > 0) {
         setPosts(p => {
           const existingIds = new Set(p.map(x => x.id));
@@ -625,11 +643,29 @@ export default function HomeScreen() {
     } finally {
       setLoadingMore(false);
     }
-  }, [loadingMore, cursor, hasMore, user?.id]);
+  }, [loadingMore, cursor, hasMore, user?.id, feedMode]);
 
   const handleDeleted = useCallback((id: string) => {
     setPosts(p => p.filter(x => x.id !== id));
   }, []);
+
+  const handleRequireAuth = useCallback(() => setAuthPromptVisible(true), []);
+
+  const renderItem = useCallback(({ item }: { item: Post }) => {
+    const showFollow = !!user?.id && user.id !== item.author_id;
+    return (
+      <View style={containerStyle}>
+        <PostCard
+          post={item}
+          userId={user?.id ?? ""}
+          colors={colors}
+          onRequireAuth={handleRequireAuth}
+          onDeleted={handleDeleted}
+          followUserId={showFollow ? item.author_id : undefined}
+        />
+      </View>
+    );
+  }, [user?.id, colors, handleRequireAuth, handleDeleted]);
 
   const router = useRouter();
 
@@ -666,25 +702,21 @@ export default function HomeScreen() {
         data={posts}
         keyExtractor={p => p.id}
         showsVerticalScrollIndicator={false}
-        refreshControl={<RefreshControl refreshing={isLoading && posts.length === 0} onRefresh={() => { setHasMore(true); refetch(); }} tintColor={colors.primary} />}
+        refreshControl={
+          <RefreshControl
+            refreshing={isRefreshing || (isLoading && posts.length === 0)}
+            onRefresh={async () => {
+              setIsRefreshing(true);
+              setHasMore(true);
+              try { await refetch(); } finally { setIsRefreshing(false); }
+            }}
+            tintColor={colors.primary}
+          />
+        }
         onEndReached={loadMore}
         onEndReachedThreshold={0.5}
         ListHeaderComponent={<StoryBar userId={user?.id ?? ""} />}
-        renderItem={({ item }) => {
-          const showFollow = !!user?.id && user.id !== item.author_id;
-          return (
-            <View style={containerStyle}>
-              <PostCard
-                post={item}
-                userId={user?.id ?? ""}
-                colors={colors}
-                onRequireAuth={() => setAuthPromptVisible(true)}
-                onDeleted={handleDeleted}
-                followUserId={showFollow ? item.author_id : undefined}
-              />
-            </View>
-          );
-        }}
+        renderItem={renderItem}
         ItemSeparatorComponent={() => <View style={{ height: 10 }} />}
         ListFooterComponent={
           loadingMore
@@ -715,7 +747,13 @@ export default function HomeScreen() {
               </Pressable>
             </View>
           )
-        ) : <ActivityIndicator color={colors.primary} style={{ marginTop: 60 }} />}
+        ) : (
+          <View style={{ gap: 12, paddingTop: 12 }}>
+            <SkeletonCard colors={colors} />
+            <SkeletonCard colors={colors} />
+            <SkeletonCard colors={colors} />
+          </View>
+        )}
         contentContainerStyle={{ paddingBottom: insets.bottom + 90 }}
       />
       <AuthPromptModal

@@ -9,22 +9,31 @@ import { LinearGradient } from "expo-linear-gradient";
 import { Feather } from "@expo/vector-icons";
 import { AntDesign } from "@expo/vector-icons";
 import { Ionicons } from "@expo/vector-icons";
+import { LongPressGestureHandler, State as GHState } from "react-native-gesture-handler";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import * as Haptics from "expo-haptics";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useFocusEffect, router, Link } from "expo-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/lib/auth";
 import AuthPromptModal from "@/components/AuthPromptModal";
-import { useColors } from "@/hooks/useColors";
 import {
   fetchReels, likePost, unlikePost, savePost, unsavePost,
   createComment, fetchComments, resolveMediaUrl, formatCount, timeAgo,
-  incrementPostViews, followUser, unfollowUser, type Post, type Comment, type Profile,
+  incrementPostViews, incrementPostShares, followUser, unfollowUser,
+  type Post, type Comment, type Profile,
 } from "@/lib/db";
 import { supabase } from "@/lib/supabase";
 import AICommentSuggestions from "@/components/ai/AICommentSuggestions";
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get("window");
-const REEL_HEIGHT = Platform.OS === "web" ? Math.min(640, SCREEN_HEIGHT - 100) : SCREEN_HEIGHT;
+const isWeb = Platform.OS === "web";
+const REEL_HEIGHT = isWeb ? Math.min(640, SCREEN_HEIGHT - 100) : SCREEN_HEIGHT;
+const MUTE_KEY = "reels_muted";
+
+function haptic(style: Haptics.ImpactFeedbackStyle) {
+  if (!isWeb) Haptics.impactAsync(style).catch(() => {});
+}
 
 function Avatar({ name, avatarUrl, size }: { name: string; avatarUrl?: string | null; size: number }) {
   const [err, setErr] = useState(false);
@@ -38,34 +47,64 @@ function Avatar({ name, avatarUrl, size }: { name: string; avatarUrl?: string | 
   );
 }
 
-function VideoProgress({ progress, duration }: { progress: number; duration: number }) {
+function VideoProgress({ progress, duration, onScrub }: { progress: number; duration: number; onScrub?: (ratio: number) => void }) {
   const pct = duration > 0 ? Math.min(progress / duration, 1) : 0;
-  return <View style={S.progressBar}><View style={[S.progressFill, { width: `${pct * 100}%` }]} /></View>;
+  const [barW, setBarW] = useState(0);
+  const [active, setActive] = useState(false);
+
+  const handle = (x: number) => {
+    if (!barW || duration <= 0) return;
+    onScrub?.(Math.min(Math.max(x / barW, 0), 1));
+  };
+
+  return (
+    <Pressable
+      hitSlop={8}
+      onPressIn={(e) => { setActive(true); handle(e.nativeEvent.locationX); }}
+      onPressOut={() => setActive(false)}
+      onPress={(e) => handle(e.nativeEvent.locationX)}
+      onLayout={(e) => setBarW(e.nativeEvent.layout.width)}
+      style={S.progressBar}
+      accessibilityRole="adjustable"
+      accessibilityLabel="Video progress"
+    >
+      <View style={[S.progressFill, { width: `${pct * 100}%`, height: active ? 4 : undefined }]} />
+    </Pressable>
+  );
 }
 
-function ReelComments({ postId, postContent, visible, onClose, userId, onCountChange }: {
-  postId: string; postContent: string; visible: boolean; onClose: () => void; userId: string; onCountChange?: (n: number) => void;
+function ReelComments({ postId, postContent, visible, onClose, userId, onCountChange, onRequireAuth }: {
+  postId: string; postContent: string; visible: boolean; onClose: () => void;
+  userId: string; onCountChange?: (n: number) => void; onRequireAuth: () => void;
 }) {
   const qc = useQueryClient();
   const [text, setText] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState("");
   const { data: comments = [] } = useQuery({
     queryKey: ["reel-comments", postId],
     queryFn: () => fetchComments(postId),
     enabled: visible,
+    staleTime: 30_000,
   });
 
   useEffect(() => { if (comments.length > 0) onCountChange?.(comments.length); }, [comments.length]);
 
   const submit = async () => {
-    if (!text.trim() || !userId) return;
+    if (!text.trim()) return;
+    if (!userId) { onRequireAuth(); return; }
     setSubmitting(true);
+    setError("");
     try {
       await createComment(postId, userId, text.trim());
       setText("");
       qc.invalidateQueries({ queryKey: ["reel-comments", postId] });
       qc.invalidateQueries({ queryKey: ["reels"] });
-    } finally { setSubmitting(false); }
+    } catch (e: any) {
+      setError(e?.message ?? "Could not post comment. Please try again.");
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   return (
@@ -73,7 +112,9 @@ function ReelComments({ postId, postContent, visible, onClose, userId, onCountCh
       <View style={{ flex: 1, backgroundColor: "#18181b" }}>
         <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", padding: 16, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: "#3f3f46" }}>
           <Text style={{ color: "#fff", fontSize: 17, fontWeight: "700" }}>Comments ({(comments as Comment[]).length})</Text>
-          <Pressable onPress={onClose} hitSlop={8}><Feather name="x" size={20} color="#fff" /></Pressable>
+          <Pressable onPress={onClose} hitSlop={8} accessibilityRole="button" accessibilityLabel="Close comments">
+            <Feather name="x" size={20} color="#fff" />
+          </Pressable>
         </View>
         <FlatList
           data={comments as Comment[]}
@@ -93,6 +134,9 @@ function ReelComments({ postId, postContent, visible, onClose, userId, onCountCh
         />
         <View style={{ borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: "#3f3f46" }}>
           <AICommentSuggestions postContent={postContent} onSelect={(s) => setText(s)} />
+          {!!error && (
+            <Text style={{ color: "#ef4444", fontSize: 12, paddingHorizontal: 16, paddingBottom: 4 }}>{error}</Text>
+          )}
           <View style={{ flexDirection: "row", gap: 10, padding: 12 }}>
             <TextInput
               style={{ flex: 1, backgroundColor: "#27272a", borderRadius: 22, paddingHorizontal: 16, paddingVertical: 10, color: "#fff", fontSize: 14 }}
@@ -100,7 +144,8 @@ function ReelComments({ postId, postContent, visible, onClose, userId, onCountCh
               value={text} onChangeText={setText} returnKeyType="send" onSubmitEditing={submit}
             />
             <Pressable onPress={submit} disabled={submitting || !text.trim()}
-              style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: text.trim() ? "#7c3aed" : "#3f3f46", alignItems: "center", justifyContent: "center" }}>
+              style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: text.trim() ? "#7c3aed" : "#3f3f46", alignItems: "center", justifyContent: "center" }}
+              accessibilityRole="button" accessibilityLabel="Post comment">
               {submitting ? <ActivityIndicator color="#fff" size="small" /> : <Feather name="send" size={16} color="#fff" />}
             </Pressable>
           </View>
@@ -110,12 +155,18 @@ function ReelComments({ postId, postContent, visible, onClose, userId, onCountCh
   );
 }
 
-function ReelCard({ item, isVisible }: { item: Post; isVisible: boolean }) {
+function ReelCard({ item, isActive, isMuted, onToggleMute }: {
+  item: Post; isActive: boolean; isMuted: boolean; onToggleMute: () => void;
+}) {
   const { user } = useAuth();
   const qc = useQueryClient();
+  const videoRef = useRef<Video | null>(null);
 
-  const [isMuted, setIsMuted] = useState(false);
+  const [rate, setRate] = useState(1);
   const [isPaused, setIsPaused] = useState(false);
+  const [isBuffering, setIsBuffering] = useState(false);
+  const [loadError, setLoadError] = useState(false);
+  const [videoKey, setVideoKey] = useState(0);
   const [position, setPosition] = useState(0);
   const [duration, setDuration] = useState(0);
   const [isLiked, setIsLiked] = useState(item.is_liked ?? false);
@@ -123,6 +174,8 @@ function ReelCard({ item, isVisible }: { item: Post; isVisible: boolean }) {
   const [isSaved, setIsSaved] = useState(item.is_saved ?? false);
   const [isFollowing, setIsFollowing] = useState(false);
   const [commentOpen, setCommentOpen] = useState(false);
+  const [authPrompt, setAuthPrompt] = useState(false);
+  const [captionExpanded, setCaptionExpanded] = useState(false);
   const [commentsCount, setCommentsCount] = useState(item.comments_count);
   const [sharesCount, setSharesCount] = useState(item.shares_count);
   const pauseOpacity = useRef(new Animated.Value(0)).current;
@@ -133,7 +186,7 @@ function ReelCard({ item, isVisible }: { item: Post; isVisible: boolean }) {
   const isOwnReel = user?.id === item.author_id;
 
   const handleFollow = async () => {
-    if (!user?.id) return;
+    if (!user?.id) { setAuthPrompt(true); return; }
     const next = !isFollowing;
     setIsFollowing(next);
     try {
@@ -148,11 +201,6 @@ function ReelCard({ item, isVisible }: { item: Post; isVisible: boolean }) {
   const videoAspect = item.media_width && item.media_height ? item.media_width / item.media_height : null;
   const isPortrait = videoAspect !== null && videoAspect < 1;
   const isLandscape = videoAspect !== null && videoAspect > 1.3;
-
-  // Play/pause driven entirely by shouldPlay prop — no imperative calls needed
-  useEffect(() => {
-    if (isVisible) incrementPostViews(item.id);
-  }, [isVisible]);
 
   const animateLike = () => {
     Animated.sequence([
@@ -178,6 +226,7 @@ function ReelCard({ item, isVisible }: { item: Post; isVisible: boolean }) {
         setLikesCount(c => c + 1);
         animateLike();
         animateDoubleTapHeart();
+        haptic(Haptics.ImpactFeedbackStyle.Medium);
         likePost(user?.id ?? "", item.id).catch(() => { setIsLiked(false); setLikesCount(c => c - 1); });
       } else {
         animateDoubleTapHeart();
@@ -194,38 +243,53 @@ function ReelCard({ item, isVisible }: { item: Post; isVisible: boolean }) {
   };
 
   const handleLike = () => {
-    if (!user?.id) return;
+    if (!user?.id) { setAuthPrompt(true); return; }
     const next = !isLiked;
     setIsLiked(next);
     setLikesCount(c => c + (next ? 1 : -1));
     animateLike();
+    haptic(Haptics.ImpactFeedbackStyle.Light);
     const fn = next ? likePost : unlikePost;
     fn(user.id, item.id).catch(() => { setIsLiked(!next); setLikesCount(c => c + (next ? -1 : 1)); });
   };
 
   const handleSave = () => {
-    if (!user?.id) return;
+    if (!user?.id) { setAuthPrompt(true); return; }
     const next = !isSaved;
     setIsSaved(next);
+    haptic(Haptics.ImpactFeedbackStyle.Light);
     const fn = next ? savePost : unsavePost;
     fn(user.id, item.id).catch(() => setIsSaved(!next));
   };
 
   const handleShare = async () => {
-    const prev = sharesCount;
     try {
       setSharesCount(c => c + 1);
       const result = await Share.share({ message: `🎬 Check out this reel by @${profile?.username}: ${item.content} https://vibe.app/reel/${item.id}` });
       if (result.action === Share.sharedAction) {
-        await supabase.from("posts").update({ shares_count: prev + 1 }).eq("id", item.id);
+        await incrementPostShares(item.id);
       } else {
-        setSharesCount(prev);
+        setSharesCount(c => c - 1);
       }
-    } catch { setSharesCount(prev); }
+    } catch { setSharesCount(c => c - 1); }
   };
 
-  const hashtags = (item.content ?? "").split(/\s+/).filter(w => w.startsWith("#")).slice(0, 5);
-  const caption = (item.content ?? "").split(/\s+/).filter(w => !w.startsWith("#")).join(" ");
+  const openComments = () => {
+    if (!user?.id) { setAuthPrompt(true); return; }
+    setCommentOpen(true);
+  };
+
+  const scrub = (ratio: number) => {
+    if (duration <= 0) return;
+    const target = Math.round(ratio * duration);
+    setPosition(target);
+    videoRef.current?.setPositionAsync(target).catch(() => {});
+  };
+
+  const words = (item.content ?? "").split(/\s+/);
+  const hashtags = words.filter(w => w.startsWith("#")).slice(0, 5);
+  const caption = words.filter(w => !w.startsWith("#")).join(" ");
+  const captionTruncatable = caption.length > 90;
 
   const getVideoStyle = (): any => {
     if (isLandscape) {
@@ -237,27 +301,62 @@ function ReelCard({ item, isVisible }: { item: Post; isVisible: boolean }) {
   return (
     <View style={[S.reelCard, { width: SCREEN_WIDTH, height: REEL_HEIGHT }]}>
       {videoUri ? (
-        <Pressable onPress={handleTap} style={StyleSheet.absoluteFill}>
-          <Video
-            source={{ uri: videoUri }}
-            style={getVideoStyle()}
-            resizeMode={isLandscape ? ResizeMode.CONTAIN : ResizeMode.COVER}
-            isLooping isMuted={isMuted}
-            shouldPlay={isVisible && !isPaused}
-            onPlaybackStatusUpdate={(s: AVPlaybackStatus) => {
-              if (!s.isLoaded) return;
-              setPosition(s.positionMillis ?? 0);
-              setDuration(s.durationMillis ?? 0);
-            }}
-            useNativeControls={false}
-          />
-        </Pressable>
+        <LongPressGestureHandler
+          minDurationMs={350}
+          maxDist={40}
+          onHandlerStateChange={(e) => {
+            if (e.nativeEvent.state === GHState.ACTIVE) setRate(2);
+            else if (e.nativeEvent.state === GHState.END || e.nativeEvent.state === GHState.CANCELLED || e.nativeEvent.state === GHState.FAILED) setRate(1);
+          }}
+        >
+          <Pressable onPress={handleTap} style={StyleSheet.absoluteFill} accessibilityRole="button" accessibilityLabel="Toggle play/pause, double-tap to like">
+            <Video
+              key={videoKey}
+              ref={(r) => { videoRef.current = r; }}
+              source={{ uri: videoUri }}
+              style={getVideoStyle()}
+              resizeMode={isLandscape ? ResizeMode.CONTAIN : ResizeMode.COVER}
+              isLooping
+              isMuted={isMuted}
+              rate={rate}
+              shouldCorrectPitch
+              shouldPlay={isActive && !isPaused}
+              onLoadStart={() => { setLoadError(false); setIsBuffering(true); }}
+              onReadyForDisplay={() => setIsBuffering(false)}
+              onPlaybackStatusUpdate={(s: AVPlaybackStatus) => {
+                if (!s.isLoaded) {
+                  if ((s as any).error) setLoadError(true);
+                  return;
+                }
+                setIsBuffering(!!s.isBuffering);
+                setPosition(s.positionMillis ?? 0);
+                setDuration(s.durationMillis ?? 0);
+              }}
+              useNativeControls={false}
+            />
+          </Pressable>
+        </LongPressGestureHandler>
       ) : (
         <LinearGradient colors={["#1a0533", "#2d1b69", "#0f0a1e"]} style={StyleSheet.absoluteFill}>
           <View style={{ flex: 1, alignItems: "center", justifyContent: "center" }}>
             <Feather name="film" size={56} color="rgba(255,255,255,0.2)" />
           </View>
         </LinearGradient>
+      )}
+
+      {/* Buffering / error overlays */}
+      {videoUri && isActive && isBuffering && !loadError && (
+        <View style={S.bufferOverlay} pointerEvents="none">
+          <ActivityIndicator color="rgba(255,255,255,0.9)" size="large" />
+        </View>
+      )}
+      {videoUri && loadError && (
+        <View style={S.bufferOverlay}>
+          <Pressable onPress={() => { setLoadError(false); setVideoKey(k => k + 1); }} style={S.retryChip} accessibilityRole="button" accessibilityLabel="Retry video">
+            <Feather name="refresh-cw" size={14} color="#fff" />
+            <Text style={{ color: "#fff", fontSize: 13, fontWeight: "700" }}>Tap to retry</Text>
+          </Pressable>
+        </View>
       )}
 
       {/* Double-tap heart */}
@@ -267,14 +366,15 @@ function ReelCard({ item, isVisible }: { item: Post; isVisible: boolean }) {
 
       <Animated.View style={[S.pauseOverlay, { opacity: pauseOpacity, pointerEvents: "none" } as any]}>
         <View style={S.pauseIcon}>
-          <Feather name={isPaused ? "play" : "pause"} size={36} color="#fff" />
+          <Feather name={rate === 2 ? "fast-forward" : isPaused ? "play" : "pause"} size={rate === 2 ? 30 : 36} color="#fff" />
         </View>
+        {rate === 2 && <Text style={{ color: "#fff", fontSize: 12, fontWeight: "700", marginTop: 6 }}>2× speed</Text>}
       </Animated.View>
 
       <LinearGradient colors={["rgba(0,0,0,0.55)", "transparent"]} style={[S.topGrad, { pointerEvents: "none" } as any]} />
       <LinearGradient colors={["transparent", "rgba(0,0,0,0.9)"]} style={[S.bottomGrad, { pointerEvents: "none" } as any]} />
 
-      <VideoProgress progress={position} duration={duration} />
+      <VideoProgress progress={position} duration={duration} onScrub={scrub} />
 
       {/* Aspect badge */}
       {videoAspect !== null && (
@@ -289,7 +389,8 @@ function ReelCard({ item, isVisible }: { item: Post; isVisible: boolean }) {
       {/* Bottom left info */}
       <View style={S.bottomLeft}>
         <Link href={`/user/${item.author_id}` as any} asChild>
-          <Pressable style={S.authorRow}>
+          <Pressable style={({ pressed }) => [S.authorRow, pressed && { opacity: 0.8 }]}
+            accessibilityRole="link" accessibilityLabel={`View ${profile?.display_name ?? "user"}'s profile`}>
             <Avatar name={profile?.display_name ?? "U"} avatarUrl={profile?.avatar_url} size={42} />
             <View style={{ marginLeft: 10 }}>
               <Text style={S.authorName}>{profile?.display_name ?? "User"}</Text>
@@ -298,72 +399,109 @@ function ReelCard({ item, isVisible }: { item: Post; isVisible: boolean }) {
           </Pressable>
         </Link>
         {!isOwnReel && (
-          <Pressable onPress={handleFollow} style={[S.followBtn, isFollowing && S.followBtnActive]}>
+          <Pressable onPress={handleFollow} style={({ pressed }) => [S.followBtn, isFollowing && S.followBtnActive, pressed && { opacity: 0.8 }]}
+            accessibilityRole="button" accessibilityState={{ selected: isFollowing }} accessibilityLabel={isFollowing ? "Unfollow" : "Follow"}>
             <Text style={[S.followBtnText, isFollowing && { color: "rgba(255,255,255,0.7)" }]}>
               {isFollowing ? "Following" : "+ Follow"}
             </Text>
           </Pressable>
         )}
-        {!!caption && <Text style={S.caption} numberOfLines={3}>{caption}</Text>}
+        {!!caption && (
+          <Pressable onPress={() => captionTruncatable && setCaptionExpanded(x => !x)} disabled={!captionTruncatable}>
+            <Text style={S.caption} numberOfLines={captionExpanded ? undefined : 2}>
+              {caption}
+              {captionTruncatable && !captionExpanded && (
+                <Text style={{ color: "rgba(255,255,255,0.6)", fontWeight: "700" }}>  more</Text>
+              )}
+            </Text>
+          </Pressable>
+        )}
         {hashtags.length > 0 && (
           <View style={S.hashtagRow}>
-            {hashtags.map((t, i) => <Text key={i} style={S.hashtag}>{t}</Text>)}
+            {hashtags.map((t, i) => (
+              <Pressable key={i} onPress={() => router.push(`/search?q=${encodeURIComponent(t)}` as any)}>
+                <Text style={S.hashtag}>{t}</Text>
+              </Pressable>
+            ))}
           </View>
         )}
       </View>
 
       {/* Right actions */}
       <View style={S.sideActions}>
-        <Pressable onPress={handleLike} style={S.sideBtn}>
+        <Pressable onPress={handleLike} style={S.sideBtn} accessibilityRole="button" accessibilityState={{ selected: isLiked }} accessibilityLabel={isLiked ? "Unlike" : "Like"}>
           <Animated.View style={[S.sideBtnCircle, isLiked && S.sideBtnCircleActive, { transform: [{ scale: likeScale }] }]}>
             <AntDesign name={(isLiked ? "heart" : "hearto") as any} size={24} color={isLiked ? "#ff3b5c" : "#fff"} />
           </Animated.View>
-          <Text style={[S.sideCount, isLiked && { color: "#ff3b5c" }]}>{formatCount(likesCount)}</Text>
+          <Text style={[S.sideCount, isLiked && { color: "#ff3b5c" }]} accessibilityLiveRegion="polite">{formatCount(likesCount)}</Text>
         </Pressable>
 
-        <Pressable onPress={() => setCommentOpen(true)} style={S.sideBtn}>
+        <Pressable onPress={openComments} style={S.sideBtn} accessibilityRole="button" accessibilityLabel="Open comments">
           <View style={S.sideBtnCircle}>
             <Feather name="message-circle" size={24} color="#fff" />
           </View>
           <Text style={S.sideCount}>{formatCount(commentsCount)}</Text>
         </Pressable>
 
-        <Pressable onPress={handleShare} style={S.sideBtn}>
+        <Pressable onPress={handleShare} style={S.sideBtn} accessibilityRole="button" accessibilityLabel="Share reel">
           <View style={S.sideBtnCircle}>
             <Feather name="share-2" size={22} color="#fff" />
           </View>
           <Text style={S.sideCount}>{formatCount(sharesCount)}</Text>
         </Pressable>
 
-        <Pressable onPress={handleSave} style={S.sideBtn}>
+        <Pressable onPress={handleSave} style={S.sideBtn} accessibilityRole="button" accessibilityState={{ selected: isSaved }} accessibilityLabel={isSaved ? "Remove from saved" : "Save reel"}>
           <View style={[S.sideBtnCircle, isSaved && { backgroundColor: "rgba(167,139,250,0.25)", borderColor: "rgba(167,139,250,0.5)" }]}>
             <Ionicons name={isSaved ? "bookmark" : "bookmark-outline"} size={22} color={isSaved ? "#a78bfa" : "#fff"} />
           </View>
           <Text style={[S.sideCount, isSaved && { color: "#a78bfa" }]}>{isSaved ? "Saved" : "Save"}</Text>
         </Pressable>
 
-        <Pressable onPress={() => setIsMuted(m => !m)} style={S.sideBtn}>
+        <Pressable onPress={onToggleMute} style={S.sideBtn} accessibilityRole="button" accessibilityState={{ selected: isMuted }} accessibilityLabel={isMuted ? "Unmute" : "Mute"}>
           <View style={S.sideBtnCircle}>
             <Feather name={isMuted ? "volume-x" : "volume-2"} size={20} color="#fff" />
           </View>
         </Pressable>
       </View>
 
-      <ReelComments postId={item.id} postContent={item.content ?? ""} visible={commentOpen} onClose={() => setCommentOpen(false)} userId={user?.id ?? ""} onCountChange={setCommentsCount} />
+      <ReelComments
+        postId={item.id} postContent={item.content ?? ""} visible={commentOpen}
+        onClose={() => setCommentOpen(false)} userId={user?.id ?? ""}
+        onCountChange={setCommentsCount} onRequireAuth={() => setAuthPrompt(true)}
+      />
+
+      <AuthPromptModal
+        visible={authPrompt}
+        onDismiss={() => setAuthPrompt(false)}
+        reason="Sign up to like, comment, and save reels."
+      />
     </View>
   );
 }
 
 export default function ReelsScreen() {
-  const { user, isAuthenticated, isGuest } = useAuth();
+  const { user } = useAuth();
   const insets = useSafeAreaInsets();
-  const isWeb = Platform.OS === "web";
   const [visibleIndex, setVisibleIndex] = useState(0);
   const [tabFocused, setTabFocused] = useState(true);
   const [reels, setReels] = useState<Post[]>([]);
   const [cursor, setCursor] = useState<string | undefined>(undefined);
   const [hasMore, setHasMore] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
+  const [isMuted, setIsMuted] = useState(false);
+  const viewedRef = useRef<Set<string>>(new Set());
+
+  // Persisted global mute preference
+  useEffect(() => {
+    AsyncStorage.getItem(MUTE_KEY).then(v => { if (v !== null) setIsMuted(v === "1"); }).catch(() => {});
+  }, []);
+  const toggleMute = useCallback(() => {
+    setIsMuted(m => {
+      const next = !m;
+      AsyncStorage.setItem(MUTE_KEY, next ? "1" : "0").catch(() => {});
+      return next;
+    });
+  }, []);
 
   // Stop all videos when navigating away from this tab
   useFocusEffect(
@@ -412,24 +550,42 @@ export default function ReelsScreen() {
   const onViewableItemsChanged = useCallback(({ viewableItems }: any) => {
     if (!tabFocused) return;
     const first = viewableItems.find((v: any) => v.isViewable);
-    if (first != null) setVisibleIndex(first.index ?? 0);
-  }, [tabFocused]);
+    if (first != null) {
+      const idx = first.index ?? 0;
+      setVisibleIndex(idx);
+      // Count a view once per reel per session
+      const reel = reels[idx];
+      if (reel && !viewedRef.current.has(reel.id)) {
+        viewedRef.current.add(reel.id);
+        incrementPostViews(reel.id);
+      }
+    }
+  }, [tabFocused, reels]);
 
   const viewabilityConfigCallbackPairs = useRef([{
     viewabilityConfig: { itemVisiblePercentThreshold: 65 },
     onViewableItemsChanged,
   }]);
+  // Keep the pair's callback fresh without recreating the ref object
+  useEffect(() => {
+    viewabilityConfigCallbackPairs.current[0].onViewableItemsChanged = onViewableItemsChanged;
+  }, [onViewableItemsChanged]);
 
   return (
-    <View style={S.container}>
+    <View style={[S.container, !isWeb && { backgroundColor: "#000" }]}>
       {Platform.OS !== "web" && <StatusBar barStyle="light-content" translucent backgroundColor="transparent" />}
 
       {/* Floating header */}
       <View style={[S.header, { paddingTop: isWeb ? 16 : insets.top + 4 }]}>
         <Text style={S.headerTitle}>Reels</Text>
-        <Pressable onPress={() => router.push("/(tabs)/create" as any)} style={S.createBtn}>
-          <Feather name="plus" size={18} color="#fff" />
-        </Pressable>
+        <View style={{ flexDirection: "row", gap: 10 }}>
+          <Pressable onPress={toggleMute} style={S.createBtn} accessibilityRole="button" accessibilityLabel={isMuted ? "Unmute reels" : "Mute reels"}>
+            <Feather name={isMuted ? "volume-x" : "volume-2"} size={18} color="#fff" />
+          </Pressable>
+          <Pressable onPress={() => router.push("/(tabs)/create" as any)} style={S.createBtn} accessibilityRole="button" accessibilityLabel="Create reel">
+            <Feather name="plus" size={18} color="#fff" />
+          </Pressable>
+        </View>
       </View>
 
       {isLoading ? (
@@ -440,7 +596,7 @@ export default function ReelsScreen() {
           <Feather name="alert-circle" size={56} color="#ef4444" />
           <Text style={S.emptyTitle}>Couldn't load reels</Text>
           <Text style={S.emptyDesc}>{(error as any)?.message ?? "Something went wrong."}</Text>
-          <Pressable onPress={() => refetch()} style={S.createFirstBtn}>
+          <Pressable onPress={() => refetch()} style={S.createFirstBtn} accessibilityRole="button" accessibilityLabel="Retry">
             <Feather name="refresh-cw" size={16} color="#fff" />
             <Text style={S.createFirstText}>Retry</Text>
           </Pressable>
@@ -451,11 +607,11 @@ export default function ReelsScreen() {
           <Feather name="film" size={64} color="rgba(255,255,255,0.25)" />
           <Text style={S.emptyTitle}>No Reels Yet</Text>
           <Text style={S.emptyDesc}>Be the first to share a reel!</Text>
-          <Pressable onPress={() => router.push("/(tabs)/create" as any)} style={S.createFirstBtn}>
+          <Pressable onPress={() => router.push("/(tabs)/create" as any)} style={S.createFirstBtn} accessibilityRole="button" accessibilityLabel="Create reel">
             <Feather name="plus" size={18} color="#fff" />
             <Text style={S.createFirstText}>Create Reel</Text>
           </Pressable>
-          <Pressable onPress={() => router.push("/(tabs)/index" as any)} style={[S.createFirstBtn, { backgroundColor: "rgba(255,255,255,0.12)", marginTop: 0 }]}>
+          <Pressable onPress={() => router.push("/(tabs)/index" as any)} style={[S.createFirstBtn, { backgroundColor: "rgba(255,255,255,0.12)", marginTop: 0 }]} accessibilityRole="button" accessibilityLabel="Browse posts">
             <Feather name="home" size={16} color="#fff" />
             <Text style={S.createFirstText}>Browse Posts</Text>
           </Pressable>
@@ -465,7 +621,12 @@ export default function ReelsScreen() {
           data={reels}
           keyExtractor={item => item.id}
           renderItem={({ item, index }) => (
-            <ReelCard item={item} isVisible={tabFocused && visibleIndex === index} />
+            <ReelCard
+              item={item}
+              isActive={tabFocused && visibleIndex === index}
+              isMuted={isMuted}
+              onToggleMute={toggleMute}
+            />
           )}
           onEndReached={loadMore}
           onEndReachedThreshold={0.6}
@@ -511,9 +672,15 @@ const S = StyleSheet.create({
     color: "#fff", fontSize: 22, fontWeight: "800", letterSpacing: -0.5,
     textShadowColor: "rgba(0,0,0,0.5)", textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 4,
   },
-  createBtn: { backgroundColor: "#7c3aed", borderRadius: 20, padding: 8 },
+  createBtn: { backgroundColor: "rgba(124,58,237,0.9)", borderRadius: 20, padding: 8 },
   center: { flex: 1, alignItems: "center", justifyContent: "center" },
-  reelCard: { position: "relative", overflow: "hidden", backgroundColor: "#000" },
+  reelCard: { position: "relative", overflow: "hidden", backgroundColor: "#000", alignSelf: "center" },
+  bufferOverlay: { ...StyleSheet.absoluteFillObject, alignItems: "center", justifyContent: "center", zIndex: 15 },
+  retryChip: {
+    flexDirection: "row", alignItems: "center", gap: 8,
+    backgroundColor: "rgba(0,0,0,0.6)", borderWidth: 1, borderColor: "rgba(255,255,255,0.3)",
+    borderRadius: 22, paddingHorizontal: 18, paddingVertical: 10,
+  },
   pauseOverlay: { ...StyleSheet.absoluteFillObject, alignItems: "center", justifyContent: "center", zIndex: 10 },
   pauseIcon: {
     width: 72, height: 72, borderRadius: 36,
@@ -524,8 +691,8 @@ const S = StyleSheet.create({
   doubleTapHeart: { position: "absolute", top: "40%", left: "50%", marginLeft: -40, zIndex: 30 },
   topGrad: { position: "absolute", top: 0, left: 0, right: 0, height: 130, zIndex: 5 },
   bottomGrad: { position: "absolute", bottom: 0, left: 0, right: 0, height: 360, zIndex: 5 },
-  progressBar: { position: "absolute", top: 0, left: 0, right: 0, height: 2.5, backgroundColor: "rgba(255,255,255,0.18)", zIndex: 20 },
-  progressFill: { height: "100%", backgroundColor: "#7c3aed" },
+  progressBar: { position: "absolute", top: 0, left: 0, right: 0, height: 18, justifyContent: "center", backgroundColor: "transparent", zIndex: 20 },
+  progressFill: { height: 2.5, backgroundColor: "#7c3aed" },
   orientBadge: {
     position: "absolute", top: 8, right: 8, zIndex: 25,
     flexDirection: "row", alignItems: "center",

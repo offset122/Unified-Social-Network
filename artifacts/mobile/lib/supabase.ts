@@ -17,11 +17,16 @@ if (!supabaseUrl || !supabaseAnonKey) {
     EXPO_PUBLIC_SUPABASE_URL: !!supabaseUrl,
     EXPO_PUBLIC_SUPABASE_ANON_KEY: !!supabaseAnonKey,
   });
-} else {
-  console.log("Supabase environment loaded:", { supabaseUrl });
 }
 
-export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
+// Static rendering (expo export) executes route modules at build time, which imports this
+// file. Missing env vars must not throw here or the whole build fails (e.g. on Vercel).
+export const isSupabaseConfigured = Boolean(supabaseUrl && supabaseAnonKey);
+
+export const supabase = createClient(
+  supabaseUrl || "https://placeholder.supabase.co",
+  supabaseAnonKey || "public-anon-key-placeholder",
+  {
   db: {
     schema: "public", // force public schema — avoids PostgREST ambiguity with realtime.messages
   },

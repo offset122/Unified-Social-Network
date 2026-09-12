@@ -12,6 +12,7 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { useColors } from "@/hooks/useColors";
+import { formatBootLog, copyToClipboard } from "@/lib/bootLog";
 
 export type ErrorFallbackProps = {
   error: Error;
@@ -23,6 +24,7 @@ export function ErrorFallback({ error, resetError }: ErrorFallbackProps) {
   const insets = useSafeAreaInsets();
 
   const [isModalVisible, setIsModalVisible] = useState(false);
+  const [copied, setCopied] = useState(false);
 
   const handleRestart = () => {
     resetError();
@@ -31,8 +33,9 @@ export function ErrorFallback({ error, resetError }: ErrorFallbackProps) {
   const formatErrorDetails = (): string => {
     let details = `Error: ${error.message}\n\n`;
     if (error.stack) {
-      details += `Stack Trace:\n${error.stack}`;
+      details += `Stack Trace:\n${error.stack}\n\n`;
     }
+    details += `--- Recent boot log ---\n${formatBootLog()}`;
     return details;
   };
 
@@ -44,23 +47,21 @@ export function ErrorFallback({ error, resetError }: ErrorFallbackProps) {
 
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
-      {__DEV__ ? (
-        <Pressable
-          onPress={() => setIsModalVisible(true)}
-          accessibilityLabel="View error details"
-          accessibilityRole="button"
-          style={({ pressed }) => [
-            styles.topButton,
-            {
-              top: insets.top + 16,
-              backgroundColor: colors.card,
-              opacity: pressed ? 0.8 : 1,
-            },
-          ]}
-        >
-          <Feather name="alert-circle" size={20} color={colors.foreground} />
-        </Pressable>
-      ) : null}
+      <Pressable
+        onPress={() => setIsModalVisible(true)}
+        accessibilityLabel="View error details"
+        accessibilityRole="button"
+        style={({ pressed }) => [
+          styles.topButton,
+          {
+            top: insets.top + 16,
+            backgroundColor: colors.card,
+            opacity: pressed ? 0.8 : 1,
+          },
+        ]}
+      >
+        <Feather name="alert-circle" size={20} color={colors.foreground} />
+      </Pressable>
 
       <View style={styles.content}>
         <Text style={[styles.title, { color: colors.foreground }]}>
@@ -91,10 +92,30 @@ export function ErrorFallback({ error, resetError }: ErrorFallbackProps) {
             Try Again
           </Text>
         </Pressable>
+
+        <Pressable
+          onPress={async () => {
+            const ok = await copyToClipboard(
+              `${error.message}\n\n${error.stack ?? ""}\n\n--- recent log ---\n${formatBootLog()}`
+            );
+            setCopied(ok);
+            setTimeout(() => setCopied(false), 1500);
+          }}
+          style={({ pressed }) => [
+            styles.button,
+            {
+              backgroundColor: colors.secondary,
+              opacity: pressed ? 0.9 : 1,
+            },
+          ]}
+        >
+          <Text style={[styles.buttonText, { color: colors.foreground }]}>
+            {copied ? "Diagnostics copied!" : "Copy diagnostics"}
+          </Text>
+        </Pressable>
       </View>
 
-      {__DEV__ ? (
-        <Modal
+      <Modal
           visible={isModalVisible}
           animationType="slide"
           transparent={true}
@@ -160,7 +181,6 @@ export function ErrorFallback({ error, resetError }: ErrorFallbackProps) {
             </View>
           </View>
         </Modal>
-      ) : null}
     </View>
   );
 }

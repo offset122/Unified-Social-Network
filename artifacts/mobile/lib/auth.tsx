@@ -1,6 +1,7 @@
 import React, {
   createContext, useContext, useState, useEffect, useCallback, useRef, type ReactNode,
 } from "react";
+import { bootLog } from "./bootLog";
 import * as WebBrowser from "expo-web-browser";
 import * as AuthSession from "expo-auth-session";
 import { supabase } from "./supabase";
@@ -70,7 +71,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const prevUserIdRef = useRef<string | null>(null);
 
   useEffect(() => {
+    bootLog.boot("auth: init (getSession)");
     supabase.auth.getSession().then(({ data: { session } }) => {
+      bootLog.boot(`auth: getSession done, user=${session?.user?.id ? session.user.id.slice(0, 8) : "none"}`);
       setSession(session);
       if (session?.user) {
         setUser(mapUser(session.user));
@@ -78,9 +81,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         prevUserIdRef.current = session.user.id;
       }
       setIsLoading(false);
+    }).catch((e) => {
+      bootLog.error(`auth: getSession FAILED: ${e?.message ?? e}`);
+      setIsLoading(false);
     });
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      bootLog.boot(`auth: state change event=${event}`);
       setSession(session);
       if (session?.user) {
         const mappedUser = mapUser(session.user);

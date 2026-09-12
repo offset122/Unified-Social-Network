@@ -112,6 +112,7 @@ export default function SettingsScreen() {
             {[
               { icon: "user" as const, label: "Edit Profile", path: "/edit-profile" },
               { icon: "lock" as const, label: "Change Password", path: "/change-password" },
+              { icon: "activity" as const, label: "Diagnostics", path: "/diagnostics" },
             ].map((item, i, arr) => (
               <Pressable key={item.label} onPress={() => router.push(item.path as any)}
                 style={[styles.row, i < arr.length - 1 && { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border }]}>
