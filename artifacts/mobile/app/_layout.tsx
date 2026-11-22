@@ -18,33 +18,47 @@ import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { AuthProvider, useAuth } from "@/lib/auth";
 import { ThemeProvider } from "@/lib/theme";
 import { ChatThemeProvider } from "@/lib/chatTheme";
+import { ToastProvider } from "@/components/Toast";
 import WelcomeModal from "@/components/WelcomeModal";
 import NotificationBanner from "@/components/NotificationBanner";
 import { mapDbNotificationToApp, type AppNotification } from "@/lib/notifications";
-import { supabase } from "@/lib/supabase";
+import { isSupabaseConfigured, supabase } from "@/lib/supabase";
 import VibeLogo from "@/components/VibeLogo";
 
 SplashScreen.preventAutoHideAsync();
 
 const queryClient = new QueryClient({
   defaultOptions: {
-    queries: { staleTime: 30_000, retry: 1 },
+    queries: { staleTime: 30_000, retry: isSupabaseConfigured ? 1 : false },
   },
 });
 
 function RootLayoutNav() {
   return (
-    <Stack screenOptions={{ headerBackTitle: "Back" }}>
+    <Stack screenOptions={{ headerBackTitle: "Back", headerShown: false }}>
       <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
       <Stack.Screen name="login" options={{ headerShown: false }} />
       <Stack.Screen name="chat/[chatId]" options={{ headerShown: false }} />
+      <Stack.Screen name="chat-media/[chatId]" options={{ headerShown: false }} />
       <Stack.Screen name="chat-settings" options={{ headerShown: false }} />
       <Stack.Screen name="call/[chatId]" options={{ headerShown: false }} />
       <Stack.Screen name="incoming-call" options={{ headerShown: false, presentation: "fullScreenModal" }} />
       <Stack.Screen name="post/[postId]" options={{ headerShown: false }} />
       <Stack.Screen name="user/[userId]" options={{ headerShown: false }} />
-      <Stack.Screen name="create-story" options={{ headerShown: false }} />
+      <Stack.Screen name="group/[groupId]" options={{ headerShown: false }} />
+      <Stack.Screen name="channel/[channelId]" options={{ headerShown: false }} />
+      <Stack.Screen name="create-story" options={{ headerShown: false, presentation: "modal" }} />
+      <Stack.Screen name="create-group" options={{ headerShown: false }} />
+      <Stack.Screen name="create-channel" options={{ headerShown: false }} />
+      <Stack.Screen name="edit-profile" options={{ headerShown: false }} />
+      <Stack.Screen name="change-password" options={{ headerShown: false }} />
       <Stack.Screen name="new-message" options={{ headerShown: false }} />
+      <Stack.Screen name="notifications" options={{ headerShown: false }} />
+      <Stack.Screen name="settings" options={{ headerShown: false }} />
+      <Stack.Screen name="admin" options={{ headerShown: false }} />
+      <Stack.Screen name="ai-chat" options={{ headerShown: false }} />
+      <Stack.Screen name="live-sessions" options={{ headerShown: false }} />
+      <Stack.Screen name="story-viewer" options={{ headerShown: false, presentation: "fullScreenModal" }} />
       <Stack.Screen name="blocked-users" options={{ headerShown: false }} />
       <Stack.Screen name="diagnostics" options={{ headerShown: false }} />
       <Stack.Screen name="auth/callback" options={{ headerShown: false }} />
@@ -176,11 +190,13 @@ export default function RootLayout() {
             <KeyboardProvider>
               <ThemeProvider>
                 <ChatThemeProvider>
-                <AuthProvider>
-                  <AppShell>
-                    <RootLayoutNav />
-                  </AppShell>
-                </AuthProvider>
+                  <ToastProvider>
+                    <AuthProvider>
+                      <AppShell>
+                        <RootLayoutNav />
+                      </AppShell>
+                    </AuthProvider>
+                  </ToastProvider>
                 </ChatThemeProvider>
               </ThemeProvider>
             </KeyboardProvider>

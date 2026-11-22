@@ -106,7 +106,7 @@ export function installBootLogging() {
 
   // 2) Global error handler: persist the crash, then chain to the previous
   //    handler so dev redbox / prod crash behavior stays unchanged.
-  const ErrorUtilsAny = (global as any).ErrorUtils;
+  const ErrorUtilsAny = (globalThis as any).ErrorUtils;
   if (ErrorUtilsAny?.setGlobalHandler) {
     const prevHandler = ErrorUtilsAny.getGlobalHandler?.();
     ErrorUtilsAny.setGlobalHandler((error: any, isFatal: boolean) => {

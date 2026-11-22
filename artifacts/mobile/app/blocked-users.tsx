@@ -1,65 +1,128 @@
-import React, { useState } from "react";
+import React, { useMemo, useState } from "react";
 import {
-  View, Text, StyleSheet, FlatList, Pressable,
-  ActivityIndicator, Alert, Image, Modal, TextInput,
+  ActivityIndicator,
+  FlatList,
+  Modal,
+  Platform,
+  Pressable,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
 } from "react-native";
 import { Stack, useRouter } from "expo-router";
 import { Feather } from "@expo/vector-icons";
-import { LinearGradient } from "expo-linear-gradient";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useColors } from "@/hooks/useColors";
+import { RADIUS } from "@/constants/colors";
 import { useAuth } from "@/lib/auth";
-import { fetchBlockedUsers, unblockUser, blockUser, searchUsers, resolveMediaUrl, type Profile } from "@/lib/db";
-import { supabase } from "@/lib/supabase";
+import {
+  blockUser,
+  fetchBlockedUsers,
+  searchUsers,
+  unblockUser,
+  type Profile,
+} from "@/lib/db";
+import { Avatar } from "@/components/Avatar";
+import { GlassSurface } from "@/components/GlassSurface";
+import { ActionSheet } from "@/components/ActionSheet";
+import { useToast } from "@/components/Toast";
 
-function Avatar({ name, avatarUrl, size }: { name: string; avatarUrl?: string | null; size: number }) {
-  const [err, setErr] = useState(false);
-  const initials = name.split(" ").map(w => w[0]).join("").slice(0, 2).toUpperCase();
-  const hue = name.split("").reduce((a, c) => a + c.charCodeAt(0), 0) % 360;
-  if (avatarUrl && !err) {
-    return <Image source={{ uri: resolveMediaUrl(avatarUrl) }}
-      style={{ width: size, height: size, borderRadius: size / 2 }} onError={() => setErr(true)} />;
-  }
-  return (
-    <View style={{ width: size, height: size, borderRadius: size / 2,
-      backgroundColor: `hsl(${hue},55%,45%)`, alignItems: "center", justifyContent: "center" }}>
-      <Text style={{ color: "#fff", fontSize: size * 0.38, fontWeight: "700" }}>{initials}</Text>
-    </View>
-  );
-}
+function BlockSearchResults({
+  query,
+  viewerId,
+  blockedIds,
+  onBlock,
+}: {
+  query: string;
+  viewerId?: string;
+  blockedIds: Set<string>;
+  onBlock: (profile: Profile) => void;
+}) {
+  const colors = useColors();
+  const trimmed = query.trim();
 
-function BlockSearchResults({ query, onBlock, colors }: { query: string; onBlock?: (id: string) => void; colors: any }) {
   const { data: results = [], isLoading } = useQuery({
-    queryKey: ["block-search", query],
-    queryFn: () => searchUsers(query),
-    enabled: query.length >= 2,
+    queryKey: ["block-search", trimmed, viewerId],
+    queryFn: () => searchUsers(trimmed, viewerId),
+    enabled: trimmed.length >= 2,
   });
 
-  if (!query || query.length < 2) return null;
+  const filtered = useMemo(
+    () =>
+      (results as Profile[]).filter(
+        (u) => u.id !== viewerId && !blockedIds.has(u.id),
+      ),
+    [results, viewerId, blockedIds],
+  );
+
+  if (trimmed.length < 2) {
+    return (
+      <View style={styles.emptySearch}>
+        <Text style={{ color: colors.textSecondary, fontSize: 14 }}>
+          Type at least 2 characters to search people
+        </Text>
+      </View>
+    );
+  }
+
+  if (isLoading) {
+    return (
+      <View style={styles.emptySearch}>
+        <ActivityIndicator color={colors.accentPrimary} />
+      </View>
+    );
+  }
 
   return (
     <FlatList
-      data={results as Profile[]}
-      keyExtractor={p => p.id}
+      data={filtered}
+      keyExtractor={(p) => p.id}
+      keyboardShouldPersistTaps="handled"
       ListEmptyComponent={
-        !isLoading ? (
-          <View style={{ paddingVertical: 40, alignItems: "center" }}>
-            <Text style={{ color: colors.mutedForeground }}>Type at least 2 characters</Text>
-          </View>
-        ) : null
+        <View style={styles.emptySearch}>
+          <Text style={{ color: colors.textSecondary, fontSize: 14, textAlign: "center" }}>
+            No users found matching &quot;{trimmed}&quot;
+          </Text>
+        </View>
       }
       renderItem={({ item: u }) => (
-        <Pressable onPress={() => onBlock?.(u.id)} style={[styles.searchRow, { borderBottomColor: colors.border }]}>
-          <Avatar name={u.display_name} avatarUrl={u.avatar_url} size={40} />
+        <View
+          style={[
+            styles.searchRow,
+            { borderBottomColor: colors.separator },
+          ]}
+        >
+          <Avatar
+            name={u.display_name}
+            avatarUrl={u.avatar_url}
+            size={42}
+            canvasColor={colors.bgCanvas}
+          />
           <View style={{ flex: 1 }}>
-            <Text style={[styles.searchName, { color: colors.foreground }]}>{u.display_name}</Text>
-            <Text style={[styles.searchHandle, { color: colors.mutedForeground }]}>@{u.username}</Text>
+            <Text style={[styles.searchName, { color: colors.textPrimary }]}>
+              {u.display_name}
+            </Text>
+            <Text style={[styles.searchHandle, { color: colors.textSecondary }]}>
+              @{u.username}
+            </Text>
           </View>
-          <Pressable onPress={() => onBlock?.(u.id)} style={styles.blockBtn}>
+          <Pressable
+            onPress={() => onBlock(u)}
+            style={({ pressed }) => [
+              styles.blockBtn,
+              {
+                backgroundColor: colors.semanticDanger,
+                opacity: pressed ? 0.85 : 1,
+              },
+            ]}
+            accessibilityRole="button"
+            accessibilityLabel={`Block @${u.username}`}
+          >
             <Text style={styles.blockBtnText}>Block</Text>
           </Pressable>
-        </Pressable>
+        </View>
       )}
     />
   );
@@ -71,6 +134,7 @@ export default function BlockedUsersScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const qc = useQueryClient();
+  const { showToast } = useToast();
 
   const { data: blocked = [], isLoading } = useQuery({
     queryKey: ["blocked-users", user?.id],
@@ -78,103 +142,259 @@ export default function BlockedUsersScreen() {
     enabled: !!user?.id,
   });
 
+  const blockedList = blocked as Profile[];
+  const blockedIds = useMemo(
+    () => new Set(blockedList.map((b) => b.id)),
+    [blockedList],
+  );
+
   const [blockModalOpen, setBlockModalOpen] = useState(false);
   const [blockQuery, setBlockQuery] = useState("");
+  const [unblockTarget, setUnblockTarget] = useState<Profile | null>(null);
 
-  const handleUnblock = (profile: Profile) => {
-    Alert.alert(
-      "Unblock",
-      `Unblock @${profile.username}? They'll be able to see your profile and message you again.`,
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Unblock", onPress: async () => {
-            if (!user?.id) return;
-            await unblockUser(user.id, profile.id);
-            qc.invalidateQueries({ queryKey: ["blocked-users"] });
-          },
-        },
-      ]
-    );
-  };
-
-  const handleBlockUser = async (targetId: string) => {
+  const confirmUnblock = async (profile: Profile) => {
     if (!user?.id) return;
-    await blockUser(user.id, targetId);
-    qc.invalidateQueries({ queryKey: ["blocked-users"] });
-    setBlockModalOpen(false);
-    setBlockQuery("");
+    try {
+      await unblockUser(user.id, profile.id);
+      await qc.invalidateQueries({ queryKey: ["blocked-users"] });
+      showToast(`Unblocked @${profile.username}`, "success");
+    } catch (e: any) {
+      showToast(e?.message ?? "Could not unblock user", "error");
+    }
   };
+
+  const handleBlockUser = async (profile: Profile) => {
+    if (!user?.id) return;
+    try {
+      await blockUser(user.id, profile.id);
+      await qc.invalidateQueries({ queryKey: ["blocked-users"] });
+      setBlockModalOpen(false);
+      setBlockQuery("");
+      showToast(`Blocked @${profile.username}`, "info");
+    } catch (e: any) {
+      showToast(e?.message ?? "Could not block user", "error");
+    }
+  };
+
+  const topPadding = Platform.OS === "web" ? 14 : insets.top + 8;
 
   return (
-    <View style={[styles.container, { backgroundColor: colors.background }]}>
+    <View style={[styles.container, { backgroundColor: colors.bgCanvas }]}>
       <Stack.Screen options={{ headerShown: false }} />
-      <View style={[styles.header, { paddingTop: insets.top + 8, borderBottomColor: colors.border }]}>
-        <Pressable onPress={() => router.back()} hitSlop={8}>
-          <Feather name="arrow-left" size={22} color={colors.foreground} />
-        </Pressable>
-        <Text style={[styles.title, { color: colors.foreground }]}>Blocked Users</Text>
-        <Pressable onPress={() => setBlockModalOpen(true)} hitSlop={8}>
-          <Feather name="user-x" size={20} color={colors.foreground} />
-        </Pressable>
+
+      <GlassSurface
+        style={[
+          styles.header,
+          { paddingTop: topPadding, borderBottomColor: colors.separator },
+        ]}
+      >
+        <View style={styles.headerInner}>
+          <Pressable
+            onPress={() => router.back()}
+            style={styles.iconBtn}
+            accessibilityRole="button"
+            accessibilityLabel="Back"
+          >
+            <Feather name="arrow-left" size={22} color={colors.textPrimary} />
+          </Pressable>
+          <Text style={[styles.title, { color: colors.textPrimary }]}>
+            Blocked Users
+          </Text>
+          <Pressable
+            onPress={() => setBlockModalOpen(true)}
+            style={styles.iconBtn}
+            accessibilityRole="button"
+            accessibilityLabel="Block a user"
+          >
+            <Feather name="user-x" size={20} color={colors.textPrimary} />
+          </Pressable>
+        </View>
+      </GlassSurface>
+
+      <View style={styles.bodyCol}>
+        {isLoading ? (
+          <View style={styles.center}>
+            <ActivityIndicator color={colors.accentPrimary} size="large" />
+          </View>
+        ) : blockedList.length === 0 ? (
+          <View style={styles.empty}>
+            <View
+              style={[
+                styles.emptyIconWrap,
+                { backgroundColor: colors.accentTint },
+              ]}
+            >
+              <Feather name="user-x" size={32} color={colors.accentPrimary} />
+            </View>
+            <Text style={[styles.emptyTitle, { color: colors.textPrimary }]}>
+              No blocked users
+            </Text>
+            <Text style={[styles.emptyDesc, { color: colors.textSecondary }]}>
+              People you block cannot view your profile, reply to your posts, or
+              message you.
+            </Text>
+            <Pressable
+              onPress={() => setBlockModalOpen(true)}
+              style={({ pressed }) => [
+                styles.emptyCta,
+                {
+                  backgroundColor: colors.bgElevated,
+                  borderColor: colors.separator,
+                  opacity: pressed ? 0.8 : 1,
+                },
+              ]}
+              accessibilityRole="button"
+              accessibilityLabel="Block someone"
+            >
+              <Feather name="plus" size={16} color={colors.textPrimary} />
+              <Text style={[styles.emptyCtaText, { color: colors.textPrimary }]}>
+                Block Someone
+              </Text>
+            </Pressable>
+          </View>
+        ) : (
+          <FlatList
+            data={blockedList}
+            keyExtractor={(p) => p.id}
+            contentContainerStyle={{
+              paddingBottom: insets.bottom + 24,
+              paddingTop: 8,
+            }}
+            renderItem={({ item: p }) => (
+              <View
+                style={[styles.row, { borderBottomColor: colors.separator }]}
+              >
+                <Avatar
+                  name={p.display_name}
+                  avatarUrl={p.avatar_url}
+                  size={46}
+                  canvasColor={colors.bgCanvas}
+                />
+                <View style={{ flex: 1 }}>
+                  <Text style={[styles.name, { color: colors.textPrimary }]}>
+                    {p.display_name}
+                  </Text>
+                  <Text style={[styles.handle, { color: colors.textSecondary }]}>
+                    @{p.username}
+                  </Text>
+                </View>
+                <Pressable
+                  onPress={() => setUnblockTarget(p)}
+                  style={({ pressed }) => [
+                    styles.unblockBtn,
+                    {
+                      borderColor: colors.accentPrimary,
+                      backgroundColor: pressed
+                        ? colors.accentTint
+                        : "transparent",
+                    },
+                  ]}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Unblock @${p.username}`}
+                >
+                  <Text
+                    style={[styles.unblockText, { color: colors.accentPrimary }]}
+                  >
+                    Unblock
+                  </Text>
+                </Pressable>
+              </View>
+            )}
+          />
+        )}
       </View>
 
-      {isLoading ? (
-        <View style={styles.center}><ActivityIndicator color={colors.primary} size="large" /></View>
-      ) : (blocked as Profile[]).length === 0 ? (
-        <View style={styles.empty}>
-          <LinearGradient colors={[colors.primary + "22", colors.primary + "08"]}
-            style={{ width: 80, height: 80, borderRadius: 40, alignItems: "center", justifyContent: "center", marginBottom: 12 }}>
-            <Feather name="user-x" size={36} color={colors.primary} />
-          </LinearGradient>
-          <Text style={[styles.emptyTitle, { color: colors.foreground }]}>No blocked users</Text>
-          <Text style={[styles.emptyDesc, { color: colors.mutedForeground }]}>
-            Users you block won't be able to contact you.
-          </Text>
-        </View>
-      ) : (
-        <FlatList
-          data={blocked as Profile[]}
-          keyExtractor={p => p.id}
-          contentContainerStyle={{ paddingBottom: insets.bottom + 20 }}
-          renderItem={({ item: p }) => (
-            <View style={[styles.row, { borderBottomColor: colors.border }]}>
-              <Avatar name={p.display_name} avatarUrl={p.avatar_url} size={46} />
-              <View style={{ flex: 1 }}>
-                <Text style={[styles.name, { color: colors.foreground }]}>{p.display_name}</Text>
-                <Text style={[styles.handle, { color: colors.mutedForeground }]}>@{p.username}</Text>
-              </View>
+      <Modal
+        visible={blockModalOpen}
+        animationType="slide"
+        presentationStyle="pageSheet"
+        onRequestClose={() => setBlockModalOpen(false)}
+      >
+        <View style={[styles.modalRoot, { backgroundColor: colors.bgCanvas }]}>
+          <GlassSurface
+            style={[
+              styles.modalHeader,
+              {
+                paddingTop: Platform.OS === "web" ? 16 : insets.top + 12,
+                borderBottomColor: colors.separator,
+              },
+            ]}
+          >
+            <View style={styles.modalHeaderInner}>
               <Pressable
-                onPress={() => handleUnblock(p)}
-                style={[styles.unblockBtn, { borderColor: colors.primary }]}
+                onPress={() => setBlockModalOpen(false)}
+                style={styles.iconBtn}
+                accessibilityRole="button"
+                accessibilityLabel="Close search"
               >
-                <Text style={[styles.unblockText, { color: colors.primary }]}>Unblock</Text>
+                <Feather name="x" size={20} color={colors.textPrimary} />
               </Pressable>
+              <Text style={[styles.title, { color: colors.textPrimary }]}>
+                Block Someone
+              </Text>
+              <View style={{ width: 44 }} />
             </View>
-          )}
-        />
-      )}
-      {/* Block someone modal */}
-      <Modal visible={blockModalOpen} animationType="slide" presentationStyle="pageSheet" onRequestClose={() => setBlockModalOpen(false)}>
-        <View style={{ flex: 1, backgroundColor: colors.background }}>
-          <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", padding: 20, paddingTop: insets.top + 16, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border }}>
-            <Pressable onPress={() => setBlockModalOpen(false)} hitSlop={8}><Feather name="x" size={20} color={colors.foreground} /></Pressable>
-            <Text style={{ color: colors.foreground, fontSize: 17, fontWeight: "700" }}>Block Someone</Text>
-            <View style={{ width: 20 }} />
-          </View>
-          <View style={{ padding: 16 }}>
-            <TextInput
-              style={{ borderWidth: 1, borderColor: colors.border, borderRadius: 14, paddingHorizontal: 14, paddingVertical: 12, fontSize: 15, color: colors.foreground, backgroundColor: colors.secondary }}
-              placeholder="Search people..."
-              placeholderTextColor={colors.mutedForeground}
-              value={blockQuery}
-              onChangeText={setBlockQuery}
-              autoFocus
+          </GlassSurface>
+          <View style={styles.modalBody}>
+            <View
+              style={[
+                styles.searchBox,
+                {
+                  backgroundColor: colors.input,
+                  borderColor: colors.separator,
+                },
+              ]}
+            >
+              <Feather name="search" size={16} color={colors.textTertiary} />
+              <TextInput
+                style={[styles.searchInput, { color: colors.textPrimary }]}
+                placeholder="Search by name or username..."
+                placeholderTextColor={colors.textTertiary}
+                value={blockQuery}
+                onChangeText={setBlockQuery}
+                autoFocus
+                accessibilityLabel="Search people to block"
+              />
+              {blockQuery.length > 0 && (
+                <Pressable
+                  onPress={() => setBlockQuery("")}
+                  hitSlop={8}
+                  accessibilityRole="button"
+                  accessibilityLabel="Clear search"
+                >
+                  <Feather name="x-circle" size={16} color={colors.textTertiary} />
+                </Pressable>
+              )}
+            </View>
+            <BlockSearchResults
+              query={blockQuery}
+              viewerId={user?.id}
+              blockedIds={blockedIds}
+              onBlock={handleBlockUser}
             />
-            <BlockSearchResults query={blockQuery} onBlock={handleBlockUser} colors={colors} />
           </View>
         </View>
       </Modal>
+
+      <ActionSheet
+        visible={!!unblockTarget}
+        title={unblockTarget ? `Unblock @${unblockTarget.username}?` : undefined}
+        message="They will be able to view your profile, posts, and send you messages again."
+        onClose={() => setUnblockTarget(null)}
+        items={
+          unblockTarget
+            ? [
+                {
+                  id: "unblock",
+                  label: `Unblock @${unblockTarget.username}`,
+                  icon: "user-check",
+                  destructive: true,
+                  onPress: () => confirmUnblock(unblockTarget),
+                },
+              ]
+            : []
+        }
+      />
     </View>
   );
 }
@@ -182,33 +402,145 @@ export default function BlockedUsersScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1 },
   header: {
-    flexDirection: "row", alignItems: "center", paddingHorizontal: 16,
-    paddingBottom: 12, borderBottomWidth: StyleSheet.hairlineWidth, gap: 12,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    paddingBottom: 10,
+    paddingHorizontal: 12,
   },
-  title: { flex: 1, textAlign: "center", fontSize: 17, fontWeight: "700" },
+  headerInner: {
+    width: "100%",
+    maxWidth: 640,
+    alignSelf: "center",
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  iconBtn: {
+    width: 44,
+    height: 44,
+    borderRadius: RADIUS.sm,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  title: {
+    flex: 1,
+    textAlign: "center",
+    fontSize: 17,
+    fontWeight: "600",
+    letterSpacing: -0.2,
+  },
+  bodyCol: {
+    flex: 1,
+    width: "100%",
+    maxWidth: 640,
+    alignSelf: "center",
+  },
   center: { flex: 1, alignItems: "center", justifyContent: "center" },
-  empty: { flex: 1, alignItems: "center", justifyContent: "center", gap: 8, paddingHorizontal: 40 },
-  emptyTitle: { fontSize: 18, fontWeight: "700" },
-  emptyDesc: { fontSize: 14, textAlign: "center", lineHeight: 20 },
+  empty: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 10,
+    paddingHorizontal: 36,
+  },
+  emptyIconWrap: {
+    width: 72,
+    height: 72,
+    borderRadius: 36,
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 4,
+  },
+  emptyTitle: { fontSize: 19, fontWeight: "700", letterSpacing: -0.2 },
+  emptyDesc: {
+    fontSize: 14,
+    textAlign: "center",
+    lineHeight: 20,
+    maxWidth: 320,
+  },
+  emptyCta: {
+    marginTop: 8,
+    minHeight: 44,
+    paddingHorizontal: 18,
+    borderRadius: RADIUS.pill,
+    borderWidth: StyleSheet.hairlineWidth,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  emptyCtaText: { fontSize: 14, fontWeight: "600" },
   row: {
-    flexDirection: "row", alignItems: "center", gap: 12,
-    paddingHorizontal: 16, paddingVertical: 12,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
     borderBottomWidth: StyleSheet.hairlineWidth,
   },
-  name: { fontSize: 15, fontWeight: "700" },
+  name: { fontSize: 15, fontWeight: "600" },
   handle: { fontSize: 13, marginTop: 1 },
   unblockBtn: {
-    paddingHorizontal: 14, paddingVertical: 7,
-    borderRadius: 18, borderWidth: 1.5,
+    minHeight: 40,
+    paddingHorizontal: 16,
+    justifyContent: "center",
+    borderRadius: RADIUS.pill,
+    borderWidth: 1.5,
   },
-  unblockText: { fontSize: 13, fontWeight: "700" },
+  unblockText: { fontSize: 13.5, fontWeight: "600" },
+  modalRoot: { flex: 1 },
+  modalHeader: {
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    paddingBottom: 10,
+    paddingHorizontal: 12,
+  },
+  modalHeaderInner: {
+    width: "100%",
+    maxWidth: 640,
+    alignSelf: "center",
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  modalBody: {
+    flex: 1,
+    width: "100%",
+    maxWidth: 640,
+    alignSelf: "center",
+    padding: 16,
+  },
+  searchBox: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderRadius: RADIUS.md,
+    paddingHorizontal: 14,
+    minHeight: 46,
+    marginBottom: 8,
+  },
+  searchInput: {
+    flex: 1,
+    fontSize: 15,
+    paddingVertical: 10,
+  },
+  emptySearch: {
+    paddingVertical: 40,
+    alignItems: "center",
+    paddingHorizontal: 24,
+  },
   searchRow: {
-    flexDirection: "row", alignItems: "center", gap: 12,
-    paddingHorizontal: 16, paddingVertical: 12,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    paddingVertical: 12,
     borderBottomWidth: StyleSheet.hairlineWidth,
   },
-  searchName: { fontSize: 15, fontWeight: "700" },
+  searchName: { fontSize: 15, fontWeight: "600" },
   searchHandle: { fontSize: 13, marginTop: 1 },
-  blockBtn: { backgroundColor: "#ef4444", paddingHorizontal: 14, paddingVertical: 7, borderRadius: 18 },
-  blockBtnText: { color: "#fff", fontSize: 13, fontWeight: "700" },
+  blockBtn: {
+    minHeight: 40,
+    paddingHorizontal: 16,
+    borderRadius: RADIUS.pill,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  blockBtnText: { color: "#FFFFFF", fontSize: 13.5, fontWeight: "600" },
 });

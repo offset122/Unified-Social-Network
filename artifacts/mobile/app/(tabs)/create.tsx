@@ -1,44 +1,56 @@
 import React, { useState, useCallback } from "react";
 import {
-  View, Text, StyleSheet, TextInput, Pressable, ActivityIndicator,
-  Platform, ScrollView, Alert, Image,
+  View,
+  Text,
+  StyleSheet,
+  TextInput,
+  Pressable,
+  ActivityIndicator,
+  Platform,
+  ScrollView,
+  Image,
+  useWindowDimensions,
 } from "react-native";
 import { Feather } from "@expo/vector-icons";
-import { LinearGradient } from "expo-linear-gradient";
 import * as ImagePicker from "expo-image-picker";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Redirect, router } from "expo-router";
 import { useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/lib/auth";
 import { useColors } from "@/hooks/useColors";
+import { Avatar } from "@/components/Avatar";
+import { ActionSheet } from "@/components/ActionSheet";
+import { GlassSurface } from "@/components/GlassSurface";
+import { useToast } from "@/components/Toast";
+import { haptics } from "@/lib/motion";
+import { inferExtension, normalizeMimeType } from "@/lib/mediaUtils";
+import { RADIUS } from "@/constants/colors";
 import {
-  uploadMedia, generateAICaption, enhanceAICaption,
-  generatePostIdea, generateAIHashtags, generateAIAltText,
+  uploadMedia,
+  generateAICaption,
+  enhanceAICaption,
+  generatePostIdea,
+  generateAIHashtags,
+  generateAIAltText,
 } from "@/lib/db";
 import { supabase as sb } from "@/lib/supabase";
 
 const MAX_VIDEO_SIZE = 100 * 1024 * 1024;
 type PostMode = "post" | "reel";
 
-function Avatar({ name, size }: { name: string; size: number }) {
-  const initials = name.split(" ").map(w => w[0]).join("").slice(0, 2).toUpperCase();
-  return (
-    <LinearGradient colors={["#7c3aed", "#4f46e5"]}
-      style={{ width: size, height: size, borderRadius: size / 2, alignItems: "center", justifyContent: "center" }}>
-      <Text style={{ color: "#fff", fontSize: size * 0.38, fontWeight: "700" }}>{initials}</Text>
-    </LinearGradient>
-  );
-}
-
-// ─── AI Toolbar ───────────────────────────────────────────────────────────────
-
-function AIToolbar({ content, mode, onContent, media }: {
+function AIToolbar({
+  content,
+  mode,
+  onContent,
+  media,
+}: {
   content: string;
   mode: PostMode;
   onContent: (v: string | ((prev: string) => string)) => void;
   media?: ImagePicker.ImagePickerAsset[];
 }) {
   const colors = useColors();
+  const { showToast } = useToast();
   const [active, setActive] = useState<string | null>(null);
   const [hashtags, setHashtags] = useState<string[]>([]);
   const [altText, setAltText] = useState("");
@@ -47,162 +59,194 @@ function AIToolbar({ content, mode, onContent, media }: {
     setActive(action);
     setHashtags([]);
     setAltText("");
+    haptics.selection();
     try {
       if (action === "caption") {
-        const ctx = mode === "reel" ? "a short video reel for social media" : content || "a lifestyle photo post";
+        const ctx =
+          mode === "reel"
+            ? "a short video reel for social media"
+            : content || "a lifestyle photo post";
         const cap = await generateAICaption(ctx);
         if (cap) onContent(cap);
       } else if (action === "enhance") {
-        if (!content.trim()) return Alert.alert("Add a caption first", "Write something to enhance.");
+        if (!content.trim()) {
+          showToast("Write a caption first to enhance it.", "info");
+          return;
+        }
         const enhanced = await enhanceAICaption(content);
         if (enhanced) onContent(enhanced);
       } else if (action === "idea") {
         const idea = await generatePostIdea([]);
         if (idea) onContent(idea);
       } else if (action === "hashtags") {
-        if (!content.trim()) return Alert.alert("Add content first", "Write a caption to generate relevant hashtags.");
+        if (!content.trim()) {
+          showToast("Write a caption to generate relevant hashtags.", "info");
+          return;
+        }
         const tags = await generateAIHashtags(content);
         setHashtags(tags);
       } else if (action === "alttext") {
-        if (!media?.length) return Alert.alert("Add media first", "Upload a photo or video to generate alt-text.");
+        if (!media?.length) {
+          showToast("Attach a photo or video to generate alt-text.", "info");
+          return;
+        }
         const result = await generateAIAltText(media[0].uri, content);
         if (result) setAltText(result);
       }
+    } catch {
+      showToast("AI assistant unavailable right now.", "error");
     } finally {
       setActive(null);
     }
   };
 
-  const tools: { id: string; icon: string; label: string }[] = [
+  const tools: { id: string; icon: keyof typeof Feather.glyphMap; label: string }[] = [
     { id: "caption", icon: "zap", label: "Caption" },
-    { id: "enhance", icon: "trending-up", label: "Enhance" },
-    { id: "idea", icon: "lightbulb", label: "Inspire" },
+    { id: "enhance", icon: "trending-up", label: "Polish" },
+    { id: "idea", icon: "sun", label: "Idea" },
     { id: "hashtags", icon: "hash", label: "Tags" },
-    { id: "alttext", icon: "eye", label: "Alt-Text" },
+    { id: "alttext", icon: "eye", label: "Alt Text" },
   ];
 
   return (
-    <View>
-      <View style={[S.aiBar, { borderTopColor: colors.border }]}>
-        <View style={[S.aiLabel, { backgroundColor: colors.primary + "18" }]}>
-          <LinearGradient colors={["#7c3aed", "#4f46e5"]} style={S.aiGradDot}>
-            <Feather name="zap" size={10} color="#fff" />
-          </LinearGradient>
-          <Text style={[S.aiLabelText, { color: colors.primary }]}>AI</Text>
-        </View>
-        {tools.map(tool => (
-          <Pressable key={tool.id} onPress={() => run(tool.id)} disabled={!!active}
-            style={[S.aiTool, { backgroundColor: colors.secondary, borderColor: colors.border }]}>
-            {active === tool.id
-              ? <ActivityIndicator size="small" color={colors.primary} />
-              : <Feather name={tool.icon as any} size={15} color={colors.primary} />}
-            <Text style={[S.aiToolText, { color: colors.primary }]}>{tool.label}</Text>
+    <View style={[S.aiSection, { borderTopColor: colors.separator }]}>
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={S.aiBar}>
+        {tools.map((tool) => (
+          <Pressable
+            key={tool.id}
+            onPress={() => run(tool.id)}
+            disabled={!!active}
+            style={[
+              S.aiTool,
+              { backgroundColor: colors.bgElevated, borderColor: colors.separator },
+            ]}
+            accessibilityRole="button"
+            accessibilityLabel={`AI ${tool.label}`}
+          >
+            {active === tool.id ? (
+              <ActivityIndicator size="small" color={colors.accentPrimary} />
+            ) : (
+              <Feather name={tool.icon} size={14} color={colors.accentPrimary} />
+            )}
+            <Text style={[S.aiToolText, { color: colors.textPrimary }]}>{tool.label}</Text>
           </Pressable>
         ))}
-      </View>
+      </ScrollView>
 
       {hashtags.length > 0 && (
-        <ScrollView horizontal showsHorizontalScrollIndicator={false}
-          contentContainerStyle={[S.tagRow, { borderBottomColor: colors.border }]}>
-          <Text style={[S.tagHint, { color: colors.mutedForeground }]}>Tap to add:</Text>
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={[S.tagRow, { borderTopColor: colors.separator }]}
+        >
           {hashtags.map((tag, i) => (
-            <Pressable key={i} onPress={() => {
-              onContent((prev: string) => prev.trim() ? `${prev} ${tag}` : tag);
-              setHashtags(prev => prev.filter(t => t !== tag));
-            }}
-              style={[S.tagChip, { backgroundColor: colors.primary + "18", borderColor: colors.primary + "44" }]}>
-              <Text style={[S.tagChipText, { color: colors.primary }]}>{tag}</Text>
+            <Pressable
+              key={i}
+              onPress={() => {
+                haptics.selection();
+                onContent((prev: string) => (prev.trim() ? `${prev} ${tag}` : tag));
+                setHashtags((prev) => prev.filter((t) => t !== tag));
+              }}
+              style={[
+                S.tagChip,
+                { backgroundColor: colors.accentTint, borderColor: colors.separator },
+              ]}
+              accessibilityRole="button"
+              accessibilityLabel={`Insert ${tag}`}
+            >
+              <Text style={[S.tagChipText, { color: colors.accentPrimary }]}>{tag}</Text>
             </Pressable>
           ))}
-          <Pressable onPress={() => setHashtags([])} hitSlop={8} style={{ paddingHorizontal: 4 }}>
-            <Feather name="x" size={14} color={colors.mutedForeground} />
+          <Pressable
+            onPress={() => setHashtags([])}
+            style={S.hitTarget}
+            accessibilityRole="button"
+            accessibilityLabel="Dismiss tag suggestions"
+          >
+            <Feather name="x" size={14} color={colors.textSecondary} />
           </Pressable>
         </ScrollView>
       )}
 
       {!!altText && (
-        <View style={{ paddingHorizontal: 16, paddingVertical: 10, backgroundColor: "rgba(124,58,237,0.06)", borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border }}>
-          <Text style={{ color: colors.mutedForeground, fontSize: 11, fontWeight: "700", marginBottom: 4 }}>AI ALT-TEXT</Text>
-          <Text style={{ color: colors.foreground, fontSize: 13, lineHeight: 18 }}>{altText}</Text>
+        <View style={[S.altBox, { backgroundColor: colors.bgElevated, borderColor: colors.separator }]}>
+          <Text style={[S.altLabel, { color: colors.accentPrimary }]}>Suggested Alt Text</Text>
+          <Text style={[S.altBody, { color: colors.textPrimary }]}>{altText}</Text>
         </View>
       )}
     </View>
   );
 }
 
-// ─── Create Screen ─────────────────────────────────────────────────────────────
-
 export default function CreateScreen() {
   const { user, isAuthenticated } = useAuth();
   const colors = useColors();
   const insets = useSafeAreaInsets();
   const qc = useQueryClient();
+  const { showToast } = useToast();
   const isWeb = Platform.OS === "web";
+  const { width } = useWindowDimensions();
+  const maxWidth = isWeb && width >= 768 ? 640 : undefined;
 
   const [mode, setMode] = useState<PostMode>("post");
   const [content, setContent] = useState("");
   const [media, setMedia] = useState<ImagePicker.ImagePickerAsset[]>([]);
   const [posting, setPosting] = useState(false);
   const [visibility, setVisibility] = useState<"public" | "followers" | "private">("public");
+  const [mediaSheetOpen, setMediaSheetOpen] = useState(false);
+  const [visSheetOpen, setVisSheetOpen] = useState(false);
+
+  const launchLibrary = useCallback(async () => {
+    const isReel = mode === "reel";
+    const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!perm.granted) {
+      showToast("Allow photo library access to attach media.", "error");
+      return;
+    }
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: isReel
+        ? ImagePicker.MediaTypeOptions.Videos
+        : ImagePicker.MediaTypeOptions.All,
+      allowsMultipleSelection: !isReel,
+      quality: 0.85,
+      videoMaxDuration: isReel ? 60 : 30,
+    });
+    if (!result.canceled) {
+      for (const a of result.assets) {
+        if (a.type === "video" && a.fileSize && a.fileSize > MAX_VIDEO_SIZE) {
+          showToast(
+            `Videos must be under 100MB (${(a.fileSize / 1024 / 1024).toFixed(1)}MB).`,
+            "error",
+          );
+          return;
+        }
+      }
+      setMedia(isReel ? [result.assets[0]] : result.assets.slice(0, 4));
+    }
+  }, [mode, showToast]);
+
+  const launchCamera = useCallback(async () => {
+    const isReel = mode === "reel";
+    const perm = await ImagePicker.requestCameraPermissionsAsync();
+    if (!perm.granted) {
+      showToast("Allow camera access to take photos.", "error");
+      return;
+    }
+    const result = await ImagePicker.launchCameraAsync({
+      mediaTypes: isReel
+        ? ImagePicker.MediaTypeOptions.Videos
+        : ImagePicker.MediaTypeOptions.All,
+      quality: 0.85,
+      videoMaxDuration: isReel ? 60 : 30,
+    });
+    if (!result.canceled) setMedia([result.assets[0]]);
+  }, [mode, showToast]);
 
   if (!isAuthenticated) return <Redirect href="/login" />;
 
-  const pickMedia = useCallback(async () => {
-    const isReel = mode === "reel";
-
-    Alert.alert(
-      isReel ? "Add Video" : "Add Media",
-      "Choose a source",
-      [
-        {
-          text: "Camera",
-          onPress: async () => {
-            const perm = await ImagePicker.requestCameraPermissionsAsync();
-            if (!perm.granted) {
-              Alert.alert("Permission required", "Allow camera access in Settings to take photos.");
-              return;
-            }
-            const result = await ImagePicker.launchCameraAsync({
-              mediaTypes: isReel ? ImagePicker.MediaTypeOptions.Videos : ImagePicker.MediaTypeOptions.All,
-              quality: 0.85,
-              videoMaxDuration: isReel ? 60 : 30,
-            });
-            if (!result.canceled) setMedia([result.assets[0]]);
-          },
-        },
-        {
-          text: "Photo Library",
-          onPress: async () => {
-            const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
-            if (!perm.granted) {
-              Alert.alert("Permission required", "Allow photo library access in Settings.");
-              return;
-            }
-            const result = await ImagePicker.launchImageLibraryAsync({
-              mediaTypes: isReel ? ImagePicker.MediaTypeOptions.Videos : ImagePicker.MediaTypeOptions.All,
-              allowsMultipleSelection: !isReel,
-              quality: 0.85,
-              videoMaxDuration: isReel ? 60 : 30,
-            });
-            if (!result.canceled) {
-              for (const a of result.assets) {
-                if (a.type === "video" && a.fileSize && a.fileSize > MAX_VIDEO_SIZE) {
-                  Alert.alert("File too large", `Videos must be under 100MB. Your file is ${(a.fileSize / 1024 / 1024).toFixed(1)}MB`);
-                  return;
-                }
-              }
-              setMedia(isReel ? [result.assets[0]] : result.assets.slice(0, 4));
-            }
-          },
-        },
-        { text: "Cancel", style: "cancel" },
-      ]
-    );
-  }, [mode]);
-
   const handlePost = async () => {
     if (!content.trim() && media.length === 0) {
-      Alert.alert("Empty post", "Add some text or media to share.");
+      showToast("Add text or media before sharing.", "info");
       return;
     }
     if (!user?.id) return;
@@ -215,22 +259,23 @@ export default function CreateScreen() {
       let mediaHeight: number | null = null;
 
       for (const asset of media) {
-        const ext = asset.uri.split(".").pop()?.toLowerCase() ?? "jpg";
-        let mime: string;
-        if (asset.type === "video") {
-          if (ext === "mov") mime = "video/quicktime";
-          else if (ext === "webm") mime = "video/webm";
-          else mime = "video/mp4";
-        } else {
-          if (ext === "png") mime = "image/png";
-          else if (ext === "webp") mime = "image/webp";
-          else if (ext === "gif") mime = "image/gif";
-          else mime = "image/jpeg";
-        }
+        const isVid = asset.type === "video";
+        const ext = inferExtension(asset.uri, (asset as any).mimeType);
+        const mime = normalizeMimeType(
+          (asset as any).mimeType ?? ext,
+          isVid ? "video" : "image",
+        );
         const url = await uploadMedia(asset.uri, `${Date.now()}.${ext}`, mime);
         mediaUrls.push(url);
-        if (asset.type === "video") { mediaType = "video"; mediaWidth = asset.width ?? null; mediaHeight = asset.height ?? null; }
-        else if (!mediaType) { mediaType = "image"; mediaWidth = asset.width ?? null; mediaHeight = asset.height ?? null; }
+        if (isVid) {
+          mediaType = "video";
+          mediaWidth = asset.width ?? null;
+          mediaHeight = asset.height ?? null;
+        } else if (!mediaType) {
+          mediaType = "image";
+          mediaWidth = asset.width ?? null;
+          mediaHeight = asset.height ?? null;
+        }
       }
 
       const { error } = await sb.from("posts").insert({
@@ -253,11 +298,10 @@ export default function CreateScreen() {
 
       setContent("");
       setMedia([]);
-      Alert.alert("Posted! 🎉", `Your ${mode} is now live.`, [
-        { text: "OK", onPress: () => router.replace(mode === "reel" ? "/(tabs)/reels" : "/(tabs)") }
-      ]);
+      showToast(mode === "reel" ? "Reel published" : "Post published", "success");
+      router.replace(mode === "reel" ? "/(tabs)/reels" : "/(tabs)");
     } catch (e: any) {
-      Alert.alert("Error", e.message ?? "Failed to post. Try again.");
+      showToast(e.message ?? "Failed to publish. Try again.", "error");
     } finally {
       setPosting(false);
     }
@@ -266,161 +310,461 @@ export default function CreateScreen() {
   const displayName = [user?.firstName, user?.lastName].filter(Boolean).join(" ") || "User";
   const charLimit = mode === "reel" ? 150 : 500;
   const canPost = (content.trim().length > 0 || media.length > 0) && !posting;
+  const visLabel =
+    visibility === "public"
+      ? "Public"
+      : visibility === "followers"
+      ? "Followers"
+      : "Only Me";
 
   return (
-    <View style={[S.container, { backgroundColor: colors.background, paddingTop: isWeb ? 67 : insets.top }]}>
-      {/* Header */}
-      <View style={[S.header, { borderBottomColor: colors.border }]}>
-        <Pressable onPress={() => router.back()} hitSlop={8}>
-          <Feather name="x" size={22} color={colors.foreground} />
-        </Pressable>
-        <Text style={[S.headerTitle, { color: colors.foreground }]}>
-          {mode === "reel" ? "New Reel" : "New Post"}
-        </Text>
-        <Pressable onPress={handlePost} disabled={!canPost}
-          style={[S.postBtn, { backgroundColor: canPost ? colors.primary : colors.muted }]}>
-          {posting
-            ? <ActivityIndicator color="#fff" size="small" />
-            : <Text style={S.postBtnText}>Share</Text>}
-        </Pressable>
-      </View>
-
-      {/* Mode tabs */}
-      <View style={[S.modeTabs, { borderBottomColor: colors.border }]}>
-        {(["post", "reel"] as PostMode[]).map(m => (
-          <Pressable key={m} onPress={() => { setMode(m); setMedia([]); }}
-            style={[S.modeTab, { borderBottomColor: m === mode ? colors.primary : "transparent" }]}>
-            <Feather name={m === "post" ? "image" : "film"} size={16}
-              color={m === mode ? colors.primary : colors.mutedForeground} />
-            <Text style={[S.modeTabText, { color: m === mode ? colors.primary : colors.mutedForeground },
-              m === mode && { fontWeight: "700" }]}>
-              {m === "post" ? "Post" : "Reel"}
-            </Text>
+    <View style={[S.container, { backgroundColor: colors.bgCanvas }]}>
+      <GlassSurface
+        style={[
+          S.header,
+          {
+            paddingTop: isWeb ? 12 : Math.max(insets.top + 6, 12),
+            borderBottomColor: colors.separator,
+          },
+        ]}
+      >
+        <View style={[S.headerInner, maxWidth ? { maxWidth } : null]}>
+          <Pressable
+            onPress={() => router.back()}
+            style={S.hitTarget}
+            accessibilityRole="button"
+            accessibilityLabel="Cancel creation"
+          >
+            <Feather name="x" size={22} color={colors.textPrimary} />
           </Pressable>
-        ))}
-      </View>
+          <Text style={[S.headerTitle, { color: colors.textPrimary }]}>
+            {mode === "reel" ? "New Reel" : "New Post"}
+          </Text>
+          <Pressable
+            onPress={handlePost}
+            disabled={!canPost}
+            style={[
+              S.postBtn,
+              {
+                backgroundColor: canPost ? colors.accentPrimary : colors.muted,
+              },
+            ]}
+            accessibilityRole="button"
+            accessibilityLabel="Publish"
+          >
+            {posting ? (
+              <ActivityIndicator color="#FFFFFF" size="small" />
+            ) : (
+              <Text style={S.postBtnText}>Publish</Text>
+            )}
+          </Pressable>
+        </View>
+      </GlassSurface>
 
-      <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled"
-        contentContainerStyle={{ paddingBottom: insets.bottom + 30 }}>
+      <ScrollView
+        showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
+        contentContainerStyle={[
+          { paddingBottom: insets.bottom + 36, width: "100%", alignSelf: "center" },
+          maxWidth ? { maxWidth } : null,
+        ]}
+      >
+        {/* Mode & Audience bar */}
+        <View style={[S.controlsRow, { borderBottomColor: colors.separator }]}>
+          <View style={[S.modeTrack, { backgroundColor: colors.bgElevated }]} accessibilityRole="tablist">
+            {(["post", "reel"] as PostMode[]).map((m) => {
+              const active = m === mode;
+              return (
+                <Pressable
+                  key={m}
+                  onPress={() => {
+                    haptics.selection();
+                    setMode(m);
+                    setMedia([]);
+                  }}
+                  style={[S.modeBtn, active && { backgroundColor: colors.bgCanvas }]}
+                  accessibilityRole="tab"
+                  accessibilityLabel={m === "post" ? "Standard Post" : "Vertical Reel"}
+                  accessibilityState={{ selected: active }}
+                >
+                  <Feather
+                    name={m === "post" ? "image" : "film"}
+                    size={15}
+                    color={active ? colors.textPrimary : colors.textSecondary}
+                  />
+                  <Text
+                    style={[
+                      S.modeText,
+                      { color: active ? colors.textPrimary : colors.textSecondary },
+                    ]}
+                  >
+                    {m === "post" ? "Post" : "Reel"}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </View>
+
+          <Pressable
+            onPress={() => {
+              haptics.selection();
+              setVisSheetOpen(true);
+            }}
+            style={[
+              S.audienceBtn,
+              { backgroundColor: colors.bgElevated, borderColor: colors.separator },
+            ]}
+            accessibilityRole="button"
+            accessibilityLabel={`Audience: ${visLabel}`}
+          >
+            <Feather
+              name={
+                visibility === "public"
+                  ? "globe"
+                  : visibility === "followers"
+                  ? "users"
+                  : "lock"
+              }
+              size={14}
+              color={colors.accentPrimary}
+            />
+            <Text style={[S.audienceText, { color: colors.textPrimary }]}>{visLabel}</Text>
+            <Feather name="chevron-down" size={14} color={colors.textSecondary} />
+          </Pressable>
+        </View>
 
         {/* Composer */}
         <View style={S.composer}>
           <Avatar name={displayName} size={42} />
           <View style={{ flex: 1 }}>
-            <Text style={[S.composerName, { color: colors.foreground }]}>{displayName}</Text>
+            <Text style={[S.composerName, { color: colors.textPrimary }]}>{displayName}</Text>
             <TextInput
-              style={[S.textInput, { color: colors.foreground }]}
+              style={[S.textInput, { color: colors.textPrimary }]}
               placeholder={mode === "reel" ? "Describe your reel…" : "What's on your mind?"}
-              placeholderTextColor={colors.mutedForeground}
-              value={content} onChangeText={setContent}
-              multiline maxLength={charLimit} autoFocus
+              placeholderTextColor={colors.textTertiary}
+              value={content}
+              onChangeText={setContent}
+              multiline
+              maxLength={charLimit}
+              autoFocus
+              accessibilityLabel="Post caption"
             />
           </View>
         </View>
 
-        {/* Char counter */}
-        <View style={{ paddingHorizontal: 16, alignItems: "flex-end", marginTop: -4 }}>
-          <Text style={{ color: content.length > charLimit * 0.85 ? "#ef4444" : colors.mutedForeground, fontSize: 11 }}>
+        <View style={S.counterRow}>
+          <Text
+            style={[
+              S.counterText,
+              {
+                color:
+                  content.length > charLimit * 0.85
+                    ? colors.semanticDanger
+                    : colors.textTertiary,
+              },
+            ]}
+          >
             {content.length}/{charLimit}
           </Text>
         </View>
 
         {/* Media preview */}
         {media.length > 0 && (
-          <ScrollView horizontal showsHorizontalScrollIndicator={false}
-            contentContainerStyle={S.mediaRow}>
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={S.mediaRow}
+          >
             {media.map((a, i) => (
-              <View key={i} style={S.mediaThumb}>
+              <View key={i} style={[S.mediaThumb, { backgroundColor: colors.bgElevated }]}>
                 <Image source={{ uri: a.uri }} style={S.mediaThumbnailImg} resizeMode="cover" />
                 {a.type === "video" && (
                   <View style={S.videoOverlay}>
-                    <Feather name="play" size={20} color="#fff" />
+                    <Feather name="play" size={20} color="#FFFFFF" />
                     {a.fileSize && (
-                      <Text style={{ color: "#fff", fontSize: 10, marginTop: 2 }}>
-                        {(a.fileSize / 1024 / 1024).toFixed(1)}MB
+                      <Text style={{ color: "#FFFFFF", fontSize: 10.5, marginTop: 2 }}>
+                        {(a.fileSize / 1024 / 1024).toFixed(1)} MB
                       </Text>
                     )}
                   </View>
                 )}
-                <Pressable onPress={() => setMedia(prev => prev.filter((_, j) => j !== i))}
-                  style={S.removeMedia}>
-                  <Feather name="x" size={12} color="#fff" />
+                <Pressable
+                  onPress={() => setMedia((prev) => prev.filter((_, j) => j !== i))}
+                  style={S.removeMedia}
+                  accessibilityRole="button"
+                  accessibilityLabel="Remove attachment"
+                >
+                  <Feather name="x" size={13} color="#FFFFFF" />
                 </Pressable>
               </View>
             ))}
           </ScrollView>
         )}
 
-        {/* Media pick */}
-        <Pressable onPress={pickMedia}
-          style={[S.mediaPickBtn, { backgroundColor: colors.secondary, borderColor: colors.border }]}>
-          <Feather name={mode === "reel" ? "video" : "camera"} size={20} color={colors.primary} />
-          <Text style={[S.mediaPickText, { color: colors.primary }]}>
-            {mode === "reel" ? "Add Video" : "Add Photo / Video"}
-          </Text>
-        </Pressable>
+        {/* Attachment buttons */}
+        <View style={S.dockRow}>
+          <Pressable
+            onPress={() => (isWeb ? launchLibrary() : setMediaSheetOpen(true))}
+            style={[
+              S.mediaPickBtn,
+              { backgroundColor: colors.bgElevated, borderColor: colors.separator },
+            ]}
+            accessibilityRole="button"
+            accessibilityLabel={mode === "reel" ? "Add video" : "Add photo or video"}
+          >
+            <Feather
+              name={mode === "reel" ? "video" : "image"}
+              size={18}
+              color={colors.accentPrimary}
+            />
+            <Text style={[S.mediaPickText, { color: colors.textPrimary }]}>
+              {mode === "reel" ? "Attach Video" : "Attach Media"}
+            </Text>
+          </Pressable>
 
-        {/* AI Toolbar */}
-        <AIToolbar content={content} mode={mode} onContent={(v: any) => {
-          if (typeof v === "function") setContent(v);
-          else setContent(v);
-        }} media={media} />
-
-        {/* Visibility */}
-        <View style={[S.visibilityRow, { borderTopColor: colors.border }]}>
-          <Feather name="globe" size={15} color={colors.mutedForeground} />
-          <Text style={[S.visibilityLabel, { color: colors.foreground }]}>Who can see this?</Text>
-          <View style={S.visBtns}>
-            {(["public", "followers", "private"] as const).map(v => (
-              <Pressable key={v} onPress={() => setVisibility(v)}
-                style={[S.visChip,
-                  visibility === v
-                    ? { backgroundColor: colors.primary, borderColor: colors.primary }
-                    : { backgroundColor: colors.secondary, borderColor: colors.border }]}>
-                <Text style={[S.visChipText, { color: visibility === v ? "#fff" : colors.mutedForeground }]}>
-                  {v.charAt(0).toUpperCase() + v.slice(1)}
-                </Text>
-              </Pressable>
-            ))}
-          </View>
+          <Pressable
+            onPress={() => router.push("/create-story" as any)}
+            style={[
+              S.mediaPickBtn,
+              { backgroundColor: colors.bgElevated, borderColor: colors.separator },
+            ]}
+            accessibilityRole="button"
+            accessibilityLabel="Create 24h Story instead"
+          >
+            <Feather name="circle" size={18} color={colors.accentPrimary} />
+            <Text style={[S.mediaPickText, { color: colors.textPrimary }]}>Story</Text>
+          </Pressable>
         </View>
+
+        <AIToolbar content={content} mode={mode} onContent={setContent} media={media} />
       </ScrollView>
+
+      <ActionSheet
+        visible={mediaSheetOpen}
+        title={mode === "reel" ? "Add Video" : "Add Media"}
+        items={[
+          {
+            id: "camera",
+            label: "Take Photo or Video",
+            icon: "camera",
+            onPress: launchCamera,
+          },
+          {
+            id: "library",
+            label: "Choose from Library",
+            icon: "image",
+            onPress: launchLibrary,
+          },
+        ]}
+        onClose={() => setMediaSheetOpen(false)}
+      />
+
+      <ActionSheet
+        visible={visSheetOpen}
+        title="Audience"
+        message="Choose who can see this post."
+        items={[
+          {
+            id: "public",
+            label: "Public",
+            subtitle: "Anyone on Vibe can view",
+            icon: "globe",
+            selected: visibility === "public",
+            onPress: () => setVisibility("public"),
+          },
+          {
+            id: "followers",
+            label: "Followers Only",
+            subtitle: "Only people following you",
+            icon: "users",
+            selected: visibility === "followers",
+            onPress: () => setVisibility("followers"),
+          },
+          {
+            id: "private",
+            label: "Only Me",
+            subtitle: "Saved privately to your profile",
+            icon: "lock",
+            selected: visibility === "private",
+            onPress: () => setVisibility("private"),
+          },
+        ]}
+        onClose={() => setVisSheetOpen(false)}
+      />
     </View>
   );
 }
 
 const S = StyleSheet.create({
   container: { flex: 1 },
-  header: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 16, paddingVertical: 12, borderBottomWidth: StyleSheet.hairlineWidth },
-  headerTitle: { fontSize: 17, fontWeight: "700" },
-  postBtn: { paddingHorizontal: 20, paddingVertical: 8, borderRadius: 20 },
-  postBtnText: { color: "#fff", fontWeight: "700", fontSize: 14 },
-  modeTabs: { flexDirection: "row", borderBottomWidth: StyleSheet.hairlineWidth },
-  modeTab: { flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, paddingVertical: 12, borderBottomWidth: 2 },
-  modeTabText: { fontSize: 14 },
-  composer: { flexDirection: "row", gap: 12, padding: 16, alignItems: "flex-start" },
-  composerName: { fontSize: 14, fontWeight: "700", marginBottom: 4 },
-  textInput: { fontSize: 16, lineHeight: 24, minHeight: 80 },
+  header: {
+    paddingHorizontal: 16,
+    paddingBottom: 10,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+  },
+  headerInner: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    width: "100%",
+    alignSelf: "center",
+  },
+  hitTarget: {
+    minWidth: 44,
+    minHeight: 44,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  headerTitle: {
+    fontSize: 17,
+    fontWeight: "600",
+    letterSpacing: -0.2,
+  },
+  postBtn: {
+    paddingHorizontal: 18,
+    minHeight: 36,
+    borderRadius: RADIUS.pill,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  postBtnText: { color: "#FFFFFF", fontWeight: "600", fontSize: 14 },
+  controlsRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    gap: 12,
+  },
+  modeTrack: {
+    flexDirection: "row",
+    padding: 3,
+    borderRadius: RADIUS.sm,
+    gap: 3,
+  },
+  modeBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: 14,
+    minHeight: 34,
+    borderRadius: 8,
+  },
+  modeText: { fontSize: 13.5, fontWeight: "600" },
+  audienceBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: 12,
+    minHeight: 38,
+    borderRadius: RADIUS.sm,
+    borderWidth: StyleSheet.hairlineWidth,
+  },
+  audienceText: { fontSize: 13.5, fontWeight: "500" },
+  composer: {
+    flexDirection: "row",
+    gap: 12,
+    padding: 16,
+    alignItems: "flex-start",
+  },
+  composerName: { fontSize: 14.5, fontWeight: "600", marginBottom: 4 },
+  textInput: { fontSize: 16, lineHeight: 23, minHeight: 100 },
+  counterRow: {
+    paddingHorizontal: 16,
+    alignItems: "flex-end",
+    marginBottom: 8,
+  },
+  counterText: {
+    fontSize: 12,
+    fontVariant: ["tabular-nums"],
+  },
   mediaRow: { paddingHorizontal: 16, paddingBottom: 12, gap: 10 },
-  mediaThumb: { width: 110, height: 110, borderRadius: 12, overflow: "hidden", position: "relative" },
+  mediaThumb: {
+    width: 112,
+    height: 112,
+    borderRadius: RADIUS.md,
+    overflow: "hidden",
+    position: "relative",
+  },
   mediaThumbnailImg: { width: "100%", height: "100%" },
-  videoOverlay: { ...StyleSheet.absoluteFillObject, backgroundColor: "rgba(0,0,0,0.4)", alignItems: "center", justifyContent: "center" },
-  removeMedia: { position: "absolute", top: 6, right: 6, width: 22, height: 22, borderRadius: 11, backgroundColor: "rgba(0,0,0,0.6)", alignItems: "center", justifyContent: "center" },
-  mediaPickBtn: { flexDirection: "row", alignItems: "center", gap: 10, marginHorizontal: 16, marginVertical: 8, paddingVertical: 13, paddingHorizontal: 16, borderRadius: 14, borderWidth: StyleSheet.hairlineWidth },
+  videoOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "rgba(0,0,0,0.38)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  removeMedia: {
+    position: "absolute",
+    top: 6,
+    right: 6,
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    backgroundColor: "rgba(0,0,0,0.65)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  dockRow: {
+    flexDirection: "row",
+    paddingHorizontal: 16,
+    gap: 10,
+    marginBottom: 14,
+  },
+  mediaPickBtn: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    minHeight: 46,
+    borderRadius: RADIUS.md,
+    borderWidth: StyleSheet.hairlineWidth,
+  },
   mediaPickText: { fontSize: 14, fontWeight: "600" },
-  aiBar: { flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: 16, paddingVertical: 12, borderTopWidth: StyleSheet.hairlineWidth, flexWrap: "wrap" },
-  aiLabel: { flexDirection: "row", alignItems: "center", gap: 5, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 14 },
-  aiGradDot: { width: 18, height: 18, borderRadius: 9, alignItems: "center", justifyContent: "center" },
-  aiLabelText: { fontSize: 12, fontWeight: "800", letterSpacing: 0.4 },
-  aiTool: { flexDirection: "row", alignItems: "center", gap: 5, paddingHorizontal: 12, paddingVertical: 7, borderRadius: 18, borderWidth: 1 },
-  aiToolText: { fontSize: 12, fontWeight: "600" },
-  tagRow: { paddingHorizontal: 16, paddingVertical: 8, gap: 8, alignItems: "center", borderBottomWidth: StyleSheet.hairlineWidth },
-  tagHint: { fontSize: 12, marginRight: 2 },
-  tagChip: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 16, borderWidth: 1 },
-  tagChipText: { fontSize: 13, fontWeight: "700" },
-  visibilityRow: { paddingHorizontal: 16, paddingVertical: 14, borderTopWidth: StyleSheet.hairlineWidth, gap: 10 },
-  visibilityLabel: { fontSize: 14, fontWeight: "600" },
-  visBtns: { flexDirection: "row", gap: 8, flexWrap: "wrap", marginTop: 8 },
-  visChip: { paddingHorizontal: 14, paddingVertical: 7, borderRadius: 14, borderWidth: 1 },
-  visChipText: { fontSize: 13, fontWeight: "600" },
+  aiSection: {
+    borderTopWidth: StyleSheet.hairlineWidth,
+  },
+  aiBar: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+  },
+  aiTool: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: 12,
+    minHeight: 36,
+    borderRadius: RADIUS.sm,
+    borderWidth: StyleSheet.hairlineWidth,
+  },
+  aiToolText: { fontSize: 13, fontWeight: "500" },
+  tagRow: {
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    gap: 8,
+    alignItems: "center",
+    borderTopWidth: StyleSheet.hairlineWidth,
+  },
+  tagChip: {
+    paddingHorizontal: 12,
+    minHeight: 34,
+    justifyContent: "center",
+    borderRadius: RADIUS.sm,
+    borderWidth: StyleSheet.hairlineWidth,
+  },
+  tagChipText: { fontSize: 13, fontWeight: "600" },
+  altBox: {
+    marginHorizontal: 16,
+    marginBottom: 12,
+    padding: 12,
+    borderRadius: RADIUS.md,
+    borderWidth: StyleSheet.hairlineWidth,
+    gap: 4,
+  },
+  altLabel: { fontSize: 12, fontWeight: "600" },
+  altBody: { fontSize: 13.5, lineHeight: 19 },
 });

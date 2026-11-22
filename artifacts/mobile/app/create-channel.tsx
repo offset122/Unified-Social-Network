@@ -1,15 +1,30 @@
 import React, { useState } from "react";
-import { View, Text, StyleSheet, TextInput, Pressable, ActivityIndicator, Alert } from "react-native";
+import {
+  ActivityIndicator,
+  Platform,
+  Pressable,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+} from "react-native";
 import { Stack, useRouter } from "expo-router";
 import { Feather } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useColors } from "@/hooks/useColors";
 import { useAuth } from "@/lib/auth";
 import { supabase } from "@/lib/supabase";
+import { GlassSurface } from "@/components/GlassSurface";
+import { useToast } from "@/components/Toast";
+import { RADIUS } from "@/constants/colors";
+import { haptics } from "@/lib/motion";
+
+const CHANNEL_ICONS = ["📢", "📰", "💬", "📣", "🔔", "📡", "🌐", "🎙️"];
 
 export default function CreateChannelScreen() {
   const { user } = useAuth();
   const colors = useColors();
+  const { showToast } = useToast();
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const [name, setName] = useState("");
@@ -18,71 +33,265 @@ export default function CreateChannelScreen() {
   const [icon, setIcon] = useState("📢");
   const [creating, setCreating] = useState(false);
 
-  const channelIcons = ["📢", "📰", "💬", "📣", "🔔", "📡", "🌐", "📡"];
-
   const handleCreate = async () => {
     if (!name.trim() || !user?.id) return;
     setCreating(true);
     try {
-      const { data: ch, error } = await supabase.from("conversations").insert({
-        type: "group", name: name.trim(), description: description.trim(), created_by: user.id,
-        is_private: channelType === "private",
-      }).select().single();
+      const displayName = `${icon} ${name.trim()}`;
+      const { data: ch, error } = await supabase
+        .from("conversations")
+        .insert({
+          type: "group",
+          name: displayName,
+          created_by: user.id,
+        })
+        .select()
+        .single();
       if (error) throw error;
-      await supabase.from("conversation_members").insert({ conversation_id: ch.id, user_id: user.id, is_admin: true });
+      await supabase.from("conversation_members").insert({
+        conversation_id: ch.id,
+        user_id: user.id,
+        is_admin: true,
+      });
+      haptics.success();
+      showToast("Channel created", "success");
       router.replace({ pathname: `/channel/${ch.id}` } as any);
     } catch (e: any) {
-      Alert.alert("Error", e.message);
-    } finally { setCreating(false); }
+      showToast(e?.message ?? "Could not create channel", "error");
+    } finally {
+      setCreating(false);
+    }
   };
 
   return (
-    <View style={[styles.container, { backgroundColor: colors.background }]}>
+    <View style={[styles.container, { backgroundColor: colors.bgCanvas }]}>
       <Stack.Screen options={{ headerShown: false }} />
-      <View style={[styles.header, { paddingTop: insets.top + 8, borderBottomColor: colors.border }]}>
-        <Pressable onPress={() => router.back()} hitSlop={8}><Feather name="x" size={22} color={colors.foreground} /></Pressable>
-        <Text style={[styles.title, { color: colors.foreground }]}>New Channel</Text>
-        <Pressable onPress={handleCreate} disabled={!name.trim() || creating}
-          style={[styles.btn, { backgroundColor: name.trim() ? colors.primary : colors.muted }]}>
-          {creating ? <ActivityIndicator color="#fff" size="small" /> : <Text style={{ color: "#fff", fontWeight: "700" }}>Create</Text>}
-        </Pressable>
-      </View>
-      <View style={{ padding: 20 }}>
-        <TextInput style={[styles.input, { color: colors.foreground, backgroundColor: colors.secondary, borderColor: colors.border }]}
-          placeholder="Channel name..." placeholderTextColor={colors.mutedForeground}
-          value={name} onChangeText={setName} autoFocus />
-        <TextInput style={[styles.input, { color: colors.foreground, backgroundColor: colors.secondary, borderColor: colors.border, marginTop: 12 }]}
-          placeholder="Description (optional)" placeholderTextColor={colors.mutedForeground}
-          value={description} onChangeText={setDescription} />
-        <View style={[{ flexDirection: "row", gap: 10, marginTop: 12, borderWidth: 1.5, borderRadius: 14, padding: 4, backgroundColor: colors.secondary, borderColor: colors.border }]}>
-          <Pressable onPress={() => setChannelType("public")} style={[{ flex: 1, paddingVertical: 10, borderRadius: 12, alignItems: "center" }, channelType === "public" && { backgroundColor: colors.primary }]}>
-            <Text style={[{ fontSize: 14, fontWeight: "700", color: channelType === "public" ? "#fff" : colors.mutedForeground }]}>Public</Text>
+      <GlassSurface
+        style={[
+          styles.headerWrap,
+          {
+            paddingTop: Platform.OS === "web" ? 12 : insets.top + 8,
+            borderBottomColor: colors.separator,
+          },
+        ]}
+      >
+        <View style={[styles.headerInner, { maxWidth: 560 }]}>
+          <Pressable
+            onPress={() => router.back()}
+            style={styles.closeBtn}
+            accessibilityRole="button"
+            accessibilityLabel="Close"
+          >
+            <Feather name="x" size={22} color={colors.textPrimary} />
           </Pressable>
-          <Pressable onPress={() => setChannelType("private")} style={[{ flex: 1, paddingVertical: 10, borderRadius: 12, alignItems: "center" }, channelType === "private" && { backgroundColor: colors.primary }]}>
-            <Text style={[{ fontSize: 14, fontWeight: "700", color: channelType === "private" ? "#fff" : colors.mutedForeground }]}>Private</Text>
+          <Text style={[styles.title, { color: colors.textPrimary }]}>
+            New Channel
+          </Text>
+          <Pressable
+            onPress={handleCreate}
+            disabled={!name.trim() || creating}
+            style={[
+              styles.btn,
+              {
+                backgroundColor: name.trim()
+                  ? colors.accentPrimary
+                  : colors.muted,
+              },
+            ]}
+            accessibilityRole="button"
+            accessibilityLabel="Create channel"
+          >
+            {creating ? (
+              <ActivityIndicator color="#FFFFFF" size="small" />
+            ) : (
+              <Text style={{ color: "#FFFFFF", fontWeight: "700", fontSize: 14 }}>
+                Create
+              </Text>
+            )}
           </Pressable>
         </View>
-        <Text style={[{ fontSize: 12, fontWeight: "700", textTransform: "uppercase", letterSpacing: 0.6, color: colors.mutedForeground, marginTop: 16, marginBottom: 8 }]}>Icon</Text>
-        <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 10 }}>
-          {channelIcons.map(emoji => (
-            <Pressable key={emoji} onPress={() => setIcon(emoji)} style={[{ width: 44, height: 44, borderRadius: 12, borderWidth: 1, alignItems: "center", justifyContent: "center", backgroundColor: icon === emoji ? colors.primary : colors.card, borderColor: colors.border }]}>
-              <Text style={{ fontSize: 22 }}>{emoji}</Text>
-            </Pressable>
-          ))}
+      </GlassSurface>
+
+      <View style={[styles.body, { maxWidth: 560 }]}>
+        <TextInput
+          style={[
+            styles.input,
+            {
+              color: colors.textPrimary,
+              backgroundColor: colors.bgElevated,
+              borderColor: colors.separator,
+            },
+          ]}
+          placeholder="Channel name…"
+          placeholderTextColor={colors.textTertiary}
+          value={name}
+          onChangeText={setName}
+          autoFocus
+        />
+        <TextInput
+          style={[
+            styles.input,
+            {
+              color: colors.textPrimary,
+              backgroundColor: colors.bgElevated,
+              borderColor: colors.separator,
+              marginTop: 12,
+            },
+          ]}
+          placeholder="Topic or description (optional)"
+          placeholderTextColor={colors.textTertiary}
+          value={description}
+          onChangeText={setDescription}
+        />
+
+        <View
+          style={[
+            styles.segmentWrap,
+            {
+              backgroundColor: colors.bgElevated,
+              borderColor: colors.separator,
+            },
+          ]}
+        >
+          {(["public", "private"] as const).map((t) => {
+            const active = channelType === t;
+            return (
+              <Pressable
+                key={t}
+                onPress={() => {
+                  haptics.selection();
+                  setChannelType(t);
+                }}
+                style={[
+                  styles.segmentBtn,
+                  active && { backgroundColor: colors.accentPrimary },
+                ]}
+                accessibilityRole="button"
+                accessibilityState={{ selected: active }}
+              >
+                <Text
+                  style={{
+                    fontSize: 14,
+                    fontWeight: "600",
+                    textTransform: "capitalize",
+                    color: active ? "#FFFFFF" : colors.textSecondary,
+                  }}
+                >
+                  {t}
+                </Text>
+              </Pressable>
+            );
+          })}
+        </View>
+
+        <Text
+          style={[styles.sectionLabel, { color: colors.textSecondary }]}
+        >
+          Icon
+        </Text>
+        <View style={styles.iconRow}>
+          {CHANNEL_ICONS.map((emoji) => {
+            const selected = icon === emoji;
+            return (
+              <Pressable
+                key={emoji}
+                onPress={() => {
+                  haptics.selection();
+                  setIcon(emoji);
+                }}
+                style={[
+                  styles.iconBtn,
+                  {
+                    backgroundColor: selected
+                      ? colors.accentPrimary
+                      : colors.bgElevated,
+                    borderColor: selected
+                      ? colors.accentPrimary
+                      : colors.separator,
+                  },
+                ]}
+                accessibilityRole="button"
+                accessibilityState={{ selected }}
+              >
+                <Text style={styles.iconText}>{emoji}</Text>
+              </Pressable>
+            );
+          })}
         </View>
       </View>
     </View>
   );
 }
+
 const styles = StyleSheet.create({
   container: { flex: 1 },
-  header: { flexDirection: "row", alignItems: "center", paddingHorizontal: 16, paddingBottom: 12, borderBottomWidth: StyleSheet.hairlineWidth, gap: 12 },
+  headerWrap: { borderBottomWidth: StyleSheet.hairlineWidth },
+  headerInner: {
+    width: "100%",
+    alignSelf: "center",
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 12,
+    paddingBottom: 10,
+    gap: 10,
+  },
+  closeBtn: {
+    width: 44,
+    height: 44,
+    alignItems: "center",
+    justifyContent: "center",
+  },
   title: { flex: 1, textAlign: "center", fontSize: 17, fontWeight: "700" },
-  btn: { paddingHorizontal: 16, paddingVertical: 8, borderRadius: 18 },
-  input: { borderWidth: 1.5, borderRadius: 14, paddingHorizontal: 14, paddingVertical: 13, fontSize: 15 },
-  typeBtnText: { fontSize: 14, fontWeight: "700" },
-  sectionLabel: { fontSize: 12, fontWeight: "700", textTransform: "uppercase", letterSpacing: 0.6 },
+  btn: {
+    paddingHorizontal: 18,
+    height: 38,
+    borderRadius: RADIUS.pill,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  body: {
+    width: "100%",
+    alignSelf: "center",
+    padding: 20,
+  },
+  input: {
+    borderWidth: StyleSheet.hairlineWidth,
+    borderRadius: RADIUS.md,
+    paddingHorizontal: 14,
+    minHeight: 48,
+    fontSize: 15.5,
+  },
+  segmentWrap: {
+    flexDirection: "row",
+    gap: 6,
+    marginTop: 14,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderRadius: RADIUS.md,
+    padding: 4,
+  },
+  segmentBtn: {
+    flex: 1,
+    height: 40,
+    borderRadius: RADIUS.sm + 2,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  sectionLabel: {
+    fontSize: 12,
+    fontWeight: "600",
+    textTransform: "uppercase",
+    letterSpacing: 0.6,
+    marginTop: 20,
+    marginBottom: 10,
+  },
   iconRow: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
-  iconBtn: { width: 44, height: 44, borderRadius: 12, borderWidth: 1, alignItems: "center", justifyContent: "center" },
+  iconBtn: {
+    width: 48,
+    height: 48,
+    borderRadius: RADIUS.sm + 2,
+    borderWidth: StyleSheet.hairlineWidth,
+    alignItems: "center",
+    justifyContent: "center",
+  },
   iconText: { fontSize: 22 },
 });

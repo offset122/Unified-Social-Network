@@ -1,105 +1,116 @@
 import React, { useEffect, useRef, useState } from "react";
 import {
-  View,
-  Text,
-  StyleSheet,
-  Pressable,
-  Animated,
-  Dimensions,
   ActivityIndicator,
-  ScrollView,
-  TextInput,
+  Animated,
   KeyboardAvoidingView,
   Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+  useWindowDimensions,
 } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
 import { Feather } from "@expo/vector-icons";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Redirect, router, useLocalSearchParams } from "expo-router";
 import { useAuth } from "@/lib/auth";
-import { useColorScheme } from "react-native";
+import { useColors } from "@/hooks/useColors";
+import { RADIUS } from "@/constants/colors";
+import { isSupabaseConfigured, supabase } from "@/lib/supabase";
 import VibeLogo from "@/components/VibeLogo";
-
-const { width, height } = Dimensions.get("window");
+import { PromptSheet } from "@/components/ActionSheet";
+import { useToast } from "@/components/Toast";
+import { useReducedMotion } from "@/lib/motion";
 
 type Screen = "welcome" | "login-form" | "signup-form";
 
-function buildColors(isDark: boolean) {
-  return {
-    bg: isDark
-      ? (["#050508", "#0d0520", "#130a2e"] as [string, string, string])
-      : (["#f8f5ff", "#ede8ff", "#e0d7ff"] as [string, string, string]),
-    gradientAccent: isDark
-      ? (["#7c3aed", "#4f46e5"] as [string, string])
-      : (["#7c3aed", "#4f46e5"] as [string, string]),
-    primary: "#7c3aed",
-    primaryLight: isDark ? "#a78bfa" : "#8b5cf6",
-    secondary: "#4f46e5",
-    fg: isDark ? "#fafafa" : "#0f0a1e",
-    fgMuted: isDark ? "#9ca3af" : "#6b7280",
-    fgSubtle: isDark ? "#6b7280" : "#9ca3af",
-    cardBg: isDark ? "rgba(255,255,255,0.04)" : "rgba(255,255,255,0.7)",
-    cardBorder: isDark ? "rgba(139,92,246,0.2)" : "rgba(124,58,237,0.15)",
-    inputBg: isDark ? "rgba(255,255,255,0.06)" : "rgba(255,255,255,0.9)",
-    inputBorder: isDark ? "rgba(139,92,246,0.25)" : "rgba(124,58,237,0.2)",
-    inputFocusBorder: "#7c3aed",
-    orb1: isDark ? "rgba(124,58,237,0.35)" : "rgba(124,58,237,0.15)",
-    orb2: isDark ? "rgba(79,70,229,0.25)" : "rgba(79,70,229,0.1)",
-    orb3: isDark ? "rgba(167,139,250,0.15)" : "rgba(167,139,250,0.2)",
-    divider: isDark ? "rgba(255,255,255,0.08)" : "rgba(0,0,0,0.06)",
-    success: "#10b981",
-    error: "#ef4444",
-    errorBg: isDark ? "rgba(239,68,68,0.12)" : "rgba(239,68,68,0.08)",
-  };
-}
-
 function AnimatedOrb({ style, color }: { style: any; color: string }) {
   const pulse = useRef(new Animated.Value(1)).current;
+  const reducedMotion = useReducedMotion();
+
   useEffect(() => {
-    Animated.loop(
+    if (reducedMotion) return;
+    const loop = Animated.loop(
       Animated.sequence([
-        Animated.timing(pulse, { toValue: 1.15, duration: 3000, useNativeDriver: true }),
-        Animated.timing(pulse, { toValue: 0.9, duration: 3000, useNativeDriver: true }),
-      ])
-    ).start();
-  }, []);
+        Animated.timing(pulse, {
+          toValue: 1.12,
+          duration: 3400,
+          useNativeDriver: true,
+        }),
+        Animated.timing(pulse, {
+          toValue: 0.92,
+          duration: 3400,
+          useNativeDriver: true,
+        }),
+      ]),
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [pulse, reducedMotion]);
+
   return (
     <Animated.View
-      style={[style, { transform: [{ scale: pulse }], backgroundColor: color, borderRadius: 999 }]}
+      pointerEvents="none"
+      style={[
+        style,
+        {
+          transform: [{ scale: pulse }],
+          backgroundColor: color,
+          borderRadius: 999,
+        },
+      ]}
     />
   );
 }
 
 function FocusableInput({
-  value, onChangeText, placeholder, colors: c, keyboardType, autoCapitalize,
-  autoCorrect, icon, secureEntry,
+  value,
+  onChangeText,
+  placeholder,
+  keyboardType,
+  autoCapitalize,
+  autoCorrect,
+  icon,
+  secureEntry,
+  accessibilityLabel,
 }: {
-  value: string; onChangeText: (t: string) => void; placeholder: string;
-  colors: ReturnType<typeof buildColors>; keyboardType?: any; autoCapitalize?: any;
-  autoCorrect?: boolean; icon: string; secureEntry?: boolean;
+  value: string;
+  onChangeText: (t: string) => void;
+  placeholder: string;
+  keyboardType?: any;
+  autoCapitalize?: any;
+  autoCorrect?: boolean;
+  icon: keyof typeof Feather.glyphMap;
+  secureEntry?: boolean;
+  accessibilityLabel?: string;
 }) {
+  const colors = useColors();
   const [focused, setFocused] = useState(false);
   const [show, setShow] = useState(false);
-  const borderAnim = useRef(new Animated.Value(0)).current;
-
-  useEffect(() => {
-    Animated.timing(borderAnim, {
-      toValue: focused ? 1 : 0, duration: 200, useNativeDriver: false,
-    }).start();
-  }, [focused]);
-
-  const borderColor = borderAnim.interpolate({
-    inputRange: [0, 1],
-    outputRange: [c.inputBorder, c.inputFocusBorder],
-  });
 
   return (
-    <Animated.View style={[styles.inputWrapper, { borderColor, backgroundColor: c.inputBg }]}>
-      <Feather name={icon as any} size={17} color={focused ? c.primary : c.fgMuted} style={styles.inputIcon} />
+    <View
+      style={[
+        styles.inputWrapper,
+        {
+          borderColor: focused ? colors.accentPrimary : colors.separator,
+          backgroundColor: colors.input,
+        },
+      ]}
+    >
+      <Feather
+        name={icon}
+        size={17}
+        color={focused ? colors.accentPrimary : colors.textSecondary}
+        style={styles.inputIcon}
+      />
       <TextInput
-        style={[styles.inputField, { color: c.fg }]}
+        style={[styles.inputField, { color: colors.textPrimary }]}
         placeholder={placeholder}
-        placeholderTextColor={c.fgSubtle}
+        placeholderTextColor={colors.textTertiary}
         value={value}
         onChangeText={onChangeText}
         onFocus={() => setFocused(true)}
@@ -108,55 +119,46 @@ function FocusableInput({
         autoCapitalize={autoCapitalize ?? "none"}
         autoCorrect={autoCorrect ?? false}
         secureTextEntry={secureEntry && !show}
+        accessibilityLabel={accessibilityLabel ?? placeholder}
       />
       {secureEntry && (
-        <Pressable onPress={() => setShow(s => !s)} hitSlop={10} style={styles.eyeBtn}>
-          <Feather name={show ? "eye-off" : "eye"} size={17} color={c.fgMuted} />
+        <Pressable
+          onPress={() => setShow((s) => !s)}
+          style={styles.eyeBtn}
+          accessibilityRole="button"
+          accessibilityLabel={show ? "Hide password" : "Show password"}
+        >
+          <Feather
+            name={show ? "eye-off" : "eye"}
+            size={17}
+            color={colors.textSecondary}
+          />
         </Pressable>
       )}
-    </Animated.View>
-  );
-}
-
-function StaggeredItem({ children, delay }: { children: React.ReactNode; delay: number }) {
-  const anim = useRef(new Animated.Value(0)).current;
-  const translateY = useRef(new Animated.Value(24)).current;
-
-  useEffect(() => {
-    Animated.parallel([
-      Animated.timing(anim, { toValue: 1, duration: 500, delay, useNativeDriver: true }),
-      Animated.timing(translateY, { toValue: 0, duration: 500, delay, useNativeDriver: true }),
-    ]).start();
-  }, []);
-
-  return (
-    <Animated.View style={{ opacity: anim, transform: [{ translateY }] }}>
-      {children}
-    </Animated.View>
+    </View>
   );
 }
 
 export default function LoginScreen() {
-  const { isAuthenticated, isLoading, loginWithEmail, registerWithEmail, browseAsGuest, loginWithGoogle } = useAuth();
-  const [googleLoading, setGoogleLoading] = useState(false);
-
-  const handleGoogle = async () => {
-    setGoogleLoading(true);
-    try {
-      await loginWithGoogle();
-    } catch (e: any) {
-      setError(e.message ?? "Google sign-in failed");
-    } finally {
-      setGoogleLoading(false);
-    }
-  };
+  const {
+    isAuthenticated,
+    isLoading,
+    loginWithEmail,
+    registerWithEmail,
+    browseAsGuest,
+    loginWithGoogle,
+  } = useAuth();
+  const colors = useColors();
+  const { showToast } = useToast();
+  const { height } = useWindowDimensions();
   const params = useLocalSearchParams<{ mode?: string }>();
-  const colorScheme = useColorScheme();
-  const isDark = colorScheme === "dark";
-  const c = buildColors(isDark);
 
   const initialScreen: Screen =
-    params.mode === "login" ? "login-form" : params.mode === "signup" ? "signup-form" : "welcome";
+    params.mode === "login"
+      ? "login-form"
+      : params.mode === "signup"
+      ? "signup-form"
+      : "welcome";
 
   const [screen, setScreen] = useState<Screen>(initialScreen);
   const [email, setEmail] = useState("");
@@ -164,157 +166,342 @@ export default function LoginScreen() {
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [googleLoading, setGoogleLoading] = useState(false);
   const [error, setError] = useState("");
+  const [resetPromptOpen, setResetPromptOpen] = useState(false);
 
-  const screenAnim = useRef(new Animated.Value(0)).current;
+  const bgGradient: [string, string, string] = colors.isDark
+    ? ["#000000", "#0C071A", "#121216"]
+    : ["#FFFFFF", "#F6F4FF", "#F0EDFF"];
 
-  useEffect(() => {
-    screenAnim.setValue(0);
-    Animated.timing(screenAnim, { toValue: 1, duration: 400, useNativeDriver: true }).start();
-  }, [screen]);
+  const orbColors = colors.isDark
+    ? [
+        "rgba(139,92,246,0.22)",
+        "rgba(99,102,241,0.16)",
+        "rgba(167,139,250,0.10)",
+      ]
+    : [
+        "rgba(109,40,217,0.10)",
+        "rgba(99,102,241,0.08)",
+        "rgba(139,92,246,0.07)",
+      ];
 
-  if (isLoading) return (
-    <LinearGradient colors={c.bg} style={styles.center}>
-      <LinearGradient colors={c.gradientAccent} style={styles.loadingRing}>
-        <ActivityIndicator color="#fff" size="large" />
+  if (isLoading) {
+    return (
+      <LinearGradient colors={bgGradient} style={styles.center}>
+        <ActivityIndicator color={colors.accentPrimary} size="large" />
       </LinearGradient>
-    </LinearGradient>
-  );
+    );
+  }
+
   if (isAuthenticated) return <Redirect href="/(tabs)" />;
 
+  const handleGoogle = async () => {
+    setGoogleLoading(true);
+    setError("");
+    try {
+      await loginWithGoogle();
+    } catch (e: any) {
+      setError(e?.message ?? "Google sign-in failed");
+    } finally {
+      setGoogleLoading(false);
+    }
+  };
+
   const handleLogin = async () => {
-    if (!email || !password) { setError("Please fill in all fields"); return; }
-    setSubmitting(true); setError("");
+    if (!email.trim() || !password) {
+      setError("Please fill in your email and password.");
+      return;
+    }
+    setSubmitting(true);
+    setError("");
     try {
       await loginWithEmail(email.trim(), password);
       router.replace("/(tabs)");
     } catch (e: any) {
-      setError(e.message ?? "Login failed");
-    } finally { setSubmitting(false); }
+      setError(e?.message ?? "Login failed");
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   const handleSignup = async () => {
-    if (!email || !password || !firstName) { setError("Please fill in all required fields"); return; }
-    if (password.length < 6) { setError("Password must be at least 6 characters"); return; }
-    setSubmitting(true); setError("");
+    if (!email.trim() || !password || !firstName.trim()) {
+      setError("Please fill in all required fields.");
+      return;
+    }
+    if (password.length < 6) {
+      setError("Password must be at least 6 characters.");
+      return;
+    }
+    setSubmitting(true);
+    setError("");
     try {
-      await registerWithEmail(email.trim(), password, firstName.trim(), lastName.trim());
+      await registerWithEmail(
+        email.trim(),
+        password,
+        firstName.trim(),
+        lastName.trim(),
+      );
       router.replace("/(tabs)");
     } catch (e: any) {
-      setError(e.message ?? "Sign up failed");
-    } finally { setSubmitting(false); }
+      setError(e?.message ?? "Sign up failed");
+    } finally {
+      setSubmitting(false);
+    }
   };
 
-  const handleGuest = () => { browseAsGuest(); router.replace("/(tabs)"); };
+  const handleResetPassword = async (targetEmail: string) => {
+    const clean = targetEmail.trim();
+    if (!clean || !clean.includes("@")) {
+      showToast("Please enter a valid email address", "error");
+      return;
+    }
+    if (!isSupabaseConfigured) {
+      showToast("Password reset requires a configured backend", "info");
+      return;
+    }
+    try {
+      const { error: resetError } =
+        await supabase.auth.resetPasswordForEmail(clean);
+      if (resetError) throw resetError;
+      showToast("Password reset email sent", "success");
+    } catch (e: any) {
+      showToast(e?.message ?? "Could not send reset email", "error");
+    }
+  };
+
+  const handleGuest = () => {
+    browseAsGuest();
+    router.replace("/(tabs)");
+  };
 
   const features = [
-    { icon: "image" as const, label: "Share Moments", desc: "Posts, stories & reels", color: "#7c3aed" },
-    { icon: "message-circle" as const, label: "Real-time Chat", desc: "DMs, groups & calls", color: "#4f46e5" },
-    { icon: "film" as const, label: "Watch Reels", desc: "Short videos you'll love", color: "#0ea5e9" },
-    { icon: "radio" as const, label: "Go Live", desc: "Stream to your followers", color: "#10b981" },
+    {
+      icon: "image" as const,
+      label: "Share Moments",
+      desc: "Posts, stories & reels",
+      color: colors.accentPrimary,
+    },
+    {
+      icon: "message-circle" as const,
+      label: "Real-time Chat",
+      desc: "DMs, groups & calls",
+      color: "#4F46E5",
+    },
+    {
+      icon: "film" as const,
+      label: "Watch Reels",
+      desc: "Short vertical video",
+      color: "#0284C7",
+    },
+    {
+      icon: "radio" as const,
+      label: "Go Live",
+      desc: "Broadcast with friends",
+      color: colors.semanticSuccess,
+    },
   ];
 
   if (screen === "welcome") {
     return (
-      <LinearGradient colors={c.bg} style={{ flex: 1 }}>
-        {/* Background orbs */}
-        <AnimatedOrb style={[styles.orb, { width: 320, height: 320, top: -80, right: -80 }]} color={c.orb1} />
-        <AnimatedOrb style={[styles.orb, { width: 240, height: 240, bottom: 100, left: -60 }]} color={c.orb2} />
-        <AnimatedOrb style={[styles.orb, { width: 160, height: 160, top: height * 0.4, right: 20 }]} color={c.orb3} />
+      <LinearGradient colors={bgGradient} style={{ flex: 1 }}>
+        <AnimatedOrb
+          style={[styles.orb, { width: 320, height: 320, top: -90, right: -90 }]}
+          color={orbColors[0]}
+        />
+        <AnimatedOrb
+          style={[styles.orb, { width: 240, height: 240, bottom: 90, left: -70 }]}
+          color={orbColors[1]}
+        />
+        <AnimatedOrb
+          style={[
+            styles.orb,
+            { width: 150, height: 150, top: height * 0.42, right: 16 },
+          ]}
+          color={orbColors[2]}
+        />
 
         <SafeAreaView style={{ flex: 1 }}>
           <ScrollView
             contentContainerStyle={styles.welcomeScroll}
             showsVerticalScrollIndicator={false}
           >
-            {/* Logo */}
-            <StaggeredItem delay={0}>
-              <View style={{ alignItems: "center" }}>
+            <View style={styles.col}>
+              <View style={{ alignItems: "center", marginBottom: 8 }}>
                 <VibeLogo size={72} showText={true} />
               </View>
-            </StaggeredItem>
 
-            {/* Headline */}
-            <StaggeredItem delay={140}>
-              <Text style={[styles.tagline, { color: c.fgMuted }]}>
+              <Text style={[styles.tagline, { color: colors.textSecondary }]}>
                 Connect with the world around you
               </Text>
-            </StaggeredItem>
 
-            {/* Feature cards */}
-            <StaggeredItem delay={200}>
-              <View style={[styles.featureGrid, { borderColor: c.cardBorder, backgroundColor: c.cardBg }]}>
+              <View
+                style={[
+                  styles.featureGrid,
+                  {
+                    borderColor: colors.separator,
+                    backgroundColor: colors.bgElevated,
+                  },
+                ]}
+              >
                 {features.map((f, i) => (
-                  <View key={f.label} style={[
-                    styles.featureCell,
-                    i % 2 === 0 && i < features.length - 1 && { borderRightWidth: 1, borderRightColor: c.divider },
-                    i < 2 && { borderBottomWidth: 1, borderBottomColor: c.divider },
-                  ]}>
-                    <View style={[styles.featureIconWrap, { backgroundColor: f.color + "18" }]}>
+                  <View
+                    key={f.label}
+                    style={[
+                      styles.featureCell,
+                      i % 2 === 0 && {
+                        borderRightWidth: StyleSheet.hairlineWidth,
+                        borderRightColor: colors.separator,
+                      },
+                      i < 2 && {
+                        borderBottomWidth: StyleSheet.hairlineWidth,
+                        borderBottomColor: colors.separator,
+                      },
+                    ]}
+                  >
+                    <View
+                      style={[
+                        styles.featureIconWrap,
+                        { backgroundColor: colors.accentTint },
+                      ]}
+                    >
                       <Feather name={f.icon} size={18} color={f.color} />
                     </View>
-                    <Text style={[styles.featureCellLabel, { color: c.fg }]}>{f.label}</Text>
-                    <Text style={[styles.featureCellDesc, { color: c.fgMuted }]}>{f.desc}</Text>
+                    <Text
+                      style={[
+                        styles.featureCellLabel,
+                        { color: colors.textPrimary },
+                      ]}
+                    >
+                      {f.label}
+                    </Text>
+                    <Text
+                      style={[
+                        styles.featureCellDesc,
+                        { color: colors.textSecondary },
+                      ]}
+                    >
+                      {f.desc}
+                    </Text>
                   </View>
                 ))}
               </View>
-            </StaggeredItem>
 
-            {/* CTA buttons */}
-            <StaggeredItem delay={300}>
               <Pressable
                 onPress={() => setScreen("signup-form")}
-                style={({ pressed }) => [styles.primaryBtn, { opacity: pressed ? 0.88 : 1 }]}
+                style={({ pressed }) => [
+                  styles.primaryBtn,
+                  {
+                    backgroundColor: colors.accentPrimary,
+                    opacity: pressed ? 0.88 : 1,
+                  },
+                ]}
+                accessibilityRole="button"
+                accessibilityLabel="Get started and create an account"
               >
-                <LinearGradient colors={["#7c3aed", "#4f46e5"]} style={styles.primaryBtnGradient} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }}>
-                  <Text style={styles.primaryBtnText}>Get Started — It's Free</Text>
-                  <Feather name="arrow-right" size={18} color="#fff" />
-                </LinearGradient>
+                <Text style={styles.primaryBtnText}>
+                  Get Started — It&apos;s Free
+                </Text>
+                <Feather name="arrow-right" size={18} color="#FFFFFF" />
               </Pressable>
-            </StaggeredItem>
 
-            <StaggeredItem delay={360}>
               <Pressable
                 onPress={() => setScreen("login-form")}
-                style={({ pressed }) => [styles.outlineBtn, { borderColor: c.cardBorder, backgroundColor: c.cardBg, opacity: pressed ? 0.8 : 1 }]}
+                style={({ pressed }) => [
+                  styles.outlineBtn,
+                  {
+                    borderColor: colors.separator,
+                    backgroundColor: colors.bgElevated,
+                    opacity: pressed ? 0.82 : 1,
+                  },
+                ]}
+                accessibilityRole="button"
+                accessibilityLabel="Sign in to your account"
               >
-                <Text style={[styles.outlineBtnText, { color: c.fg }]}>Sign In to Your Account</Text>
+                <Text
+                  style={[styles.outlineBtnText, { color: colors.textPrimary }]}
+                >
+                  Sign In to Your Account
+                </Text>
               </Pressable>
-            </StaggeredItem>
 
-            <StaggeredItem delay={420}>
               <View style={styles.dividerRow}>
-                <View style={[styles.dividerLine, { backgroundColor: c.divider }]} />
-                <Text style={[styles.dividerText, { color: c.fgSubtle }]}>or</Text>
-                <View style={[styles.dividerLine, { backgroundColor: c.divider }]} />
+                <View
+                  style={[
+                    styles.dividerLine,
+                    { backgroundColor: colors.separator },
+                  ]}
+                />
+                <Text
+                  style={[styles.dividerText, { color: colors.textTertiary }]}
+                >
+                  or
+                </Text>
+                <View
+                  style={[
+                    styles.dividerLine,
+                    { backgroundColor: colors.separator },
+                  ]}
+                />
               </View>
+
               <Pressable
                 onPress={handleGoogle}
                 disabled={googleLoading}
-                style={({ pressed }) => [styles.googleBtn, { borderColor: c.cardBorder, backgroundColor: c.cardBg, opacity: pressed || googleLoading ? 0.75 : 1 }]}
+                style={({ pressed }) => [
+                  styles.googleBtn,
+                  {
+                    borderColor: colors.separator,
+                    backgroundColor: colors.bgElevated,
+                    opacity: pressed || googleLoading ? 0.75 : 1,
+                  },
+                ]}
+                accessibilityRole="button"
+                accessibilityLabel="Continue with Google"
               >
-                {googleLoading
-                  ? <ActivityIndicator size="small" color={c.fgMuted} />
-                  : <>
-                      <Text style={styles.googleG}>G</Text>
-                      <Text style={[styles.googleBtnText, { color: c.fg }]}>Continue with Google</Text>
-                    </>
-                }
+                {googleLoading ? (
+                  <ActivityIndicator size="small" color={colors.textSecondary} />
+                ) : (
+                  <>
+                    <Text style={styles.googleG}>G</Text>
+                    <Text
+                      style={[
+                        styles.googleBtnText,
+                        { color: colors.textPrimary },
+                      ]}
+                    >
+                      Continue with Google
+                    </Text>
+                  </>
+                )}
               </Pressable>
-              <Pressable onPress={handleGuest} style={({ pressed }) => [styles.ghostBtn, { opacity: pressed ? 0.7 : 1 }]}>
-                <Feather name="eye" size={15} color={c.fgMuted} />
-                <Text style={[styles.ghostBtnText, { color: c.fgMuted }]}>Continue as Guest</Text>
-              </Pressable>
-            </StaggeredItem>
 
-            <StaggeredItem delay={480}>
-              <Text style={[styles.legalText, { color: c.fgSubtle }]}>
-                By continuing, you agree to our{" "}
-                <Text style={{ color: c.primaryLight }}>Terms of Service</Text>
-                {" "}and{" "}
-                <Text style={{ color: c.primaryLight }}>Privacy Policy</Text>
+              <Pressable
+                onPress={handleGuest}
+                style={({ pressed }) => [
+                  styles.ghostBtn,
+                  { opacity: pressed ? 0.7 : 1 },
+                ]}
+                accessibilityRole="button"
+                accessibilityLabel="Continue as Guest"
+              >
+                <Feather name="eye" size={16} color={colors.textSecondary} />
+                <Text
+                  style={[
+                    styles.ghostBtnText,
+                    { color: colors.textSecondary },
+                  ]}
+                >
+                  Continue as Guest
+                </Text>
+              </Pressable>
+
+              <Text style={[styles.legalText, { color: colors.textTertiary }]}>
+                By continuing, you agree to Vibe&apos;s Terms of Service and
+                Privacy Policy.
               </Text>
-            </StaggeredItem>
+            </View>
           </ScrollView>
         </SafeAreaView>
       </LinearGradient>
@@ -324,9 +511,15 @@ export default function LoginScreen() {
   const isLogin = screen === "login-form";
 
   return (
-    <LinearGradient colors={c.bg} style={{ flex: 1 }}>
-      <AnimatedOrb style={[styles.orb, { width: 280, height: 280, top: -60, right: -60 }]} color={c.orb1} />
-      <AnimatedOrb style={[styles.orb, { width: 200, height: 200, bottom: 80, left: -40 }]} color={c.orb2} />
+    <LinearGradient colors={bgGradient} style={{ flex: 1 }}>
+      <AnimatedOrb
+        style={[styles.orb, { width: 280, height: 280, top: -60, right: -60 }]}
+        color={orbColors[0]}
+      />
+      <AnimatedOrb
+        style={[styles.orb, { width: 200, height: 200, bottom: 80, left: -40 }]}
+        color={orbColors[1]}
+      />
 
       <SafeAreaView style={{ flex: 1 }}>
         <KeyboardAvoidingView
@@ -339,205 +532,470 @@ export default function LoginScreen() {
             keyboardShouldPersistTaps="handled"
             showsVerticalScrollIndicator={false}
           >
-            {/* Back button */}
-            <Pressable onPress={() => setScreen("welcome")} style={({ pressed }) => [styles.backBtn, { opacity: pressed ? 0.6 : 1, borderColor: c.cardBorder, backgroundColor: c.cardBg }]} hitSlop={8}>
-              <Feather name="arrow-left" size={18} color={c.fg} />
-            </Pressable>
+            <View style={styles.col}>
+              <Pressable
+                onPress={() => {
+                  setError("");
+                  setScreen("welcome");
+                }}
+                style={({ pressed }) => [
+                  styles.backBtn,
+                  {
+                    opacity: pressed ? 0.7 : 1,
+                    borderColor: colors.separator,
+                    backgroundColor: colors.bgElevated,
+                  },
+                ]}
+                accessibilityRole="button"
+                accessibilityLabel="Back to welcome"
+              >
+                <Feather
+                  name="arrow-left"
+                  size={18}
+                  color={colors.textPrimary}
+                />
+              </Pressable>
 
-            {/* Header */}
-            <StaggeredItem delay={0}>
-              <View style={{ alignItems: "center", marginBottom: 12 }}>
+              <View style={{ alignItems: "center", marginBottom: 14 }}>
                 <VibeLogo size={52} showText={false} />
               </View>
-              <Text style={[styles.formTitle, { color: c.fg }]}>
+              <Text style={[styles.formTitle, { color: colors.textPrimary }]}>
                 {isLogin ? "Welcome back" : "Create account"}
               </Text>
-              <Text style={[styles.formSub, { color: c.fgMuted }]}>
-                {isLogin ? "Sign in to continue your journey" : "Join millions of people on Vibe"}
+              <Text style={[styles.formSub, { color: colors.textSecondary }]}>
+                {isLogin
+                  ? "Sign in to continue your journey"
+                  : "Join Vibe to share posts, stories, and messages"}
               </Text>
-            </StaggeredItem>
 
-            {/* Form card */}
-            <StaggeredItem delay={80}>
-              <View style={[styles.formCard, { backgroundColor: c.cardBg, borderColor: c.cardBorder }]}>
+              <View
+                style={[
+                  styles.formCard,
+                  {
+                    backgroundColor: colors.bgElevated,
+                    borderColor: colors.separator,
+                  },
+                ]}
+              >
                 {!isLogin && (
                   <View style={styles.nameRow}>
                     <View style={{ flex: 1 }}>
                       <FocusableInput
-                        value={firstName} onChangeText={setFirstName}
-                        placeholder="First name *" colors={c}
-                        icon="user" autoCapitalize="words"
+                        value={firstName}
+                        onChangeText={setFirstName}
+                        placeholder="First name *"
+                        icon="user"
+                        autoCapitalize="words"
+                        accessibilityLabel="First name"
                       />
                     </View>
                     <View style={{ flex: 1 }}>
                       <FocusableInput
-                        value={lastName} onChangeText={setLastName}
-                        placeholder="Last name" colors={c}
-                        icon="user" autoCapitalize="words"
+                        value={lastName}
+                        onChangeText={setLastName}
+                        placeholder="Last name"
+                        icon="user"
+                        autoCapitalize="words"
+                        accessibilityLabel="Last name"
                       />
                     </View>
                   </View>
                 )}
 
                 <FocusableInput
-                  value={email} onChangeText={setEmail}
-                  placeholder="Email address" colors={c}
-                  icon="mail" keyboardType="email-address"
+                  value={email}
+                  onChangeText={setEmail}
+                  placeholder="Email address"
+                  icon="mail"
+                  keyboardType="email-address"
+                  accessibilityLabel="Email address"
                 />
                 <FocusableInput
-                  value={password} onChangeText={setPassword}
-                  placeholder="Password" colors={c}
-                  icon="lock" secureEntry
+                  value={password}
+                  onChangeText={setPassword}
+                  placeholder="Password"
+                  icon="lock"
+                  secureEntry
+                  accessibilityLabel="Password"
                 />
 
                 {isLogin && (
-                  <Pressable style={styles.forgotWrap}>
-                    <Text style={[styles.forgotText, { color: c.primaryLight }]}>Forgot password?</Text>
+                  <Pressable
+                    onPress={() => setResetPromptOpen(true)}
+                    style={styles.forgotWrap}
+                    accessibilityRole="button"
+                    accessibilityLabel="Forgot password"
+                  >
+                    <Text
+                      style={[
+                        styles.forgotText,
+                        { color: colors.accentPrimary },
+                      ]}
+                    >
+                      Forgot password?
+                    </Text>
                   </Pressable>
                 )}
 
                 {!!error && (
-                  <View style={[styles.errorBox, { backgroundColor: c.errorBg }]}>
-                    <Feather name="alert-circle" size={14} color={c.error} />
-                    <Text style={[styles.errorText, { color: c.error }]}>{error}</Text>
+                  <View
+                    style={[
+                      styles.errorBox,
+                      {
+                        backgroundColor: colors.isDark
+                          ? "rgba(251,113,133,0.14)"
+                          : "rgba(225,29,72,0.08)",
+                      },
+                    ]}
+                  >
+                    <Feather
+                      name="alert-circle"
+                      size={15}
+                      color={colors.semanticDanger}
+                    />
+                    <Text
+                      style={[styles.errorText, { color: colors.semanticDanger }]}
+                    >
+                      {error}
+                    </Text>
                   </View>
                 )}
 
                 <Pressable
                   onPress={isLogin ? handleLogin : handleSignup}
                   disabled={submitting}
-                  style={({ pressed }) => [styles.submitBtn, { opacity: submitting || pressed ? 0.8 : 1 }]}
+                  style={({ pressed }) => [
+                    styles.submitBtn,
+                    {
+                      backgroundColor: colors.accentPrimary,
+                      opacity: submitting || pressed ? 0.85 : 1,
+                    },
+                  ]}
+                  accessibilityRole="button"
+                  accessibilityLabel={isLogin ? "Sign In" : "Create Account"}
                 >
-                  <LinearGradient
-                    colors={["#7c3aed", "#4f46e5"]}
-                    style={styles.submitBtnGradient}
-                    start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }}
-                  >
-                    {submitting
-                      ? <ActivityIndicator color="#fff" size="small" />
-                      : <>
-                          <Text style={styles.submitBtnText}>{isLogin ? "Sign In" : "Create Account"}</Text>
-                          <Feather name="arrow-right" size={17} color="#fff" />
-                        </>
-                    }
-                  </LinearGradient>
+                  {submitting ? (
+                    <ActivityIndicator color="#FFFFFF" size="small" />
+                  ) : (
+                    <>
+                      <Text style={styles.submitBtnText}>
+                        {isLogin ? "Sign In" : "Create Account"}
+                      </Text>
+                      <Feather name="arrow-right" size={17} color="#FFFFFF" />
+                    </>
+                  )}
                 </Pressable>
               </View>
-            </StaggeredItem>
 
-            {/* Switch mode */}
-            <StaggeredItem delay={160}>
               <Pressable
-                onPress={() => { setError(""); setScreen(isLogin ? "signup-form" : "login-form"); }}
+                onPress={() => {
+                  setError("");
+                  setScreen(isLogin ? "signup-form" : "login-form");
+                }}
                 style={styles.switchRow}
+                accessibilityRole="button"
+                accessibilityLabel={
+                  isLogin ? "Switch to sign up" : "Switch to sign in"
+                }
               >
-                <Text style={[styles.switchText, { color: c.fgMuted }]}>
-                  {isLogin ? "Don't have an account? " : "Already have an account? "}
+                <Text style={[styles.switchText, { color: colors.textSecondary }]}>
+                  {isLogin
+                    ? "Don't have an account? "
+                    : "Already have an account? "}
                 </Text>
-                <Text style={[styles.switchLink, { color: c.primaryLight }]}>
+                <Text
+                  style={[styles.switchLink, { color: colors.accentPrimary }]}
+                >
                   {isLogin ? "Sign Up" : "Sign In"}
                 </Text>
               </Pressable>
-            </StaggeredItem>
 
-            <StaggeredItem delay={220}>
               <View style={styles.dividerRow}>
-                <View style={[styles.dividerLine, { backgroundColor: c.divider }]} />
-                <Text style={[styles.dividerText, { color: c.fgSubtle }]}>or</Text>
-                <View style={[styles.dividerLine, { backgroundColor: c.divider }]} />
+                <View
+                  style={[
+                    styles.dividerLine,
+                    { backgroundColor: colors.separator },
+                  ]}
+                />
+                <Text
+                  style={[styles.dividerText, { color: colors.textTertiary }]}
+                >
+                  or
+                </Text>
+                <View
+                  style={[
+                    styles.dividerLine,
+                    { backgroundColor: colors.separator },
+                  ]}
+                />
               </View>
+
               <Pressable
                 onPress={handleGoogle}
                 disabled={googleLoading}
-                style={({ pressed }) => [styles.googleBtn, { borderColor: c.cardBorder, backgroundColor: c.cardBg, opacity: pressed || googleLoading ? 0.75 : 1 }]}
+                style={({ pressed }) => [
+                  styles.googleBtn,
+                  {
+                    borderColor: colors.separator,
+                    backgroundColor: colors.bgElevated,
+                    opacity: pressed || googleLoading ? 0.75 : 1,
+                  },
+                ]}
+                accessibilityRole="button"
+                accessibilityLabel="Continue with Google"
               >
-                {googleLoading
-                  ? <ActivityIndicator size="small" color={c.fgMuted} />
-                  : <>
-                      <Text style={styles.googleG}>G</Text>
-                      <Text style={[styles.googleBtnText, { color: c.fg }]}>Continue with Google</Text>
-                    </>
-                }
+                {googleLoading ? (
+                  <ActivityIndicator size="small" color={colors.textSecondary} />
+                ) : (
+                  <>
+                    <Text style={styles.googleG}>G</Text>
+                    <Text
+                      style={[
+                        styles.googleBtnText,
+                        { color: colors.textPrimary },
+                      ]}
+                    >
+                      Continue with Google
+                    </Text>
+                  </>
+                )}
               </Pressable>
-              <Pressable onPress={handleGuest} style={({ pressed }) => [styles.ghostBtn, { opacity: pressed ? 0.7 : 1 }]}>
-                <Feather name="eye" size={15} color={c.fgMuted} />
-                <Text style={[styles.ghostBtnText, { color: c.fgMuted }]}>Continue as Guest</Text>
+
+              <Pressable
+                onPress={handleGuest}
+                style={({ pressed }) => [
+                  styles.ghostBtn,
+                  { opacity: pressed ? 0.7 : 1 },
+                ]}
+                accessibilityRole="button"
+                accessibilityLabel="Continue as Guest"
+              >
+                <Feather name="eye" size={16} color={colors.textSecondary} />
+                <Text
+                  style={[
+                    styles.ghostBtnText,
+                    { color: colors.textSecondary },
+                  ]}
+                >
+                  Continue as Guest
+                </Text>
               </Pressable>
-            </StaggeredItem>
+            </View>
           </ScrollView>
         </KeyboardAvoidingView>
       </SafeAreaView>
+
+      <PromptSheet
+        visible={resetPromptOpen}
+        title="Reset Password"
+        message="Enter the email address for your account and we'll send a password reset link."
+        placeholder="you@example.com"
+        initialValue={email}
+        submitLabel="Send Link"
+        onSubmit={handleResetPassword}
+        onClose={() => setResetPromptOpen(false)}
+      />
     </LinearGradient>
   );
 }
 
 const styles = StyleSheet.create({
   center: { flex: 1, alignItems: "center", justifyContent: "center" },
-  loadingRing: { width: 72, height: 72, borderRadius: 36, alignItems: "center", justifyContent: "center" },
-
-  // Orbs
   orb: { position: "absolute", zIndex: 0 },
-
-  // Welcome screen
-  welcomeScroll: { flexGrow: 1, alignItems: "center", paddingHorizontal: 24, paddingTop: 48, paddingBottom: 36 },
-  logoWrap: { alignItems: "center", justifyContent: "center", marginBottom: 20, position: "relative" },
-  logoGradient: { width: 88, height: 88, borderRadius: 28, alignItems: "center", justifyContent: "center", shadowColor: "#7c3aed", shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.5, shadowRadius: 20, elevation: 12 },
-  logoPing: { position: "absolute", width: 104, height: 104, borderRadius: 34, borderWidth: 1.5, opacity: 0.4 },
-  appName: { fontSize: 36, fontWeight: "800", letterSpacing: -1, textAlign: "center", marginBottom: 8 },
-  tagline: { fontSize: 16, textAlign: "center", marginBottom: 32, lineHeight: 24, paddingHorizontal: 16 },
-
-  featureGrid: { width: "100%", borderRadius: 20, borderWidth: 1, flexDirection: "row", flexWrap: "wrap", overflow: "hidden", marginBottom: 28 },
-  featureCell: { width: "50%", padding: 18, alignItems: "flex-start" },
-  featureIconWrap: { width: 40, height: 40, borderRadius: 12, alignItems: "center", justifyContent: "center", marginBottom: 10 },
-  featureCellLabel: { fontSize: 13, fontWeight: "700", marginBottom: 3 },
-  featureCellDesc: { fontSize: 12, lineHeight: 17 },
-
-  primaryBtn: { width: "100%", borderRadius: 16, overflow: "hidden", marginBottom: 12, shadowColor: "#7c3aed", shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.4, shadowRadius: 14, elevation: 8 },
-  primaryBtnGradient: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, paddingVertical: 17 },
-  primaryBtnText: { color: "#fff", fontSize: 16, fontWeight: "800", letterSpacing: 0.2 },
-
-  outlineBtn: { width: "100%", paddingVertical: 16, borderRadius: 16, alignItems: "center", borderWidth: 1, marginBottom: 20 },
-  outlineBtnText: { fontSize: 15, fontWeight: "700" },
-
-  dividerRow: { flexDirection: "row", alignItems: "center", gap: 12, width: "100%", marginBottom: 16 },
-  dividerLine: { flex: 1, height: 1 },
+  col: {
+    width: "100%",
+    maxWidth: 460,
+    alignSelf: "center",
+  },
+  welcomeScroll: {
+    flexGrow: 1,
+    justifyContent: "center",
+    paddingHorizontal: 24,
+    paddingTop: 32,
+    paddingBottom: 32,
+  },
+  tagline: {
+    fontSize: 16,
+    textAlign: "center",
+    marginBottom: 24,
+    lineHeight: 23,
+  },
+  featureGrid: {
+    width: "100%",
+    borderRadius: RADIUS.lg,
+    borderWidth: StyleSheet.hairlineWidth,
+    flexDirection: "row",
+    flexWrap: "wrap",
+    overflow: "hidden",
+    marginBottom: 24,
+  },
+  featureCell: {
+    width: "50%",
+    padding: 16,
+    alignItems: "flex-start",
+  },
+  featureIconWrap: {
+    width: 38,
+    height: 38,
+    borderRadius: RADIUS.sm,
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 8,
+  },
+  featureCellLabel: { fontSize: 13.5, fontWeight: "700", marginBottom: 2 },
+  featureCellDesc: { fontSize: 12, lineHeight: 16 },
+  primaryBtn: {
+    width: "100%",
+    minHeight: 52,
+    borderRadius: RADIUS.md,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    marginBottom: 10,
+  },
+  primaryBtnText: {
+    color: "#FFFFFF",
+    fontSize: 16,
+    fontWeight: "700",
+  },
+  outlineBtn: {
+    width: "100%",
+    minHeight: 50,
+    borderRadius: RADIUS.md,
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: StyleSheet.hairlineWidth,
+    marginBottom: 18,
+  },
+  outlineBtnText: { fontSize: 15, fontWeight: "600" },
+  dividerRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    width: "100%",
+    marginBottom: 14,
+  },
+  dividerLine: { flex: 1, height: StyleSheet.hairlineWidth },
   dividerText: { fontSize: 13 },
-
-  ghostBtn: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 7, paddingVertical: 12, width: "100%" },
-  ghostBtnText: { fontSize: 14, fontWeight: "500" },
-
-  googleBtn: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 10, paddingVertical: 14, borderRadius: 14, borderWidth: 1, marginBottom: 12, minHeight: 50 },
-  googleG: { fontSize: 18, fontWeight: "800", color: "#4285F4", lineHeight: 22 },
+  googleBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 10,
+    minHeight: 48,
+    borderRadius: RADIUS.md,
+    borderWidth: StyleSheet.hairlineWidth,
+    marginBottom: 8,
+  },
+  googleG: { fontSize: 17, fontWeight: "800", color: "#4285F4" },
   googleBtnText: { fontSize: 15, fontWeight: "600" },
-
-  legalText: { fontSize: 12, textAlign: "center", lineHeight: 18, marginTop: 20, paddingHorizontal: 8 },
-
-  // Form screen
-  formScroll: { flexGrow: 1, paddingHorizontal: 24, paddingTop: 16, paddingBottom: 40 },
-  backBtn: { width: 40, height: 40, borderRadius: 12, alignItems: "center", justifyContent: "center", borderWidth: 1, marginBottom: 28 },
-  formLogoCircle: { width: 56, height: 56, borderRadius: 18, alignItems: "center", justifyContent: "center", marginBottom: 16, shadowColor: "#7c3aed", shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.4, shadowRadius: 10, elevation: 6 },
-  formTitle: { fontSize: 28, fontWeight: "800", letterSpacing: -0.7, marginBottom: 6 },
-  formSub: { fontSize: 15, marginBottom: 24, lineHeight: 22 },
-
-  formCard: { borderRadius: 20, borderWidth: 1, padding: 20, marginBottom: 16, gap: 0 },
+  ghostBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    minHeight: 44,
+    width: "100%",
+  },
+  ghostBtnText: { fontSize: 14.5, fontWeight: "600" },
+  legalText: {
+    fontSize: 12,
+    textAlign: "center",
+    lineHeight: 18,
+    marginTop: 14,
+    paddingHorizontal: 8,
+  },
+  formScroll: {
+    flexGrow: 1,
+    justifyContent: "center",
+    paddingHorizontal: 24,
+    paddingTop: 20,
+    paddingBottom: 36,
+  },
+  backBtn: {
+    width: 44,
+    height: 44,
+    borderRadius: RADIUS.sm,
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: StyleSheet.hairlineWidth,
+    marginBottom: 20,
+  },
+  formTitle: {
+    fontSize: 28,
+    fontWeight: "700",
+    letterSpacing: -0.5,
+    textAlign: "center",
+    marginBottom: 6,
+  },
+  formSub: {
+    fontSize: 14.5,
+    textAlign: "center",
+    marginBottom: 22,
+    lineHeight: 20,
+  },
+  formCard: {
+    borderRadius: RADIUS.lg,
+    borderWidth: StyleSheet.hairlineWidth,
+    padding: 18,
+    marginBottom: 16,
+  },
   nameRow: { flexDirection: "row", gap: 10 },
-
-  inputWrapper: { flexDirection: "row", alignItems: "center", borderWidth: 1.5, borderRadius: 14, paddingHorizontal: 14, paddingVertical: 13, marginBottom: 12 },
+  inputWrapper: {
+    flexDirection: "row",
+    alignItems: "center",
+    borderWidth: StyleSheet.hairlineWidth,
+    borderRadius: RADIUS.sm,
+    paddingHorizontal: 14,
+    minHeight: 48,
+    marginBottom: 12,
+  },
   inputIcon: { marginRight: 10 },
-  inputField: { flex: 1, fontSize: 15 },
-  eyeBtn: { padding: 4 },
-
-  forgotWrap: { alignItems: "flex-end", marginTop: -4, marginBottom: 12 },
-  forgotText: { fontSize: 13, fontWeight: "600" },
-
-  errorBox: { flexDirection: "row", alignItems: "center", gap: 8, borderRadius: 12, padding: 12, marginBottom: 12 },
+  inputField: { flex: 1, fontSize: 15, paddingVertical: 11 },
+  eyeBtn: {
+    width: 36,
+    height: 36,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  forgotWrap: {
+    alignSelf: "flex-end",
+    minHeight: 36,
+    justifyContent: "center",
+    marginBottom: 10,
+  },
+  forgotText: { fontSize: 13.5, fontWeight: "600" },
+  errorBox: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    borderRadius: RADIUS.sm,
+    padding: 12,
+    marginBottom: 12,
+  },
   errorText: { fontSize: 13, flex: 1, lineHeight: 18 },
-
-  submitBtn: { borderRadius: 14, overflow: "hidden", marginTop: 4, shadowColor: "#7c3aed", shadowOffset: { width: 0, height: 5 }, shadowOpacity: 0.35, shadowRadius: 12, elevation: 7 },
-  submitBtnGradient: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, paddingVertical: 16 },
-  submitBtnText: { color: "#fff", fontSize: 16, fontWeight: "800", letterSpacing: 0.2 },
-
-  switchRow: { flexDirection: "row", justifyContent: "center", alignItems: "center", marginBottom: 20 },
+  submitBtn: {
+    minHeight: 50,
+    borderRadius: RADIUS.md,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    marginTop: 4,
+  },
+  submitBtnText: {
+    color: "#FFFFFF",
+    fontSize: 16,
+    fontWeight: "700",
+  },
+  switchRow: {
+    flexDirection: "row",
+    justifyContent: "center",
+    alignItems: "center",
+    minHeight: 44,
+    marginBottom: 14,
+  },
   switchText: { fontSize: 14 },
   switchLink: { fontSize: 14, fontWeight: "700" },
 });

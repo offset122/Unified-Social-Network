@@ -1,17 +1,24 @@
 import React from "react";
 import { View, Text, StyleSheet } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
-import { useColorScheme } from "react-native";
+import { useColors } from "@/hooks/useColors";
 
-export default function VibeLogo({ size = 48, showText = true }: { size?: number; showText?: boolean }) {
-  const scheme = useColorScheme();
-  const isDark = scheme === "dark";
-  const wordmarkColor = isDark ? "#f8fafc" : "#0f172a";
+export default function VibeLogo({
+  size = 48,
+  showText = true,
+  showTagline,
+}: {
+  size?: number;
+  showText?: boolean;
+  showTagline?: boolean;
+}) {
+  const colors = useColors();
+  const displayTagline = showTagline ?? size >= 64;
 
   return (
-    <View style={[styles.row, { gap: 10 }]}>
+    <View style={[styles.row, { gap: Math.max(8, Math.round(size * 0.25)) }]}>
       <LinearGradient
-        colors={["#6366f1", "#8b5cf6", "#a855f7"]}
+        colors={["#6D28D9", "#8B5CF6", "#A855F7"]}
         start={{ x: 0, y: 0 }}
         end={{ x: 1, y: 1 }}
         style={[
@@ -19,18 +26,28 @@ export default function VibeLogo({ size = 48, showText = true }: { size?: number
           {
             width: size,
             height: size,
-            borderRadius: size / 2,
+            borderRadius: Math.round(size * 0.34),
           },
         ]}
       >
-        <View style={styles.iconInner}>
-          <Text style={[styles.iconText, { fontSize: size * 0.42 }]}>V</Text>
-        </View>
+        <Text style={[styles.iconText, { fontSize: size * 0.44 }]}>V</Text>
       </LinearGradient>
       {showText && (
         <View style={{ justifyContent: "center" }}>
-          <Text style={[styles.wordmark, { fontSize: size * 0.55, color: wordmarkColor }]}>Vibe</Text>
-          <Text style={[styles.tagline, { fontSize: size * 0.22 }]}>your moment</Text>
+          <Text
+            style={[
+              styles.wordmark,
+              { fontSize: Math.max(18, Math.round(size * 0.58)), color: colors.textPrimary },
+            ]}
+            numberOfLines={1}
+          >
+            Vibe
+          </Text>
+          {displayTagline && (
+            <Text style={[styles.tagline, { fontSize: size * 0.2, color: colors.accentPrimary }]}>
+              your moment
+            </Text>
+          )}
         </View>
       )}
     </View>
@@ -45,30 +62,25 @@ const styles = StyleSheet.create({
   iconWrap: {
     alignItems: "center",
     justifyContent: "center",
-    shadowColor: "#6366f1",
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.35,
+    shadowColor: "#6D28D9",
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.24,
     shadowRadius: 8,
-    elevation: 6,
-  },
-  iconInner: {
-    alignItems: "center",
-    justifyContent: "center",
+    elevation: 4,
   },
   iconText: {
-    color: "#fff",
+    color: "#FFFFFF",
     fontWeight: "800",
-    letterSpacing: 0.5,
+    letterSpacing: -0.4,
   },
   wordmark: {
     fontWeight: "800",
-    color: "#0f172a",
-    letterSpacing: -0.5,
+    letterSpacing: -0.6,
   },
   tagline: {
     fontWeight: "600",
-    color: "#6366f1",
-    letterSpacing: 1.5,
+    letterSpacing: 1.4,
     textTransform: "lowercase",
+    marginTop: 1,
   },
 });

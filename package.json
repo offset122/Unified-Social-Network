@@ -4,7 +4,11 @@
   "license": "MIT",
   "private": true,
   "scripts": {
-    "test": "jest"
+    "dev": "node scripts/dev.js",
+    "build": "node scripts/build-web.js",
+    "start": "node artifacts/mobile/server/serve.js",
+    "typecheck": "tsc -p artifacts/mobile/tsconfig.json --noEmit",
+    "test": "node --test artifacts/mobile/server/serve.test.js"
   },
   "devDependencies": {
     "@babel/core": "^7.20.0",

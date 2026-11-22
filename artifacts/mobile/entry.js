@@ -3,4 +3,5 @@
 //
 // package.json "main" points here. To revert: set it back to "expo-router/entry".
 import "./lib/bootLog";
+import "./lib/expoFontWebFix";
 import "expo-router/entry";

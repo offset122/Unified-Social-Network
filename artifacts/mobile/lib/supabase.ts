@@ -12,16 +12,21 @@ export function getEnvValue(...keys: string[]): string {
 const supabaseUrl = getEnvValue("EXPO_PUBLIC_SUPABASE_URL", "SUPABASE_URL");
 const supabaseAnonKey = getEnvValue("EXPO_PUBLIC_SUPABASE_ANON_KEY", "SUPABASE_ANON_KEY");
 
-if (!supabaseUrl || !supabaseAnonKey) {
+const isPlaceholderUrl =
+  !supabaseUrl ||
+  supabaseUrl.includes("your-project.supabase.co") ||
+  supabaseUrl.includes("placeholder.supabase.co");
+
+if (isPlaceholderUrl || !supabaseAnonKey) {
   console.warn("Supabase environment is missing required values:", {
-    EXPO_PUBLIC_SUPABASE_URL: !!supabaseUrl,
+    EXPO_PUBLIC_SUPABASE_URL: !isPlaceholderUrl,
     EXPO_PUBLIC_SUPABASE_ANON_KEY: !!supabaseAnonKey,
   });
 }
 
 // Static rendering (expo export) executes route modules at build time, which imports this
 // file. Missing env vars must not throw here or the whole build fails (e.g. on Vercel).
-export const isSupabaseConfigured = Boolean(supabaseUrl && supabaseAnonKey);
+export const isSupabaseConfigured = Boolean(!isPlaceholderUrl && supabaseAnonKey);
 
 export const supabase = createClient(
   supabaseUrl || "https://placeholder.supabase.co",

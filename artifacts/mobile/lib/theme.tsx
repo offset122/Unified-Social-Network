@@ -1,5 +1,5 @@
 import React, { createContext, useCallback, useContext, useEffect, useState } from "react";
-import { Appearance, ColorSchemeName } from "react-native";
+import { Appearance, Platform, type ColorSchemeName } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 
 const THEME_KEY = "app_theme_preference";
@@ -22,6 +22,15 @@ const ThemeContext = createContext<ThemeContextValue>({
   useSystemTheme: () => {},
 });
 
+function applyNativeColorScheme(scheme: "light" | "dark" | null) {
+  if (Platform.OS === "web") return;
+  if (typeof (Appearance as any)?.setColorScheme === "function") {
+    try {
+      (Appearance as any).setColorScheme(scheme);
+    } catch {}
+  }
+}
+
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
   const [themeMode, setThemeMode] = useState<ThemeMode>("system");
   const [systemScheme, setSystemScheme] = useState<ColorSchemeName>(
@@ -29,12 +38,15 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
   );
 
   useEffect(() => {
-    AsyncStorage.getItem(THEME_KEY).then((saved) => {
-      if (saved === "light" || saved === "dark") {
-        Appearance.setColorScheme(saved);
-        setThemeMode(saved);
-      }
-    });
+    AsyncStorage.getItem(THEME_KEY)
+      .then((saved) => {
+        if (saved === "light" || saved === "dark") {
+          applyNativeColorScheme(saved);
+          setThemeMode(saved);
+        }
+      })
+      .catch(() => {});
+
     const sub = Appearance.addChangeListener(({ colorScheme: cs }) => {
       setSystemScheme(cs);
     });
@@ -42,15 +54,15 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const setTheme = useCallback((scheme: "light" | "dark") => {
-    Appearance.setColorScheme(scheme);
+    applyNativeColorScheme(scheme);
     setThemeMode(scheme);
-    AsyncStorage.setItem(THEME_KEY, scheme);
+    AsyncStorage.setItem(THEME_KEY, scheme).catch(() => {});
   }, []);
 
   const useSystemTheme = useCallback(() => {
-    Appearance.setColorScheme(null);
+    applyNativeColorScheme(null);
     setThemeMode("system");
-    AsyncStorage.removeItem(THEME_KEY);
+    AsyncStorage.removeItem(THEME_KEY).catch(() => {});
   }, []);
 
   const toggleTheme = useCallback(() => {

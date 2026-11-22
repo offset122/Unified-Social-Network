@@ -1,12 +1,21 @@
-import { getEnvValue, supabase } from "./supabase";
+import { getEnvValue, isSupabaseConfigured, supabase } from "./supabase";
 import 'react-native-get-random-values';
 import { v4 as uuidv4 } from 'uuid';
+import { isUploadableUri, normalizeMimeType } from "./mediaUtils";
 
 const SUPABASE_URL = getEnvValue("EXPO_PUBLIC_SUPABASE_URL", "SUPABASE_URL");
+const SUPABASE_ANON_KEY = getEnvValue("EXPO_PUBLIC_SUPABASE_ANON_KEY", "SUPABASE_ANON_KEY");
 
 export function resolveMediaUrl(path: string | null | undefined): string {
   if (!path) return "";
-  if (path.startsWith("http://") || path.startsWith("https://")) return path;
+  if (
+    path.startsWith("http://") ||
+    path.startsWith("https://") ||
+    path.startsWith("data:") ||
+    path.startsWith("blob:")
+  ) {
+    return path;
+  }
   if (path.startsWith("/storage/")) return `${SUPABASE_URL}${path}`;
   return `${SUPABASE_URL}/storage/v1/object/public/media/${path}`;
 }
@@ -108,6 +117,7 @@ export async function fetchBlockedIds(userId: string): Promise<string[]> {
 }
 
 export async function fetchFeed(userId: string, cursor?: string): Promise<Post[]> {
+  if (!isSupabaseConfigured) return [];
   const blockedIds = await fetchBlockedIds(userId);
   let q = supabase.from("posts").select("*, profiles!posts_author_id_fkey(*)").eq("is_reel", false).eq("visibility", "public").order("created_at", { ascending: false }).limit(20);
   if (blockedIds.length) q = q.not("author_id", "in.", `(${blockedIds.join(",")})`);
@@ -124,6 +134,7 @@ export async function fetchFeed(userId: string, cursor?: string): Promise<Post[]
 }
 
 export async function fetchReels(userId: string, cursor?: string): Promise<Post[]> {
+  if (!isSupabaseConfigured) return [];
   const blockedIds = await fetchBlockedIds(userId);
   let q = supabase.from("posts").select("*, profiles!posts_author_id_fkey(*)").eq("is_reel", true).eq("visibility", "public").order("created_at", { ascending: false }).limit(10);
   if (blockedIds.length) q = q.not("author_id", "in.", `(${blockedIds.join(",")})`);
@@ -182,18 +193,23 @@ export async function incrementPostShares(postId: string) {
 
 // Server-side ranked feed ("For You") — engagement score with recency decay,
 // paginated by cursor so it composes with the pager just like the latest feed.
-export async function fetchRankedFeed(userId: string, cursor?: string): Promise<Post[]> {
+export async function fetchRankedFeed(userId: string | null, cursor?: string): Promise<Post[]> {
+  if (!isSupabaseConfigured) return [];
+  const cleanUserId = userId && userId.trim() ? userId : null;
   const { data, error } = await supabase.rpc("fetch_ranked_feed" as any, {
-    p_user_id: userId,
+    p_user_id: cleanUserId,
     p_cursor_created: cursor ?? null,
   });
   if (error) throw new Error(`Failed to fetch ranked feed: ${error.message}`);
   if (!data) return [];
   const posts = (data as any[]).map((p) => ({ ...p, media_urls: p.media_urls ?? [] }));
+  if (!cleanUserId) {
+    return posts.map((p) => ({ ...p, is_liked: false, is_saved: false }));
+  }
   const ids = posts.map((p) => p.id);
   const [liked, saved] = await Promise.all([
-    fetchUserLikes(userId, ids).catch(() => new Set<string>()),
-    fetchUserSaves(userId, ids).catch(() => new Set<string>()),
+    fetchUserLikes(cleanUserId, ids).catch(() => new Set<string>()),
+    fetchUserSaves(cleanUserId, ids).catch(() => new Set<string>()),
   ]);
   return posts.map((p) => ({ ...p, is_liked: liked.has(p.id), is_saved: saved.has(p.id) }));
 }
@@ -280,6 +296,7 @@ export async function isFollowing(followerId: string, followingId: string): Prom
 // ─── Search ───────────────────────────────────────────────────────────────────
 
 export async function searchUsers(query: string, viewerId?: string): Promise<Profile[]> {
+  if (!isSupabaseConfigured) return [];
   const { data } = await supabase.from("profiles").select("*").or(`username.ilike.%${query}%,display_name.ilike.%${query}%`).limit(20);
   let results = (data ?? []) as Profile[];
   if (viewerId && results.length) {
@@ -300,7 +317,7 @@ export type Report = {
 
 export async function createReport(
   reporterId: string,
-  postId: string,
+  postId: string | null,
   reason: "spam" | "inappropriate" | "harassment" | "other",
   details?: string,
 ) {
@@ -586,26 +603,24 @@ const ALLOWED_MIME_TYPES = new Set(["image/jpeg","image/png","image/webp","image
 
 export async function uploadMedia(fileUri: string, fileName: string, mimeType: string, bucket = "media"): Promise<string> {
   if (!ALLOWED_BUCKETS.has(bucket)) throw new Error("Invalid storage bucket.");
-  if (!ALLOWED_MIME_TYPES.has(mimeType)) throw new Error("Unsupported file type.");
+  if (!isUploadableUri(fileUri)) throw new Error("Invalid file URI.");
+  const normalizedMime = normalizeMimeType(mimeType);
+  if (!ALLOWED_MIME_TYPES.has(normalizedMime)) throw new Error(`Unsupported file type (${normalizedMime}).`);
   const safeFileName = fileName.replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 100);
   const path = `${Date.now()}_${safeFileName}`;
 
-  // Use expo-file-system to read local file URIs (file:// / content://)
-  // fetch() cannot handle local URIs on Android/iOS
   if (fileUri.startsWith("file://") || fileUri.startsWith("content://")) {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const FileSystem = require("expo-file-system");
     const base64 = await FileSystem.readAsStringAsync(fileUri, { encoding: FileSystem.EncodingType.Base64 });
     const binary = Uint8Array.from(atob(base64), c => c.charCodeAt(0));
-    const { error } = await supabase.storage.from(bucket).upload(path, binary, { contentType: mimeType, upsert: true });
-    if (error) throw new Error(error.message);
-  } else if (fileUri.startsWith("http://") || fileUri.startsWith("https://")) {
-    const response = await fetch(fileUri);
-    const blob = await response.blob();
-    const { error } = await supabase.storage.from(bucket).upload(path, blob, { contentType: mimeType, upsert: true });
+    const { error } = await supabase.storage.from(bucket).upload(path, binary, { contentType: normalizedMime, upsert: true });
     if (error) throw new Error(error.message);
   } else {
-    throw new Error("Invalid file URI.");
+    const response = await fetch(fileUri);
+    const blob = await response.blob();
+    const { error } = await supabase.storage.from(bucket).upload(path, blob, { contentType: normalizedMime, upsert: true });
+    if (error) throw new Error(error.message);
   }
 
   return getPublicUrl(bucket, path);
@@ -630,6 +645,7 @@ export async function markAllNotificationsRead(userId: string) {
 // ─── Stories ─────────────────────────────────────────────────────────────────
 
 export async function fetchStories(userId: string) {
+  if (!isSupabaseConfigured) return [];
   const { data } = await supabase.from("stories").select("*, profiles!stories_author_id_fkey(*)").gt("expires_at", new Date().toISOString()).order("created_at", { ascending: false }).limit(50);
   return data ?? [];
 }
@@ -637,6 +653,7 @@ export async function fetchStories(userId: string) {
 // ─── Live Sessions ────────────────────────────────────────────────────────────
 
 export async function fetchLiveSessions(): Promise<LiveSession[]> {
+  if (!isSupabaseConfigured) return [];
   const { data } = await supabase.from("live_sessions").select("*, profiles!live_sessions_host_id_fkey(*)").eq("is_active", true).order("viewers_count", { ascending: false });
   return (data ?? []) as LiveSession[];
 }
@@ -721,37 +738,27 @@ export async function rejectJoinRequest(requestId: string, sessionId: string) {
 // ─── AI (OpenRouter) ─────────────────────────────────────────────────────────
 
 export async function callAI(system: string, userMsg: string, maxTokens = 150): Promise<string> {
-  // Preferred: Supabase Edge Function proxy keeps the OpenRouter key off the client.
-  // Fallback: direct call with EXPO_PUBLIC_OPENROUTER_KEY (dev only — key ships in bundle).
+  // Routed strictly through Supabase Edge Function proxy so API keys stay server-side.
+  if (!SUPABASE_URL) return "";
   try {
     const { data: sessionData } = await supabase.auth.getSession();
     const token = sessionData?.session?.access_token;
+    if (!token) return "";
     const resp = await fetch(`${SUPABASE_URL}/functions/v1/ai-proxy`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        Authorization: `Bearer ${token}`,
+        ...(SUPABASE_ANON_KEY ? { apikey: SUPABASE_ANON_KEY } : {}),
       },
       body: JSON.stringify({ system, message: userMsg, maxTokens }),
     });
-    if (resp.ok) {
-      const json = await resp.json() as any;
-      return json.content?.trim() ?? "";
-    }
-  } catch { /* fall through to direct call */ }
-
-  const key = getEnvValue("EXPO_PUBLIC_OPENROUTER_KEY");
-  if (!key) return "";
-  try {
-    const resp = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-      method: "POST",
-      headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ model: "google/gemma-4-26b-a4b-it:free", messages: [{ role: "system", content: system }, { role: "user", content: userMsg }], max_tokens: maxTokens }),
-    });
     if (!resp.ok) return "";
     const json = await resp.json() as any;
-    return json.choices?.[0]?.message?.content?.trim() ?? "";
-  } catch { return ""; }
+    return json.content?.trim() ?? "";
+  } catch {
+    return "";
+  }
 }
 
 export async function generateAICaption(context: string): Promise<string> {
@@ -797,30 +804,30 @@ export async function generateProfileInsights(stats: { totalPosts: number; total
 }
 
 export async function chatWithAI(messages: { role: "user" | "assistant"; content: string }[]): Promise<string> {
-  const key = getEnvValue("EXPO_PUBLIC_OPENROUTER_KEY");
-  if (!key) return "Sorry, AI is not available right now.";
-  const body = {
-    messages: [
-      { role: "system", content: "You are a helpful, friendly AI assistant built into a social media app. Keep responses concise and engaging." },
-      ...messages,
-    ],
-    max_tokens: 300,
-  };
-  const models = ["google/gemma-4-26b-a4b-it:free", "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free"];
-  for (const model of models) {
-    try {
-      const resp = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-        method: "POST",
-        headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json", "HTTP-Referer": "https://vibe.ai", "X-Title": "Vibe AI" },
-        body: JSON.stringify({ ...body, model }),
-      });
-      if (!resp.ok) continue;
-      const json = await resp.json() as any;
-      const content = json.choices?.[0]?.message?.content?.trim();
-      if (content) return content;
-    } catch {}
+  if (!SUPABASE_URL) return "Sorry, AI is not available right now.";
+  try {
+    const { data: sessionData } = await supabase.auth.getSession();
+    const token = sessionData?.session?.access_token;
+    if (!token) return "Please sign in to use AI chat.";
+    const resp = await fetch(`${SUPABASE_URL}/functions/v1/ai-proxy`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+        ...(SUPABASE_ANON_KEY ? { apikey: SUPABASE_ANON_KEY } : {}),
+      },
+      body: JSON.stringify({
+        system: "You are a helpful, friendly AI assistant built into a social media app. Keep responses concise and engaging.",
+        messages: messages.slice(-20),
+        maxTokens: 300,
+      }),
+    });
+    if (!resp.ok) return "Sorry, something went wrong. Try again.";
+    const json = await resp.json() as any;
+    return json.content?.trim() || "Sorry, something went wrong. Try again.";
+  } catch {
+    return "Sorry, something went wrong. Try again.";
   }
-  return "Sorry, something went wrong. Try again.";
 }
 
 export async function adjustAITone(text: string, tone: "formal" | "casual" | "funny" | "flirty"): Promise<string> {

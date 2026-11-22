@@ -1,7 +1,16 @@
 import React, { useState } from "react";
 import {
-  View, Text, StyleSheet, Pressable, FlatList, ActivityIndicator,
-  Platform, Alert, Image, Modal, ScrollView, StatusBar, Dimensions,
+  ActivityIndicator,
+  Image,
+  Platform,
+  Pressable,
+  ScrollView,
+  Share,
+  StatusBar,
+  StyleSheet,
+  Text,
+  View,
+  useWindowDimensions,
 } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
 import { Feather } from "@expo/vector-icons";
@@ -11,53 +20,67 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/lib/auth";
 import GuestScreen from "@/components/GuestScreen";
 import { useColors } from "@/hooks/useColors";
-import { useColorScheme } from "react-native";
+import { Avatar } from "@/components/Avatar";
+import { ActionSheet } from "@/components/ActionSheet";
+import { useToast } from "@/components/Toast";
+import { haptics } from "@/lib/motion";
+import { RADIUS } from "@/constants/colors";
 import {
-  fetchProfile, fetchUserPosts, fetchSavedPosts, fetchPost, resolveMediaUrl,
-  formatCount, timeAgo, deletePost, generateProfileInsights, generateAIBioRefresh,
-  type Post, type Profile,
+  deletePost,
+  fetchProfile,
+  fetchSavedPosts,
+  fetchUserPosts,
+  formatCount,
+  generateAIBioRefresh,
+  generateProfileInsights,
+  resolveMediaUrl,
+  timeAgo,
+  type Post,
 } from "@/lib/db";
-
-const { width: SCREEN_WIDTH } = Dimensions.get("window");
-const GRID_SIZE = (SCREEN_WIDTH - 4) / 3;
-
-function Avatar({ name, size, avatarUrl }: { name: string; size: number; avatarUrl?: string | null }) {
-  const [err, setErr] = useState(false);
-  const initials = name.split(" ").map(w => w[0]).join("").slice(0, 2).toUpperCase();
-  if (avatarUrl && !err) {
-    return (
-      <View style={{ width: size, height: size, borderRadius: size / 2, borderWidth: 3, borderColor: "#fff", overflow: "hidden", elevation: 6 }}>
-        <Image source={{ uri: resolveMediaUrl(avatarUrl) }} style={{ width: "100%", height: "100%" }} onError={() => setErr(true)} resizeMode="cover" />
-      </View>
-    );
-  }
-  return (
-    <LinearGradient colors={["#7c3aed", "#4f46e5"]}
-      style={{ width: size, height: size, borderRadius: size / 2, alignItems: "center", justifyContent: "center", borderWidth: 3, borderColor: "#fff", elevation: 6 }}>
-      <Text style={{ color: "#fff", fontSize: size * 0.35, fontWeight: "800", letterSpacing: 1 }}>{initials}</Text>
-    </LinearGradient>
-  );
-}
-
-function StatBlock({ value, label, onPress, colors }: { value: number; label: string; onPress?: () => void; colors: any }) {
-  const display = value >= 1_000_000 ? `${(value / 1_000_000).toFixed(1)}M` : value >= 1000 ? `${(value / 1000).toFixed(1)}k` : String(value);
-  return (
-    <Pressable style={styles.statBlock} onPress={onPress}>
-      <Text style={[styles.statValue, { color: colors.foreground }]}>{display}</Text>
-      <Text style={[styles.statLabel, { color: colors.mutedForeground }]}>{label}</Text>
-    </Pressable>
-  );
-}
 
 type ViewMode = "grid" | "list";
 type PostTab = "posts" | "reels" | "saved";
 
-function PostGrid({ posts, colors, viewMode, onDelete, isOwn }: { posts: Post[]; colors: any; viewMode: ViewMode; onDelete?: (id: string) => void; isOwn: boolean }) {
+function StatBlock({
+  value,
+  label,
+}: {
+  value: number;
+  label: string;
+}) {
+  const colors = useColors();
+  return (
+    <View style={styles.statBlock}>
+      <Text style={[styles.statValue, { color: colors.textPrimary }]}>
+        {formatCount(value)}
+      </Text>
+      <Text style={[styles.statLabel, { color: colors.textSecondary }]}>
+        {label}
+      </Text>
+    </View>
+  );
+}
+
+function PostGrid({
+  posts,
+  viewMode,
+  gridSize,
+  onRequestDelete,
+  isOwn,
+}: {
+  posts: Post[];
+  viewMode: ViewMode;
+  gridSize: number;
+  onRequestDelete?: (post: Post) => void;
+  isOwn: boolean;
+}) {
   const router = useRouter();
+  const colors = useColors();
+
   if (viewMode === "grid") {
     return (
       <View style={styles.gridWrap}>
-        {posts.map(p => {
+        {posts.map((p) => {
           const media = p.media_urls?.[0] ? resolveMediaUrl(p.media_urls[0]) : null;
           const isVideo = p.media_type === "video";
           return (
@@ -65,35 +88,78 @@ function PostGrid({ posts, colors, viewMode, onDelete, isOwn }: { posts: Post[];
               key={p.id}
               onPress={() => router.push(`/post/${p.id}` as any)}
               onLongPress={() => {
-                if (isOwn && onDelete) {
-                  Alert.alert("Delete Post", "Are you sure you want to delete this post?", [
-                    { text: "Cancel", style: "cancel" },
-                    { text: "Delete", style: "destructive", onPress: () => onDelete(p.id) },
-                  ]);
+                if (isOwn && onRequestDelete) {
+                  haptics.medium();
+                  onRequestDelete(p);
                 }
               }}
-              style={({ pressed }) => [styles.gridItem, { opacity: pressed ? 0.85 : 1 }]}
+              style={({ pressed }) => [
+                styles.gridItem,
+                {
+                  width: gridSize,
+                  height: gridSize,
+                  backgroundColor: colors.bgElevated,
+                  opacity: pressed ? 0.85 : 1,
+                },
+              ]}
+              accessibilityRole="button"
+              accessibilityLabel={p.content || "View post"}
             >
               {media ? (
-                <Image source={{ uri: media }} style={styles.gridImg} resizeMode="cover" />
+                <Image
+                  source={{ uri: media }}
+                  style={styles.gridImg}
+                  resizeMode="cover"
+                />
               ) : (
-                <View style={[styles.gridImg, { backgroundColor: colors.secondary, alignItems: "center", justifyContent: "center" }]}>
-                  <Feather name="file-text" size={22} color={colors.mutedForeground} />
+                <View
+                  style={[
+                    styles.gridImg,
+                    {
+                      backgroundColor: colors.bgElevated,
+                      alignItems: "center",
+                      justifyContent: "center",
+                      padding: 10,
+                    },
+                  ]}
+                >
+                  <Text
+                    style={{
+                      color: colors.textSecondary,
+                      fontSize: 12,
+                      textAlign: "center",
+                    }}
+                    numberOfLines={3}
+                  >
+                    {p.content || "Post"}
+                  </Text>
                 </View>
               )}
               {isVideo && (
                 <View style={styles.gridVideoIcon}>
-                  <Feather name="play" size={10} color="#fff" />
+                  <Feather name="play" size={10} color="#FFFFFF" />
                 </View>
               )}
-              <LinearGradient colors={["transparent", "rgba(0,0,0,0.6)"]} style={styles.gridOverlay}>
+              <LinearGradient
+                colors={["transparent", "rgba(0,0,0,0.58)"]}
+                style={styles.gridOverlay}
+              >
                 <View style={styles.gridStats}>
-                  <Feather name="heart" size={10} color="#fff" />
-                  <Text style={styles.gridStatText}>{formatCount(p.likes_count)}</Text>
+                  <Feather name="heart" size={10} color="#FFFFFF" />
+                  <Text style={styles.gridStatText}>
+                    {formatCount(p.likes_count)}
+                  </Text>
                   {p.views_count > 0 && (
                     <>
-                      <Feather name="eye" size={10} color="#fff" style={{ marginLeft: 6 }} />
-                      <Text style={styles.gridStatText}>{formatCount(p.views_count)}</Text>
+                      <Feather
+                        name="eye"
+                        size={10}
+                        color="#FFFFFF"
+                        style={{ marginLeft: 6 }}
+                      />
+                      <Text style={styles.gridStatText}>
+                        {formatCount(p.views_count)}
+                      </Text>
                     </>
                   )}
                 </View>
@@ -107,36 +173,72 @@ function PostGrid({ posts, colors, viewMode, onDelete, isOwn }: { posts: Post[];
 
   return (
     <View>
-      {posts.map(p => {
+      {posts.map((p) => {
         const media = p.media_urls?.[0] ? resolveMediaUrl(p.media_urls[0]) : null;
-        const aspectRatio = p.media_width && p.media_height ? p.media_width / p.media_height : null;
+        const aspectRatio =
+          p.media_width && p.media_height
+            ? Math.min(Math.max(p.media_width / p.media_height, 0.56), 1.91)
+            : 1;
         return (
           <Pressable
             key={p.id}
             onPress={() => router.push(`/post/${p.id}` as any)}
             onLongPress={() => {
-              if (isOwn && onDelete) {
-                Alert.alert("Delete Post", "Are you sure?", [
-                  { text: "Cancel", style: "cancel" },
-                  { text: "Delete", style: "destructive", onPress: () => onDelete(p.id) },
-                ]);
+              if (isOwn && onRequestDelete) {
+                haptics.medium();
+                onRequestDelete(p);
               }
             }}
-            style={[styles.listCard, { borderBottomColor: colors.border }]}
+            style={[styles.listCard, { borderBottomColor: colors.separator }]}
           >
-            {media && aspectRatio && (
-              <Image source={{ uri: media }}
-                style={[styles.listCardImg, { aspectRatio: Math.min(Math.max(aspectRatio, 0.4), 2.5) }]}
-                resizeMode="contain" />
+            {media && (
+              <Image
+                source={{ uri: media }}
+                style={[styles.listCardImg, { aspectRatio }]}
+                resizeMode="cover"
+              />
             )}
-            {media && !aspectRatio && <Image source={{ uri: media }} style={[styles.listCardImg, { aspectRatio: 1 }]} resizeMode="cover" />}
-            {!!p.content && <Text style={[styles.listCardContent, { color: colors.foreground }]} numberOfLines={4}>{p.content}</Text>}
+            {!!p.content && (
+              <Text
+                style={[styles.listCardContent, { color: colors.textPrimary }]}
+                numberOfLines={4}
+              >
+                {p.content}
+              </Text>
+            )}
             <View style={styles.listCardMeta}>
-              <Text style={[styles.listCardTime, { color: colors.mutedForeground }]}>{timeAgo(p.created_at)}</Text>
+              <Text style={[styles.listCardTime, { color: colors.textSecondary }]}>
+                {timeAgo(p.created_at)}
+              </Text>
               <View style={styles.listCardStats}>
-                <View style={styles.listStat}><Feather name="heart" size={12} color={colors.mutedForeground} /><Text style={[styles.listStatText, { color: colors.mutedForeground }]}>{formatCount(p.likes_count)}</Text></View>
-                <View style={styles.listStat}><Feather name="message-circle" size={12} color={colors.mutedForeground} /><Text style={[styles.listStatText, { color: colors.mutedForeground }]}>{formatCount(p.comments_count)}</Text></View>
-                <View style={styles.listStat}><Feather name="eye" size={12} color={colors.mutedForeground} /><Text style={[styles.listStatText, { color: colors.mutedForeground }]}>{formatCount(p.views_count)}</Text></View>
+                <View style={styles.listStat}>
+                  <Feather name="heart" size={13} color={colors.textSecondary} />
+                  <Text
+                    style={[styles.listStatText, { color: colors.textSecondary }]}
+                  >
+                    {formatCount(p.likes_count)}
+                  </Text>
+                </View>
+                <View style={styles.listStat}>
+                  <Feather
+                    name="message-circle"
+                    size={13}
+                    color={colors.textSecondary}
+                  />
+                  <Text
+                    style={[styles.listStatText, { color: colors.textSecondary }]}
+                  >
+                    {formatCount(p.comments_count)}
+                  </Text>
+                </View>
+                <View style={styles.listStat}>
+                  <Feather name="eye" size={13} color={colors.textSecondary} />
+                  <Text
+                    style={[styles.listStatText, { color: colors.textSecondary }]}
+                  >
+                    {formatCount(p.views_count)}
+                  </Text>
+                </View>
               </View>
             </View>
           </Pressable>
@@ -146,83 +248,27 @@ function PostGrid({ posts, colors, viewMode, onDelete, isOwn }: { posts: Post[];
   );
 }
 
-function SettingsSheet({ visible, onClose, onLogout, onNavigateTab, colors, colorScheme }: {
-  visible: boolean; onClose: () => void; onLogout: () => void;
-  onNavigateTab: (tab: "posts" | "reels" | "saved") => void;
-  colors: any; colorScheme: string | null | undefined;
-}) {
-  const router = useRouter();
-  const insets = useSafeAreaInsets();
-  const isDark = colorScheme === "dark";
-  const sections = [
-    { title: "Account", items: [
-      { icon: "user" as const, label: "Edit Profile", onPress: () => { onClose(); router.push("/edit-profile" as any); } },
-      { icon: "lock" as const, label: "Change Password", onPress: () => { onClose(); router.push("/change-password" as any); } },
-    ]},
-    { title: "Privacy & Safety", items: [
-      { icon: "eye-off" as const, label: "Blocked Users", onPress: () => { onClose(); router.push("/blocked-users" as any); } },
-      { icon: "bell" as const, label: "Notifications", onPress: () => { onClose(); router.push("/notifications" as any); } },
-    ]},
-    { title: "Content", items: [
-      { icon: "film" as const, label: "Your Reels", onPress: () => { onClose(); onNavigateTab("reels"); } },
-      { icon: "bookmark" as const, label: "Saved Posts", onPress: () => { onClose(); onNavigateTab("saved"); } },
-    ]},
-    { title: "Support", items: [
-      { icon: "help-circle" as const, label: "Help & FAQ", onPress: () => { onClose(); router.push("/settings" as any); } },
-      { icon: "info" as const, label: "About", onPress: () => Alert.alert("Vibe", "Version 2.0.0\n\nBuilt with \u2764\ufe0f using React Native & Expo.\n\nTerms of Service and Privacy Policy available at vibe.example.com"), detail: "v2.0.0" },
-    ]},
-  ];
-  return (
-    <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}>
-      <View style={{ flex: 1, backgroundColor: colors.background }}>
-        <View style={[styles.sheetHeader, { paddingTop: insets.top + 16, borderBottomColor: colors.border }]}>
-          <Text style={[styles.sheetTitle, { color: colors.foreground }]}>Settings</Text>
-          <Pressable onPress={onClose} hitSlop={8}><Feather name="x" size={20} color={colors.foreground} /></Pressable>
-        </View>
-        <ScrollView contentContainerStyle={{ paddingBottom: insets.bottom + 40 }}>
-          {sections.map(section => (
-            <View key={section.title} style={styles.settingsSection}>
-              <Text style={[styles.settingsSectionTitle, { color: colors.mutedForeground }]}>{section.title}</Text>
-              <View style={[styles.settingsGroup, { backgroundColor: isDark ? "#1a1a2e" : "#f9f8ff", borderColor: colors.border }]}>
-                {section.items.map((item, i) => (
-                  <Pressable key={item.label} onPress={item.onPress}
-                    style={({ pressed }) => [styles.settingsRow, i < section.items.length - 1 && { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border }, pressed && { opacity: 0.6 }]}>
-                    <View style={styles.settingsIconWrap}><Feather name={item.icon} size={15} color="#7c3aed" /></View>
-                    <Text style={[styles.settingsLabel, { color: colors.foreground }]}>{item.label}</Text>
-                    {"detail" in item && item.detail ? <Text style={{ color: colors.mutedForeground, fontSize: 13, marginRight: 4 }}>{(item as any).detail}</Text> : null}
-                    <Feather name="chevron-right" size={16} color={colors.mutedForeground} />
-                  </Pressable>
-                ))}
-              </View>
-            </View>
-          ))}
-          <Pressable onPress={() => { onClose(); onLogout(); }}
-            style={({ pressed }) => [styles.sheetLogout, { opacity: pressed ? 0.7 : 1 }]}>
-            <Feather name="log-out" size={17} color="#ef4444" />
-            <Text style={styles.sheetLogoutText}>Log Out</Text>
-          </Pressable>
-        </ScrollView>
-      </View>
-    </Modal>
-  );
-}
-
 export default function ProfileScreen() {
-  const { isAuthenticated, isLoading: authLoading, user, logout, isGuest } = useAuth();
+  const { isAuthenticated, isLoading: authLoading, user, isGuest } = useAuth();
   const colors = useColors();
+  const { showToast } = useToast();
   const insets = useSafeAreaInsets();
-  const colorScheme = useColorScheme();
-  const isWeb = Platform.OS === "web";
-  const isDark = colorScheme === "dark";
+  const { width } = useWindowDimensions();
   const router = useRouter();
   const qc = useQueryClient();
-  const [settingsOpen, setSettingsOpen] = useState(false);
+
+  const isWeb = Platform.OS === "web";
+  const isDesktopWeb = isWeb && width >= 768;
+  const contentWidth = Math.min(width - (isDesktopWeb ? 240 : 0), 720);
+  const gridSize = Math.floor((contentWidth - 8) / 3);
+
   const [viewMode, setViewMode] = useState<ViewMode>("grid");
   const [postTab, setPostTab] = useState<PostTab>("posts");
   const [aiInsight, setAiInsight] = useState<string | null>(null);
   const [loadingInsight, setLoadingInsight] = useState(false);
   const [bioRefresh, setBioRefresh] = useState("");
   const [loadingBioRefresh, setLoadingBioRefresh] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<Post | null>(null);
 
   const { data: profile, isLoading: profileLoading } = useQuery({
     queryKey: ["my-profile", user?.id],
@@ -245,24 +291,34 @@ export default function ProfileScreen() {
       await deletePost(postId, user.id);
       qc.invalidateQueries({ queryKey: ["my-posts"] });
       qc.invalidateQueries({ queryKey: ["feed"] });
-    } catch { Alert.alert("Error", "Could not delete post"); }
+      showToast("Post deleted", "success");
+    } catch {
+      showToast("Could not delete post", "error");
+    }
   };
 
   const handleAIInsight = async () => {
     if (loadingInsight) return;
-    if (aiInsight) { setAiInsight(null); return; }
+    if (aiInsight) {
+      setAiInsight(null);
+      return;
+    }
     setLoadingInsight(true);
     try {
-      const allPosts = (posts as Post[]);
+      const allPosts = posts as Post[];
       const insight = await generateProfileInsights({
         totalPosts: profile?.posts_count ?? 0,
         totalLikes: allPosts.reduce((s, p) => s + p.likes_count, 0),
         totalViews: allPosts.reduce((s, p) => s + p.views_count, 0),
-        imagePosts: allPosts.filter(p => p.media_type === "image").length,
-        videoPosts: allPosts.filter(p => p.media_type === "video").length,
-        textPosts: allPosts.filter(p => !p.media_type).length,
+        imagePosts: allPosts.filter((p) => p.media_type === "image").length,
+        videoPosts: allPosts.filter((p) => p.media_type === "video").length,
+        textPosts: allPosts.filter((p) => !p.media_type).length,
       });
-      setAiInsight(insight);
+      if (!insight) {
+        showToast("AI insights unavailable right now", "info");
+      } else {
+        setAiInsight(insight);
+      }
     } finally {
       setLoadingInsight(false);
     }
@@ -273,28 +329,65 @@ export default function ProfileScreen() {
     setLoadingBioRefresh(true);
     setBioRefresh("");
     try {
-      const recentTopics = (posts as Post[]).slice(0, 10).map(p => p.content ?? "").join(" ");
-      const result = await generateAIBioRefresh(displayName, recentTopics.split(/\s+/).filter(w => w.length > 4).slice(0, 10));
-      setBioRefresh(result);
+      const recentTopics = (posts as Post[])
+        .slice(0, 10)
+        .map((p) => p.content ?? "")
+        .join(" ");
+      const result = await generateAIBioRefresh(
+        displayName,
+        recentTopics
+          .split(/\s+/)
+          .filter((w) => w.length > 4)
+          .slice(0, 10),
+      );
+      if (!result) {
+        showToast("AI bio refresh unavailable right now", "info");
+      } else {
+        setBioRefresh(result);
+      }
     } finally {
       setLoadingBioRefresh(false);
     }
   };
 
   if (authLoading) return null;
-  if (isGuest) return <GuestScreen icon="user" title="Your Profile" subtitle="Create an account to build your profile, share posts, and connect with others." perks={["Post photos, videos & reels", "Build your following", "Save posts you love", "See your view counts"]} />;
+  if (isGuest) {
+    return (
+      <GuestScreen
+        icon="user"
+        title="Your Profile"
+        subtitle="Create an account to build your profile, share posts, and connect with others."
+        perks={[
+          "Post photos, videos & reels",
+          "Build your following",
+          "Save posts you love",
+          "See your view counts",
+        ]}
+      />
+    );
+  }
   if (!isAuthenticated) return <Redirect href="/login" />;
-  if (profileLoading) return <View style={{ flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: colors.background }}><ActivityIndicator color="#7c3aed" size="large" /></View>;
+  if (profileLoading) {
+    return (
+      <View
+        style={{
+          flex: 1,
+          alignItems: "center",
+          justifyContent: "center",
+          backgroundColor: colors.bgCanvas,
+        }}
+      >
+        <ActivityIndicator color={colors.accentPrimary} size="large" />
+      </View>
+    );
+  }
 
-  const displayName = profile?.display_name ?? [user?.firstName, user?.lastName].filter(Boolean).join(" ") ?? "User";
+  const displayName =
+    profile?.display_name ??
+    ([user?.firstName, user?.lastName].filter(Boolean).join(" ") || "User");
   const avatarUrl = profile?.avatar_url ?? user?.profileImageUrl ?? null;
 
-  const handleLogout = () => Alert.alert("Log Out", "Are you sure?", [
-    { text: "Cancel", style: "cancel" },
-    { text: "Log Out", style: "destructive", onPress: logout },
-  ]);
-
-  const tabs: { key: PostTab; icon: any; label: string }[] = [
+  const tabs: { key: PostTab; icon: keyof typeof Feather.glyphMap; label: string }[] = [
     { key: "posts", icon: "grid", label: "Posts" },
     { key: "reels", icon: "film", label: "Reels" },
     { key: "saved", icon: "bookmark", label: "Saved" },
@@ -302,215 +395,806 @@ export default function ProfileScreen() {
 
   return (
     <>
-      <StatusBar barStyle={isDark ? "light-content" : "dark-content"} />
-      <SettingsSheet visible={settingsOpen} onClose={() => setSettingsOpen(false)} onLogout={handleLogout} onNavigateTab={(tab) => setPostTab(tab)} colors={colors} colorScheme={colorScheme} />
-      <ScrollView style={{ backgroundColor: colors.background }} contentContainerStyle={{ paddingBottom: insets.bottom + 80 }}>
-         {/* Cover */}
-         <View style={[styles.coverWrap, { paddingTop: isWeb ? 67 : insets.top }]}>
-           <LinearGradient colors={isDark ? ["#1e1b4b", "#2d1b69", "#1e1b4b"] : ["#ede9fe", "#ddd6fe", "#c4b5fd"]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={StyleSheet.absoluteFill} />
-           {profile?.cover_url && <Image source={{ uri: resolveMediaUrl(profile.cover_url) }} style={StyleSheet.absoluteFill} resizeMode="cover" />}
-           <Pressable onPress={() => setSettingsOpen(true)} style={[styles.settingsBtn, { backgroundColor: isDark ? "#ffffff18" : "#00000012" }]} hitSlop={8}>
-             <Feather name="settings" size={18} color={isDark ? "#e2d9f3" : "#4c1d95"} />
-           </Pressable>
-           <Pressable onPress={() => router.push("/edit-profile" as any)} style={[styles.coverEditBtn, { backgroundColor: isDark ? "#ffffff18" : "#00000012" }]} hitSlop={8}>
-             <Feather name="camera" size={16} color={isDark ? "#e2d9f3" : "#4c1d95"} />
-           </Pressable>
-           <View style={styles.avatarRow}><Avatar name={displayName} size={92} avatarUrl={avatarUrl} /></View>
-         </View>
-
-        {/* Profile info */}
-        <View style={[styles.profileInfo, { borderBottomColor: colors.border }]}>
-          <View style={styles.nameRow}>
-            <View style={{ flex: 1 }}>
-              <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-                <Text style={[styles.displayName, { color: colors.foreground }]}>{displayName}</Text>
-                {profile?.is_admin && <Feather name="shield" size={16} color="#7c3aed" />}
-              </View>
-              {profile?.username ? <Text style={[styles.username, { color: colors.mutedForeground }]}>@{profile.username}</Text> : null}
-            </View>
-            <Link href="/edit-profile" asChild>
-              <Pressable style={({ pressed }) => [styles.editBtn, { borderColor: "#7c3aed", backgroundColor: pressed ? "#7c3aed18" : "transparent" }]}>
-                <Feather name="edit-2" size={13} color="#7c3aed" />
-                <Text style={styles.editBtnText}>Edit</Text>
-              </Pressable>
-            </Link>
-          </View>
-          {profile?.bio ? <Text style={[styles.bio, { color: colors.foreground }]}>{profile.bio}</Text> : null}
-          <Pressable onPress={handleBioRefresh} style={{ flexDirection: "row", alignItems: "center", gap: 6, marginTop: 6 }}>
-            <Feather name="refresh-cw" size={12} color="#7c3aed" />
-            <Text style={{ color: "#7c3aed", fontSize: 12, fontWeight: "600" }}>Refresh bio with AI</Text>
-          </Pressable>
-          {loadingBioRefresh && <ActivityIndicator size="small" color="#7c3aed" style={{ marginTop: 6 }} />}
-          {!!bioRefresh && (
-            <View style={{ marginTop: 8, padding: 12, borderRadius: 12, backgroundColor: "rgba(124,58,237,0.06)", borderWidth: 1, borderColor: "rgba(124,58,237,0.12)" }}>
-              <Text style={{ color: colors.foreground, fontSize: 13, lineHeight: 18 }}>{bioRefresh}</Text>
-            </View>
-          )}
-
-          {/* Stats */}
-          <View style={[styles.statsRow, { backgroundColor: isDark ? "#ffffff08" : "#7c3aed08", borderColor: isDark ? "#ffffff12" : "#7c3aed18" }]}>
-            <StatBlock value={profile?.posts_count ?? 0} label="Posts" colors={colors} />
-            <View style={[styles.statDivider, { backgroundColor: colors.border }]} />
-            <StatBlock value={profile?.followers_count ?? 0} label="Followers" colors={colors} />
-            <View style={[styles.statDivider, { backgroundColor: colors.border }]} />
-            <StatBlock value={profile?.following_count ?? 0} label="Following" colors={colors} />
-          </View>
-
-          {/* Quick actions */}
-          <View style={styles.quickActions}>
-            <Pressable onPress={async () => {
-              const { Share } = await import("react-native");
-              Share.share({ message: `Check out ${displayName}'s profile on Vibe! https://vibe.app/user/${user?.id}` });
-            }} style={[styles.quickBtn, { backgroundColor: colors.primary }]}>
-              <Feather name="share-2" size={15} color="#fff" />
-              <Text style={styles.quickBtnText}>Share Profile</Text>
-            </Pressable>
-            <Pressable onPress={() => router.push("/live-sessions" as any)} style={[styles.quickBtn, { backgroundColor: "#ef4444" }]}>
-              <Feather name="radio" size={15} color="#fff" />
-              <Text style={styles.quickBtnText}>Go Live</Text>
-            </Pressable>
-            <Pressable onPress={() => router.push("/ai-chat" as any)} style={[styles.quickBtn, { backgroundColor: "#7c3aed" }]}>
-              <Feather name="zap" size={15} color="#fff" />
-              <Text style={styles.quickBtnText}>AI</Text>
-            </Pressable>
-          </View>
-
-          {/* AI Insights */}
-          <Pressable
-            onPress={handleAIInsight}
-            style={[styles.insightBtn, { backgroundColor: isDark ? "#7c3aed18" : "#ede9fe", borderColor: "#7c3aed44" }]}
+      <StatusBar barStyle={colors.isDark ? "light-content" : "dark-content"} />
+      <ScrollView
+        style={{ backgroundColor: colors.bgCanvas }}
+        contentContainerStyle={{ paddingBottom: insets.bottom + 96 }}
+      >
+        <View style={[styles.columnWrap, { maxWidth: 720 }]}>
+          {/* Cover */}
+          <View
+            style={[
+              styles.coverWrap,
+              { height: isWeb ? 176 : 196 + insets.top },
+            ]}
           >
-            {loadingInsight
-              ? <ActivityIndicator size="small" color="#7c3aed" />
-              : <Feather name="zap" size={14} color="#7c3aed" />}
-            <Text style={[styles.insightBtnText, { color: "#7c3aed" }]}>
-              {loadingInsight ? "Analyzing your profile…" : aiInsight ? "Hide AI insights" : "Get AI growth insights ✨"}
-            </Text>
-          </Pressable>
+            <LinearGradient
+              colors={
+                colors.isDark
+                  ? ["#1A103D", "#2E1065", "#121216"]
+                  : ["#EDE9FE", "#DDD6FE", "#C4B5FD"]
+              }
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 1 }}
+              style={StyleSheet.absoluteFill}
+            />
+            {profile?.cover_url && (
+              <Image
+                source={{ uri: resolveMediaUrl(profile.cover_url) }}
+                style={StyleSheet.absoluteFill}
+                resizeMode="cover"
+              />
+            )}
+            <Pressable
+              onPress={() => {
+                haptics.light();
+                router.push("/settings" as any);
+              }}
+              style={[
+                styles.coverIconBtn,
+                {
+                  top: isWeb ? 14 : insets.top + 10,
+                  right: 14,
+                  backgroundColor: colors.isDark
+                    ? "rgba(0,0,0,0.48)"
+                    : "rgba(255,255,255,0.82)",
+                },
+              ]}
+              accessibilityRole="button"
+              accessibilityLabel="Settings"
+            >
+              <Feather name="settings" size={18} color={colors.textPrimary} />
+            </Pressable>
+            <Pressable
+              onPress={() => router.push("/edit-profile" as any)}
+              style={[
+                styles.coverIconBtn,
+                {
+                  bottom: 14,
+                  right: 14,
+                  backgroundColor: colors.isDark
+                    ? "rgba(0,0,0,0.48)"
+                    : "rgba(255,255,255,0.82)",
+                },
+              ]}
+              accessibilityRole="button"
+              accessibilityLabel="Edit cover or profile"
+            >
+              <Feather name="camera" size={17} color={colors.textPrimary} />
+            </Pressable>
 
-          {aiInsight && (
-            <View style={[styles.insightCard, { backgroundColor: isDark ? "#1a0533" : "#f5f3ff", borderColor: "#7c3aed33" }]}>
-              <View style={styles.insightHeader}>
-                <LinearGradient colors={["#7c3aed", "#4f46e5"]} style={styles.insightDot}>
-                  <Feather name="zap" size={12} color="#fff" />
-                </LinearGradient>
-                <Text style={[styles.insightTitle, { color: "#7c3aed" }]}>AI Insights</Text>
-              </View>
-              <Text style={[styles.insightText, { color: colors.foreground }]}>{aiInsight}</Text>
+            <View
+              style={[
+                styles.avatarFrame,
+                { borderColor: colors.bgCanvas, backgroundColor: colors.bgCanvas },
+              ]}
+            >
+              <Avatar
+                name={displayName}
+                size={88}
+                avatarUrl={avatarUrl}
+                canvasColor={colors.bgCanvas}
+              />
             </View>
-          )}
-        </View>
-
-        {/* Tab bar */}
-        <View style={[styles.tabBar, { borderBottomColor: colors.border }]}>
-          {tabs.map(tab => (
-            <Pressable key={tab.key} onPress={() => setPostTab(tab.key)} style={styles.tabBtn}>
-              <Feather name={tab.icon} size={16} color={postTab === tab.key ? colors.primary : colors.mutedForeground} />
-              <Text style={[styles.tabLabel, { color: postTab === tab.key ? colors.primary : colors.mutedForeground }, postTab === tab.key && styles.tabLabelActive]}>{tab.label}</Text>
-              {postTab === tab.key && <View style={[styles.tabIndicator, { backgroundColor: colors.primary }]} />}
-            </Pressable>
-          ))}
-          <View style={{ flex: 1 }} />
-          <View style={styles.viewToggle}>
-            <Pressable onPress={() => setViewMode("grid")} hitSlop={8} style={[styles.viewBtn, viewMode === "grid" && { backgroundColor: colors.primary + "22" }]}>
-              <Feather name="grid" size={16} color={viewMode === "grid" ? colors.primary : colors.mutedForeground} />
-            </Pressable>
-            <Pressable onPress={() => setViewMode("list")} hitSlop={8} style={[styles.viewBtn, viewMode === "list" && { backgroundColor: colors.primary + "22" }]}>
-              <Feather name="list" size={16} color={viewMode === "list" ? colors.primary : colors.mutedForeground} />
-            </Pressable>
           </View>
-        </View>
 
-        {postsLoading ? (
-          <View style={{ paddingVertical: 40, alignItems: "center" }}><ActivityIndicator color="#7c3aed" /></View>
-        ) : posts.length === 0 ? (
-          <View style={styles.emptyPosts}>
-            <View style={[styles.emptyIconWrap, { backgroundColor: isDark ? "#ffffff0a" : "#7c3aed0a" }]}>
-              <Feather name={postTab === "saved" ? "bookmark" : postTab === "posts" ? "grid" : "film"} size={32} color="#7c3aed" />
-            </View>
-            <Text style={[styles.emptyTitle, { color: colors.foreground }]}>
-              {postTab === "saved" ? "No saved posts" : `No ${postTab} yet`}
-            </Text>
-            <Text style={[styles.emptyDesc, { color: colors.mutedForeground }]}>
-              {postTab === "saved" ? "Posts you save will appear here" : `Share your first ${postTab === "posts" ? "post" : "reel"} to get started`}
-            </Text>
-            {postTab !== "saved" && (
-              <Link href="/create" asChild>
-                <Pressable style={styles.emptyAction}><Text style={styles.emptyActionText}>Create {postTab === "posts" ? "Post" : "Reel"}</Text></Pressable>
+          {/* Profile Info */}
+          <View
+            style={[
+              styles.profileInfo,
+              { borderBottomColor: colors.separator },
+            ]}
+          >
+            <View style={styles.nameRow}>
+              <View style={{ flex: 1 }}>
+                <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                  <Text style={[styles.displayName, { color: colors.textPrimary }]}>
+                    {displayName}
+                  </Text>
+                  {profile?.is_admin && (
+                    <Feather name="shield" size={16} color={colors.accentPrimary} />
+                  )}
+                </View>
+                {profile?.username ? (
+                  <Text style={[styles.username, { color: colors.textSecondary }]}>
+                    @{profile.username}
+                  </Text>
+                ) : null}
+              </View>
+              <Link href="/edit-profile" asChild>
+                <Pressable
+                  style={({ pressed }) => [
+                    styles.editBtn,
+                    {
+                      borderColor: colors.accentPrimary,
+                      backgroundColor: pressed ? colors.accentTint : "transparent",
+                    },
+                  ]}
+                  accessibilityRole="button"
+                  accessibilityLabel="Edit profile"
+                >
+                  <Feather name="edit-2" size={14} color={colors.accentPrimary} />
+                  <Text
+                    style={[styles.editBtnText, { color: colors.accentPrimary }]}
+                  >
+                    Edit Profile
+                  </Text>
+                </Pressable>
               </Link>
+            </View>
+
+            {profile?.bio ? (
+              <Text style={[styles.bio, { color: colors.textPrimary }]}>
+                {profile.bio}
+              </Text>
+            ) : null}
+
+            <Pressable
+              onPress={handleBioRefresh}
+              style={styles.bioRefreshBtn}
+              accessibilityRole="button"
+              accessibilityLabel="Suggest bio with AI"
+            >
+              <Feather name="refresh-cw" size={13} color={colors.accentPrimary} />
+              <Text style={[styles.bioRefreshText, { color: colors.accentPrimary }]}>
+                Suggest bio with AI
+              </Text>
+            </Pressable>
+
+            {loadingBioRefresh && (
+              <ActivityIndicator
+                size="small"
+                color={colors.accentPrimary}
+                style={{ marginTop: 8, alignSelf: "flex-start" }}
+              />
+            )}
+            {!!bioRefresh && (
+              <View
+                style={[
+                  styles.aiBox,
+                  {
+                    backgroundColor: colors.accentTint,
+                    borderColor: colors.separator,
+                  },
+                ]}
+              >
+                <Text style={{ color: colors.textPrimary, fontSize: 13.5, lineHeight: 19 }}>
+                  {bioRefresh}
+                </Text>
+              </View>
+            )}
+
+            {/* Stats */}
+            <View
+              style={[
+                styles.statsRow,
+                {
+                  backgroundColor: colors.bgElevated,
+                  borderColor: colors.separator,
+                },
+              ]}
+            >
+              <StatBlock value={profile?.posts_count ?? 0} label="Posts" />
+              <View
+                style={[styles.statDivider, { backgroundColor: colors.separator }]}
+              />
+              <StatBlock value={profile?.followers_count ?? 0} label="Followers" />
+              <View
+                style={[styles.statDivider, { backgroundColor: colors.separator }]}
+              />
+              <StatBlock value={profile?.following_count ?? 0} label="Following" />
+            </View>
+
+            {/* Quick actions */}
+            <View style={styles.quickActions}>
+              <Pressable
+                onPress={async () => {
+                  await Share.share({
+                    message: `Check out ${displayName}'s profile on Vibe! https://vibe.app/user/${user?.id}`,
+                  });
+                }}
+                style={({ pressed }) => [
+                  styles.quickBtn,
+                  {
+                    backgroundColor: colors.accentPrimary,
+                    opacity: pressed ? 0.88 : 1,
+                  },
+                ]}
+                accessibilityRole="button"
+                accessibilityLabel="Share profile"
+              >
+                <Feather name="share-2" size={15} color="#FFFFFF" />
+                <Text style={styles.quickBtnText}>Share</Text>
+              </Pressable>
+              <Pressable
+                onPress={() => router.push("/live-sessions" as any)}
+                style={({ pressed }) => [
+                  styles.quickBtn,
+                  {
+                    backgroundColor: colors.semanticDanger,
+                    opacity: pressed ? 0.88 : 1,
+                  },
+                ]}
+                accessibilityRole="button"
+                accessibilityLabel="Go Live"
+              >
+                <Feather name="radio" size={15} color="#FFFFFF" />
+                <Text style={styles.quickBtnText}>Go Live</Text>
+              </Pressable>
+              <Pressable
+                onPress={() => router.push("/ai-chat" as any)}
+                style={({ pressed }) => [
+                  styles.quickBtn,
+                  {
+                    backgroundColor: colors.bgElevated,
+                    borderWidth: StyleSheet.hairlineWidth,
+                    borderColor: colors.separator,
+                    opacity: pressed ? 0.82 : 1,
+                  },
+                ]}
+                accessibilityRole="button"
+                accessibilityLabel="Open AI Assistant"
+              >
+                <Feather name="zap" size={15} color={colors.accentPrimary} />
+                <Text style={[styles.quickBtnText, { color: colors.textPrimary }]}>
+                  AI Studio
+                </Text>
+              </Pressable>
+            </View>
+
+            {/* AI Insights */}
+            <Pressable
+              onPress={handleAIInsight}
+              style={({ pressed }) => [
+                styles.insightBtn,
+                {
+                  backgroundColor: colors.accentTint,
+                  borderColor: colors.separator,
+                  opacity: pressed ? 0.82 : 1,
+                },
+              ]}
+              accessibilityRole="button"
+              accessibilityLabel="Toggle AI growth insights"
+            >
+              {loadingInsight ? (
+                <ActivityIndicator size="small" color={colors.accentPrimary} />
+              ) : (
+                <Feather name="trending-up" size={15} color={colors.accentPrimary} />
+              )}
+              <Text
+                style={[styles.insightBtnText, { color: colors.accentPrimary }]}
+              >
+                {loadingInsight
+                  ? "Analyzing your profile…"
+                  : aiInsight
+                  ? "Hide AI insights"
+                  : "View AI growth insights"}
+              </Text>
+            </Pressable>
+
+            {aiInsight && (
+              <View
+                style={[
+                  styles.insightCard,
+                  {
+                    backgroundColor: colors.bgElevated,
+                    borderColor: colors.separator,
+                  },
+                ]}
+              >
+                <View style={styles.insightHeader}>
+                  <View
+                    style={[
+                      styles.insightDot,
+                      { backgroundColor: colors.accentPrimary },
+                    ]}
+                  >
+                    <Feather name="zap" size={12} color="#FFFFFF" />
+                  </View>
+                  <Text
+                    style={[styles.insightTitle, { color: colors.accentPrimary }]}
+                  >
+                    Growth Insights
+                  </Text>
+                </View>
+                <Text style={[styles.insightText, { color: colors.textPrimary }]}>
+                  {aiInsight}
+                </Text>
+              </View>
             )}
           </View>
-        ) : (
-          <PostGrid posts={posts as Post[]} colors={colors} viewMode={viewMode} onDelete={handleDelete} isOwn={true} />
-        )}
+
+          {/* Tab bar */}
+          <View style={[styles.tabBar, { borderBottomColor: colors.separator }]}>
+            {tabs.map((tab) => {
+              const active = postTab === tab.key;
+              return (
+                <Pressable
+                  key={tab.key}
+                  onPress={() => {
+                    haptics.selection();
+                    setPostTab(tab.key);
+                  }}
+                  style={styles.tabBtn}
+                  accessibilityRole="tab"
+                  accessibilityState={{ selected: active }}
+                  accessibilityLabel={tab.label}
+                >
+                  <Feather
+                    name={tab.icon}
+                    size={16}
+                    color={active ? colors.accentPrimary : colors.textSecondary}
+                  />
+                  <Text
+                    style={[
+                      styles.tabLabel,
+                      {
+                        color: active ? colors.accentPrimary : colors.textSecondary,
+                      },
+                      active && styles.tabLabelActive,
+                    ]}
+                  >
+                    {tab.label}
+                  </Text>
+                  {active && (
+                    <View
+                      style={[
+                        styles.tabIndicator,
+                        { backgroundColor: colors.accentPrimary },
+                      ]}
+                    />
+                  )}
+                </Pressable>
+              );
+            })}
+            <View style={{ flex: 1 }} />
+            <View style={styles.viewToggle}>
+              <Pressable
+                onPress={() => setViewMode("grid")}
+                style={[
+                  styles.viewBtn,
+                  viewMode === "grid" && { backgroundColor: colors.accentTint },
+                ]}
+                accessibilityRole="button"
+                accessibilityLabel="Grid view"
+              >
+                <Feather
+                  name="grid"
+                  size={16}
+                  color={
+                    viewMode === "grid"
+                      ? colors.accentPrimary
+                      : colors.textSecondary
+                  }
+                />
+              </Pressable>
+              <Pressable
+                onPress={() => setViewMode("list")}
+                style={[
+                  styles.viewBtn,
+                  viewMode === "list" && { backgroundColor: colors.accentTint },
+                ]}
+                accessibilityRole="button"
+                accessibilityLabel="List view"
+              >
+                <Feather
+                  name="list"
+                  size={16}
+                  color={
+                    viewMode === "list"
+                      ? colors.accentPrimary
+                      : colors.textSecondary
+                  }
+                />
+              </Pressable>
+            </View>
+          </View>
+
+          {postsLoading ? (
+            <View style={{ paddingVertical: 48, alignItems: "center" }}>
+              <ActivityIndicator color={colors.accentPrimary} />
+            </View>
+          ) : posts.length === 0 ? (
+            <View style={styles.emptyPosts}>
+              <View
+                style={[
+                  styles.emptyIconWrap,
+                  { backgroundColor: colors.accentTint },
+                ]}
+              >
+                <Feather
+                  name={
+                    postTab === "saved"
+                      ? "bookmark"
+                      : postTab === "posts"
+                      ? "grid"
+                      : "film"
+                  }
+                  size={30}
+                  color={colors.accentPrimary}
+                />
+              </View>
+              <Text style={[styles.emptyTitle, { color: colors.textPrimary }]}>
+                {postTab === "saved" ? "No saved posts" : `No ${postTab} yet`}
+              </Text>
+              <Text style={[styles.emptyDesc, { color: colors.textSecondary }]}>
+                {postTab === "saved"
+                  ? "Posts you save will appear here."
+                  : `Share your first ${postTab === "posts" ? "post" : "reel"} to get started.`}
+              </Text>
+              {postTab !== "saved" && (
+                <Link href="/create" asChild>
+                  <Pressable
+                    style={[
+                      styles.emptyAction,
+                      { backgroundColor: colors.accentPrimary },
+                    ]}
+                  >
+                    <Text style={styles.emptyActionText}>
+                      Create {postTab === "posts" ? "Post" : "Reel"}
+                    </Text>
+                  </Pressable>
+                </Link>
+              )}
+            </View>
+          ) : (
+            <PostGrid
+              posts={posts as Post[]}
+              viewMode={viewMode}
+              gridSize={gridSize}
+              onRequestDelete={(p) => setDeleteTarget(p)}
+              isOwn
+            />
+          )}
+        </View>
       </ScrollView>
+
+      <ActionSheet
+        visible={!!deleteTarget}
+        title="Delete Post"
+        message="This will permanently remove your post."
+        onClose={() => setDeleteTarget(null)}
+        items={
+          deleteTarget
+            ? [
+                {
+                  id: "delete",
+                  label: "Delete Post",
+                  icon: "trash-2",
+                  destructive: true,
+                  onPress: () => handleDelete(deleteTarget.id),
+                },
+              ]
+            : []
+        }
+      />
     </>
   );
 }
 
 const styles = StyleSheet.create({
-  coverWrap: { height: 200, position: "relative" },
-  settingsBtn: { position: "absolute", top: 16, right: 16, width: 38, height: 38, borderRadius: 19, alignItems: "center", justifyContent: "center" },
-  coverEditBtn: { position: "absolute", bottom: 16, right: 16, width: 38, height: 38, borderRadius: 19, alignItems: "center", justifyContent: "center" },
-  avatarRow: { position: "absolute", bottom: -46, left: 18 },
-  profileInfo: { paddingHorizontal: 18, paddingTop: 56, paddingBottom: 14, borderBottomWidth: StyleSheet.hairlineWidth },
-  nameRow: { flexDirection: "row", alignItems: "flex-start", gap: 10, marginBottom: 6 },
-  displayName: { fontSize: 22, fontWeight: "800", letterSpacing: -0.4 },
-  username: { fontSize: 14, marginTop: 2 },
-  editBtn: { flexDirection: "row", alignItems: "center", gap: 5, borderWidth: 1.5, borderRadius: 20, paddingHorizontal: 14, paddingVertical: 6, marginTop: 4 },
-  editBtnText: { fontSize: 13, fontWeight: "600", color: "#7c3aed" },
-  bio: { fontSize: 14, lineHeight: 20, marginBottom: 10 },
-  statsRow: { flexDirection: "row", alignItems: "center", marginVertical: 12, borderRadius: 14, borderWidth: 1, overflow: "hidden" },
-  statBlock: { flex: 1, alignItems: "center", paddingVertical: 12 },
-  statValue: { fontSize: 20, fontWeight: "800", letterSpacing: -0.5 },
-  statLabel: { fontSize: 11, marginTop: 2, fontWeight: "500", textTransform: "uppercase", letterSpacing: 0.3 },
-  statDivider: { width: StyleSheet.hairlineWidth, height: 36 },
-  quickActions: { flexDirection: "row", gap: 8, marginTop: 4 },
-  quickBtn: { flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 5, paddingVertical: 10, borderRadius: 12 },
-  quickBtnText: { color: "#fff", fontWeight: "700", fontSize: 13 },
-  insightBtn: { flexDirection: "row", alignItems: "center", gap: 7, marginTop: 12, paddingHorizontal: 14, paddingVertical: 10, borderRadius: 14, borderWidth: 1 },
-  insightBtnText: { fontSize: 14, fontWeight: "600", flex: 1 },
-  insightCard: { marginTop: 10, borderRadius: 14, borderWidth: 1, padding: 14, gap: 10 },
-  insightHeader: { flexDirection: "row", alignItems: "center", gap: 8 },
-  insightDot: { width: 26, height: 26, borderRadius: 13, alignItems: "center", justifyContent: "center" },
-  insightTitle: { fontSize: 14, fontWeight: "800", letterSpacing: 0.2 },
-  insightText: { fontSize: 14, lineHeight: 21 },
-  tabBar: { flexDirection: "row", alignItems: "center", paddingHorizontal: 14, borderBottomWidth: StyleSheet.hairlineWidth },
-  tabBtn: { flexDirection: "row", alignItems: "center", gap: 5, paddingVertical: 12, paddingRight: 16, position: "relative" },
-  tabLabel: { fontSize: 13, fontWeight: "500" },
-  tabLabelActive: { fontWeight: "700" },
-  tabIndicator: { position: "absolute", bottom: 0, left: 0, right: 0, height: 2, borderRadius: 2 },
-  viewToggle: { flexDirection: "row", gap: 4 },
-  viewBtn: { width: 30, height: 30, borderRadius: 8, alignItems: "center", justifyContent: "center" },
-  gridWrap: { flexDirection: "row", flexWrap: "wrap", gap: 2, padding: 2 },
-  gridItem: { width: GRID_SIZE, height: GRID_SIZE, position: "relative", overflow: "hidden" },
-  gridImg: { width: "100%", height: "100%" },
-  gridVideoIcon: { position: "absolute", top: 6, right: 6, backgroundColor: "rgba(0,0,0,0.55)", borderRadius: 8, padding: 3 },
-  gridOverlay: { position: "absolute", bottom: 0, left: 0, right: 0, height: 44, flexDirection: "row", alignItems: "flex-end", paddingHorizontal: 5, paddingBottom: 5 },
-  gridStats: { flexDirection: "row", alignItems: "center", gap: 3 },
-  gridStatText: { color: "#fff", fontSize: 10, fontWeight: "600" },
-  listCard: { paddingHorizontal: 16, paddingVertical: 14, borderBottomWidth: StyleSheet.hairlineWidth },
-  listCardImg: { width: "100%", borderRadius: 12, marginBottom: 10, backgroundColor: "#000" },
-  listCardContent: { fontSize: 15, lineHeight: 22, marginBottom: 10 },
-  listCardMeta: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
-  listCardTime: { fontSize: 12 },
-  listCardStats: { flexDirection: "row", gap: 12 },
-  listStat: { flexDirection: "row", alignItems: "center", gap: 4 },
-  listStatText: { fontSize: 12 },
-  emptyPosts: { alignItems: "center", paddingVertical: 56, paddingHorizontal: 40, gap: 8 },
-  emptyIconWrap: { width: 72, height: 72, borderRadius: 36, alignItems: "center", justifyContent: "center", marginBottom: 8 },
-  emptyTitle: { fontSize: 17, fontWeight: "700", marginTop: 4 },
-  emptyDesc: { fontSize: 14, textAlign: "center", lineHeight: 20 },
-  emptyAction: { marginTop: 12, backgroundColor: "#7c3aed", paddingHorizontal: 24, paddingVertical: 11, borderRadius: 22 },
-  emptyActionText: { color: "#fff", fontSize: 14, fontWeight: "700" },
-  sheetHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 20, paddingBottom: 14, borderBottomWidth: StyleSheet.hairlineWidth },
-  sheetTitle: { fontSize: 18, fontWeight: "800", letterSpacing: -0.3 },
-  settingsSection: { paddingHorizontal: 18, paddingTop: 24 },
-  settingsSectionTitle: { fontSize: 11, fontWeight: "700", textTransform: "uppercase", letterSpacing: 0.8, marginBottom: 8, marginLeft: 4 },
-  settingsGroup: { borderRadius: 14, borderWidth: StyleSheet.hairlineWidth, overflow: "hidden" },
-  settingsRow: { flexDirection: "row", alignItems: "center", paddingHorizontal: 14, paddingVertical: 13, gap: 12 },
-  settingsIconWrap: { width: 30, height: 30, borderRadius: 8, alignItems: "center", justifyContent: "center", backgroundColor: "#7c3aed22" },
-  settingsLabel: { flex: 1, fontSize: 15, fontWeight: "500" },
-  sheetLogout: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, margin: 18, marginTop: 28, paddingVertical: 14, borderRadius: 14, borderWidth: 1.5, borderColor: "#ef444444", backgroundColor: "#ef444410" },
-  sheetLogoutText: { fontSize: 15, fontWeight: "700", color: "#ef4444" },
+  columnWrap: {
+    width: "100%",
+    alignSelf: "center",
+  },
+  coverWrap: {
+    position: "relative",
+  },
+  coverIconBtn: {
+    position: "absolute",
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  avatarFrame: {
+    position: "absolute",
+    bottom: -44,
+    left: 16,
+    borderRadius: 48,
+    borderWidth: 4,
+  },
+  profileInfo: {
+    paddingHorizontal: 16,
+    paddingTop: 54,
+    paddingBottom: 16,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+  },
+  nameRow: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 10,
+    marginBottom: 8,
+  },
+  displayName: {
+    fontSize: 22,
+    fontWeight: "700",
+    letterSpacing: -0.4,
+  },
+  username: {
+    fontSize: 14,
+    marginTop: 2,
+  },
+  editBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    borderWidth: 1.5,
+    borderRadius: RADIUS.pill,
+    paddingHorizontal: 14,
+    height: 40,
+  },
+  editBtnText: {
+    fontSize: 13.5,
+    fontWeight: "600",
+  },
+  bio: {
+    fontSize: 14.5,
+    lineHeight: 21,
+    marginBottom: 8,
+  },
+  bioRefreshBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    minHeight: 36,
+    alignSelf: "flex-start",
+  },
+  bioRefreshText: {
+    fontSize: 12.5,
+    fontWeight: "600",
+  },
+  aiBox: {
+    marginTop: 8,
+    padding: 12,
+    borderRadius: RADIUS.md,
+    borderWidth: StyleSheet.hairlineWidth,
+  },
+  statsRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginVertical: 14,
+    borderRadius: RADIUS.md,
+    borderWidth: StyleSheet.hairlineWidth,
+    overflow: "hidden",
+  },
+  statBlock: {
+    flex: 1,
+    alignItems: "center",
+    paddingVertical: 12,
+  },
+  statValue: {
+    fontSize: 19,
+    fontWeight: "700",
+    letterSpacing: -0.4,
+    fontVariant: ["tabular-nums"],
+  },
+  statLabel: {
+    fontSize: 11.5,
+    marginTop: 2,
+    fontWeight: "500",
+  },
+  statDivider: {
+    width: StyleSheet.hairlineWidth,
+    height: 34,
+  },
+  quickActions: {
+    flexDirection: "row",
+    gap: 8,
+  },
+  quickBtn: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    height: 44,
+    borderRadius: RADIUS.md,
+  },
+  quickBtnText: {
+    color: "#FFFFFF",
+    fontWeight: "600",
+    fontSize: 13.5,
+  },
+  insightBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    marginTop: 12,
+    paddingHorizontal: 14,
+    minHeight: 44,
+    borderRadius: RADIUS.md,
+    borderWidth: StyleSheet.hairlineWidth,
+  },
+  insightBtnText: {
+    fontSize: 14,
+    fontWeight: "600",
+    flex: 1,
+  },
+  insightCard: {
+    marginTop: 10,
+    borderRadius: RADIUS.md,
+    borderWidth: StyleSheet.hairlineWidth,
+    padding: 14,
+    gap: 8,
+  },
+  insightHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  insightDot: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  insightTitle: {
+    fontSize: 14,
+    fontWeight: "700",
+  },
+  insightText: {
+    fontSize: 14,
+    lineHeight: 20,
+  },
+  tabBar: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 14,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+  },
+  tabBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    height: 48,
+    paddingRight: 18,
+    position: "relative",
+  },
+  tabLabel: {
+    fontSize: 13.5,
+    fontWeight: "500",
+  },
+  tabLabelActive: {
+    fontWeight: "700",
+  },
+  tabIndicator: {
+    position: "absolute",
+    bottom: 0,
+    left: 0,
+    right: 14,
+    height: 2,
+    borderRadius: 2,
+  },
+  viewToggle: {
+    flexDirection: "row",
+    gap: 4,
+  },
+  viewBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: RADIUS.sm,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  gridWrap: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 2,
+    padding: 2,
+  },
+  gridItem: {
+    position: "relative",
+    overflow: "hidden",
+  },
+  gridImg: {
+    width: "100%",
+    height: "100%",
+  },
+  gridVideoIcon: {
+    position: "absolute",
+    top: 6,
+    right: 6,
+    backgroundColor: "rgba(0,0,0,0.6)",
+    borderRadius: 6,
+    padding: 4,
+  },
+  gridOverlay: {
+    position: "absolute",
+    bottom: 0,
+    left: 0,
+    right: 0,
+    height: 40,
+    flexDirection: "row",
+    alignItems: "flex-end",
+    paddingHorizontal: 6,
+    paddingBottom: 6,
+  },
+  gridStats: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 3,
+  },
+  gridStatText: {
+    color: "#FFFFFF",
+    fontSize: 10.5,
+    fontWeight: "600",
+    fontVariant: ["tabular-nums"],
+  },
+  listCard: {
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+  },
+  listCardImg: {
+    width: "100%",
+    borderRadius: RADIUS.md,
+    marginBottom: 10,
+    backgroundColor: "#000",
+  },
+  listCardContent: {
+    fontSize: 15,
+    lineHeight: 22,
+    marginBottom: 10,
+  },
+  listCardMeta: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  listCardTime: {
+    fontSize: 12,
+  },
+  listCardStats: {
+    flexDirection: "row",
+    gap: 14,
+  },
+  listStat: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+  },
+  listStatText: {
+    fontSize: 12.5,
+    fontVariant: ["tabular-nums"],
+  },
+  emptyPosts: {
+    alignItems: "center",
+    paddingVertical: 56,
+    paddingHorizontal: 36,
+    gap: 8,
+  },
+  emptyIconWrap: {
+    width: 72,
+    height: 72,
+    borderRadius: 36,
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 8,
+  },
+  emptyTitle: {
+    fontSize: 17,
+    fontWeight: "700",
+    marginTop: 4,
+  },
+  emptyDesc: {
+    fontSize: 14,
+    textAlign: "center",
+    lineHeight: 20,
+  },
+  emptyAction: {
+    marginTop: 12,
+    paddingHorizontal: 24,
+    height: 44,
+    borderRadius: RADIUS.pill,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  emptyActionText: {
+    color: "#FFFFFF",
+    fontSize: 14.5,
+    fontWeight: "600",
+  },
 });

@@ -1,61 +1,60 @@
-import React, { useState, useRef } from "react";
+import React, { useRef, useState } from "react";
 import {
-  View, Text, StyleSheet, Pressable, FlatList, ActivityIndicator,
-  Platform, Image, Alert, ScrollView, Dimensions, Animated,
+  ActivityIndicator,
+  FlatList,
+  Image,
+  Platform,
+  Pressable,
+  ScrollView,
+  Share,
+  StyleSheet,
+  Text,
+  View,
+  useWindowDimensions,
 } from "react-native";
 import { Video, ResizeMode } from "expo-av";
 import { LinearGradient } from "expo-linear-gradient";
-import { Feather } from "@expo/vector-icons";
-import { AntDesign } from "@expo/vector-icons";
-import { Ionicons } from "@expo/vector-icons";
+import { AntDesign, Feather } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/lib/auth";
 import { useColors } from "@/hooks/useColors";
-import { supabase } from "@/lib/supabase";
-import { Share } from "react-native";
+import { Avatar } from "@/components/Avatar";
+import { ActionSheet, type ActionSheetItem } from "@/components/ActionSheet";
+import { GlassSurface } from "@/components/GlassSurface";
+import { useToast } from "@/components/Toast";
+import { haptics } from "@/lib/motion";
+import { clampMediaAspectRatio } from "@/lib/mediaUtils";
+import { RADIUS } from "@/constants/colors";
 import {
-  fetchProfile, fetchUserPosts, fetchPost, followUser, unfollowUser, isFollowing,
-  blockUser, getOrCreateDM, resolveMediaUrl, formatCount, timeAgo,
-  deletePost, updatePostVisibility,
-  type Post, type Profile,
+  blockUser,
+  createReport,
+  deletePost,
+  fetchProfile,
+  fetchUserPosts,
+  followUser,
+  formatCount,
+  getOrCreateDM,
+  isFollowing,
+  resolveMediaUrl,
+  timeAgo,
+  unfollowUser,
+  updatePostVisibility,
+  type Post,
 } from "@/lib/db";
 
-const { width: SCREEN_WIDTH } = Dimensions.get("window");
-const isTablet = SCREEN_WIDTH >= 768;
-const GRID_COLS = isTablet ? 4 : 3;
-const GRID_GAP = 2;
-const GRID_SIZE = (SCREEN_WIDTH - GRID_GAP * (GRID_COLS + 1)) / GRID_COLS;
-
-// ─── Avatar ───────────────────────────────────────────────────────────────────
-
-function Avatar({ name, size, avatarUrl }: { name: string; size: number; avatarUrl?: string | null }) {
-  const [err, setErr] = useState(false);
-  const initials = name.split(" ").map(w => w[0]).join("").slice(0, 2).toUpperCase();
-  if (avatarUrl && !err) {
-    return (
-      <View style={{ width: size, height: size, borderRadius: size / 2, borderWidth: 3, borderColor: "#fff", overflow: "hidden" }}>
-        <Image source={{ uri: resolveMediaUrl(avatarUrl) }} style={{ width: "100%", height: "100%" }}
-          onError={() => setErr(true)} resizeMode="cover" />
-      </View>
-    );
-  }
-  return (
-    <LinearGradient colors={["#7c3aed", "#4f46e5"]}
-      style={{ width: size, height: size, borderRadius: size / 2, alignItems: "center", justifyContent: "center", borderWidth: 3, borderColor: "#fff" }}>
-      <Text style={{ color: "#fff", fontSize: size * 0.35, fontWeight: "800" }}>{initials}</Text>
-    </LinearGradient>
-  );
-}
-
-// ─── Profile Post Card (list view) ───────────────────────────────────────────
-
-function ProfilePostCard({ post, isOwn, userId, colors, onDeleted }: {
-  post: Post; isOwn: boolean; userId: string; colors: any; onDeleted?: (id: string) => void;
+function ProfilePostCard({
+  post,
+  isOwn,
+  onOpenOptions,
+}: {
+  post: Post;
+  isOwn: boolean;
+  onOpenOptions: (post: Post) => void;
 }) {
-  const qc = useQueryClient();
-  const [visibility, setVisibility] = useState(post.visibility ?? "public");
+  const colors = useColors();
+  const router = useRouter();
   const videoRef = useRef<Video>(null);
   const [videoPlaying, setVideoPlaying] = useState(false);
 
@@ -63,106 +62,65 @@ function ProfilePostCard({ post, isOwn, userId, colors, onDeleted }: {
   const isVideo = post.media_type === "video";
   const isImage = post.media_type === "image";
   const isText = !isVideo && !isImage;
-  const aspectRatio = post.media_width && post.media_height
-    ? Math.min(Math.max(post.media_width / post.media_height, 0.5625), 1.91)
-    : 1;
+  const aspectRatio = clampMediaAspectRatio(post.media_width, post.media_height);
 
-  const handleMore = () => {
-    if (!isOwn) return;
-    Alert.alert("Post Options", undefined, [
-      {
-        text: "Change Visibility",
-        onPress: () => {
-          Alert.alert("Set Visibility", "Who can see this post?", [
-            { text: "Public", onPress: async () => { setVisibility("public"); await updatePostVisibility(post.id, userId, "public"); qc.invalidateQueries({ queryKey: ["user-posts"] }); } },
-            { text: "Followers Only", onPress: async () => { setVisibility("followers"); await updatePostVisibility(post.id, userId, "followers"); qc.invalidateQueries({ queryKey: ["user-posts"] }); } },
-            { text: "Private", onPress: async () => { setVisibility("private"); await updatePostVisibility(post.id, userId, "private"); qc.invalidateQueries({ queryKey: ["user-posts"] }); } },
-            { text: "Cancel", style: "cancel" },
-          ]);
-        }
-      },
-      {
-        text: "Delete Post", style: "destructive",
-        onPress: () => {
-          Alert.alert("Delete Post", "This cannot be undone.", [
-            { text: "Cancel", style: "cancel" },
-            {
-              text: "Delete", style: "destructive",
-              onPress: async () => {
-                try {
-                  await deletePost(post.id, userId);
-                  onDeleted?.(post.id);
-                  qc.invalidateQueries({ queryKey: ["user-posts"] });
-                } catch { Alert.alert("Error", "Could not delete post"); }
-              }
-            },
-          ]);
-        }
-      },
-      { text: "Cancel", style: "cancel" },
-    ]);
-  };
+  const metaParts = [
+    timeAgo(post.created_at),
+    isVideo ? "Video" : isImage && mediaUrls.length > 1 ? `${mediaUrls.length} Photos` : null,
+    isOwn ? (post.visibility || "public") : null,
+  ].filter(Boolean);
 
   return (
-    <View style={[PC.card, { backgroundColor: colors.card, borderColor: colors.border }, isText && PC.textCard]}>
-      {/* Left accent for text posts */}
-      {isText && <View style={[PC.textAccent, { backgroundColor: colors.primary }]} />}
-
-      {/* Header */}
+    <Pressable
+      onPress={() => router.push(`/post/${post.id}` as any)}
+      style={[
+        PC.card,
+        {
+          backgroundColor: colors.bgCanvas,
+          borderBottomColor: colors.separator,
+        },
+      ]}
+    >
       <View style={PC.cardHeader}>
-        <View style={{ flex: 1 }}>
-          <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-            {isVideo && (
-              <View style={PC.typePill}>
-                <Feather name="video" size={10} color="#fff" />
-                <Text style={PC.typePillText}>Video</Text>
-              </View>
-            )}
-            {isText && (
-              <View style={[PC.typePill, { backgroundColor: "rgba(99,102,241,0.8)" }]}>
-                <Feather name="type" size={10} color="#fff" />
-                <Text style={PC.typePillText}>Text</Text>
-              </View>
-            )}
-            {isImage && mediaUrls.length > 1 && (
-              <View style={[PC.typePill, { backgroundColor: "rgba(16,185,129,0.8)" }]}>
-                <Feather name="image" size={10} color="#fff" />
-                <Text style={PC.typePillText}>{mediaUrls.length} Photos</Text>
-              </View>
-            )}
-          </View>
-          <Text style={[PC.cardTime, { color: colors.mutedForeground }]}>{timeAgo(post.created_at)}</Text>
-        </View>
-        <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-          {isOwn && (
-            <View style={{ flexDirection: "row", alignItems: "center", gap: 3 }}>
-              <Feather
-                name={visibility === "public" ? "globe" : visibility === "followers" ? "users" : "lock"}
-                size={12} color={colors.mutedForeground}
-              />
-              <Text style={{ color: colors.mutedForeground, fontSize: 11, textTransform: "capitalize" }}>{visibility}</Text>
-            </View>
-          )}
-          {isOwn && (
-            <Pressable hitSlop={8} onPress={handleMore}>
-              <Feather name="more-horizontal" size={18} color={colors.mutedForeground} />
-            </Pressable>
-          )}
-        </View>
+        <Text style={[PC.cardMetaText, { color: colors.textSecondary }]}>
+          {metaParts.join(" · ")}
+        </Text>
+        {isOwn && (
+          <Pressable
+            style={PC.moreBtn}
+            onPress={() => onOpenOptions(post)}
+            accessibilityRole="button"
+            accessibilityLabel="Post options"
+          >
+            <Feather name="more-horizontal" size={18} color={colors.textSecondary} />
+          </Pressable>
+        )}
       </View>
 
-      {/* Text content */}
-      {!!post.content && (
-        isText ? (
-          <View style={[PC.textBody, { backgroundColor: colors.secondary, borderColor: colors.border }]}>
-            <Text style={[PC.textBodyText, { color: colors.foreground }]}>{post.content}</Text>
+      {!!post.content &&
+        (isText ? (
+          <View
+            style={[
+              PC.textBody,
+              {
+                backgroundColor: colors.bgElevated,
+                borderColor: colors.separator,
+              },
+            ]}
+          >
+            <Text style={[PC.textBodyText, { color: colors.textPrimary }]}>
+              {post.content}
+            </Text>
           </View>
         ) : (
-          <Text style={[PC.caption, { color: colors.foreground }]} numberOfLines={3}>{post.content}</Text>
-        )
-      )}
+          <Text
+            style={[PC.caption, { color: colors.textPrimary }]}
+            numberOfLines={3}
+          >
+            {post.content}
+          </Text>
+        ))}
 
-      {/* Video */}
       {isVideo && mediaUrls.length > 0 && (
         <View style={[PC.mediaBox, { aspectRatio }]}>
           <Video
@@ -175,210 +133,309 @@ function ProfilePostCard({ post, isOwn, userId, colors, onDeleted }: {
             useNativeControls={videoPlaying}
           />
           {!videoPlaying && (
-            <Pressable style={PC.playOverlay} onPress={() => setVideoPlaying(true)}>
-              <LinearGradient colors={["rgba(0,0,0,0.3)", "rgba(0,0,0,0.6)"]} style={StyleSheet.absoluteFill} />
+            <Pressable
+              style={PC.playOverlay}
+              onPress={() => setVideoPlaying(true)}
+            >
               <View style={PC.playBtn}>
-                <Feather name="play" size={28} color="#fff" />
-              </View>
-              <View style={PC.videoDuration}>
-                <Feather name="video" size={11} color="#fff" />
-                <Text style={{ color: "#fff", fontSize: 11, fontWeight: "600" }}>Tap to Play</Text>
+                <Feather name="play" size={26} color="#FFFFFF" />
               </View>
             </Pressable>
           )}
         </View>
       )}
 
-      {/* Images */}
       {isImage && mediaUrls.length > 0 && (
         <View style={[PC.mediaBox, { aspectRatio }]}>
-          <Image source={{ uri: mediaUrls[0] }} style={StyleSheet.absoluteFill} resizeMode="cover" />
+          <Image
+            source={{ uri: mediaUrls[0] }}
+            style={StyleSheet.absoluteFill}
+            resizeMode="cover"
+          />
           {mediaUrls.length > 1 && (
             <View style={PC.imageMore}>
-              <Text style={{ color: "#fff", fontWeight: "800", fontSize: 13 }}>+{mediaUrls.length - 1}</Text>
+              <Text style={{ color: "#FFFFFF", fontWeight: "700", fontSize: 12 }}>
+                +{mediaUrls.length - 1}
+              </Text>
             </View>
           )}
         </View>
       )}
 
-      {/* Stats */}
-      <View style={[PC.statsRow, { borderTopColor: colors.border }]}>
+      <View style={PC.statsRow}>
         <View style={PC.statItem}>
-          <AntDesign name={"hearto" as any} size={14} color={colors.mutedForeground} />
-          <Text style={[PC.statText, { color: colors.mutedForeground }]}>{formatCount(post.likes_count)}</Text>
+          <AntDesign
+            name={"hearto" as any}
+            size={14}
+            color={colors.textSecondary}
+          />
+          <Text style={[PC.statText, { color: colors.textSecondary }]}>
+            {formatCount(post.likes_count)}
+          </Text>
         </View>
         <View style={PC.statItem}>
-          <Feather name="message-circle" size={14} color={colors.mutedForeground} />
-          <Text style={[PC.statText, { color: colors.mutedForeground }]}>{formatCount(post.comments_count)}</Text>
+          <Feather name="message-circle" size={14} color={colors.textSecondary} />
+          <Text style={[PC.statText, { color: colors.textSecondary }]}>
+            {formatCount(post.comments_count)}
+          </Text>
         </View>
         <View style={PC.statItem}>
-          <Feather name="eye" size={14} color={colors.mutedForeground} />
-          <Text style={[PC.statText, { color: colors.mutedForeground }]}>{formatCount(post.views_count)}</Text>
+          <Feather name="eye" size={14} color={colors.textSecondary} />
+          <Text style={[PC.statText, { color: colors.textSecondary }]}>
+            {formatCount(post.views_count)}
+          </Text>
         </View>
       </View>
-    </View>
+    </Pressable>
   );
 }
 
 const PC = StyleSheet.create({
   card: {
-    marginHorizontal: 12, borderRadius: 16,
-    borderWidth: StyleSheet.hairlineWidth, overflow: "hidden",
-    shadowColor: "#000", shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.05, shadowRadius: 6, elevation: 1,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    borderBottomWidth: StyleSheet.hairlineWidth,
   },
-  textCard: {},
-  textAccent: { position: "absolute", left: 0, top: 0, bottom: 0, width: 3 },
-  cardHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", padding: 12, paddingBottom: 8 },
-  cardTime: { fontSize: 12, marginTop: 2 },
-  typePill: {
-    flexDirection: "row", alignItems: "center", gap: 3,
-    backgroundColor: "rgba(0,0,0,0.5)", borderRadius: 6,
-    paddingHorizontal: 7, paddingVertical: 2,
+  cardHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 8,
   },
-  typePillText: { color: "#fff", fontSize: 10, fontWeight: "700" },
-  caption: { paddingHorizontal: 12, paddingBottom: 10, fontSize: 14, lineHeight: 21 },
+  cardMetaText: {
+    fontSize: 12.5,
+    fontWeight: "500",
+    textTransform: "capitalize",
+  },
+  moreBtn: {
+    width: 44,
+    height: 36,
+    alignItems: "flex-end",
+    justifyContent: "center",
+  },
+  caption: {
+    fontSize: 15,
+    lineHeight: 22,
+    marginBottom: 10,
+  },
   textBody: {
-    margin: 12, marginTop: 0, borderRadius: 12, padding: 14,
-    borderWidth: 1,
+    borderRadius: RADIUS.md,
+    padding: 14,
+    borderWidth: StyleSheet.hairlineWidth,
+    marginBottom: 10,
   },
   textBodyText: { fontSize: 16, lineHeight: 24, fontWeight: "500" },
-  mediaBox: { width: "100%", overflow: "hidden", backgroundColor: "#111" },
-  playOverlay: { ...StyleSheet.absoluteFillObject, alignItems: "center", justifyContent: "center" },
-  playBtn: {
-    width: 64, height: 64, borderRadius: 32,
-    backgroundColor: "rgba(124,58,237,0.85)",
-    alignItems: "center", justifyContent: "center",
-    shadowColor: "#7c3aed", shadowOpacity: 0.5, shadowRadius: 12,
+  mediaBox: {
+    width: "100%",
+    borderRadius: RADIUS.md,
+    overflow: "hidden",
+    backgroundColor: "#111",
+    marginBottom: 10,
   },
-  videoDuration: {
-    position: "absolute", bottom: 10, left: 10,
-    flexDirection: "row", alignItems: "center", gap: 4,
-    backgroundColor: "rgba(0,0,0,0.6)", borderRadius: 8,
-    paddingHorizontal: 8, paddingVertical: 4,
+  playOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(0,0,0,0.32)",
+  },
+  playBtn: {
+    width: 58,
+    height: 58,
+    borderRadius: 29,
+    backgroundColor: "rgba(109,40,217,0.88)",
+    alignItems: "center",
+    justifyContent: "center",
   },
   imageMore: {
-    position: "absolute", top: 0, right: 0,
-    backgroundColor: "rgba(0,0,0,0.6)",
-    paddingHorizontal: 12, paddingVertical: 8, borderBottomLeftRadius: 12,
+    position: "absolute",
+    top: 8,
+    right: 8,
+    backgroundColor: "rgba(0,0,0,0.68)",
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: RADIUS.sm,
   },
   statsRow: {
-    flexDirection: "row", alignItems: "center", gap: 18,
-    padding: 12, paddingTop: 10, borderTopWidth: StyleSheet.hairlineWidth,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 18,
+    paddingTop: 4,
   },
   statItem: { flexDirection: "row", alignItems: "center", gap: 5 },
-  statText: { fontSize: 13, fontWeight: "500" },
+  statText: {
+    fontSize: 13,
+    fontWeight: "500",
+    fontVariant: ["tabular-nums"],
+  },
 });
 
-// ─── Grid Item ────────────────────────────────────────────────────────────────
-
-function GridItem({ post, router, colors, isOwn, userId, onDeleted }: {
-  post: Post; router: any; colors: any; isOwn: boolean; userId: string; onDeleted?: (id: string) => void;
+function GridItem({
+  post,
+  gridSize,
+  router,
+  isOwn,
+  onOpenOptions,
+}: {
+  post: Post;
+  gridSize: number;
+  router: any;
+  isOwn: boolean;
+  onOpenOptions: (post: Post) => void;
 }) {
+  const colors = useColors();
   const media = post.media_urls?.[0] ? resolveMediaUrl(post.media_urls[0]) : null;
   const isVideo = post.media_type === "video";
-  const isText = !post.media_type && (!post.media_urls || post.media_urls.length === 0);
-
-  const handleLongPress = () => {
-    if (!isOwn) return;
-    Alert.alert("Post Options", undefined, [
-      {
-        text: "Change Visibility",
-        onPress: () => {
-          Alert.alert("Set Visibility", undefined, [
-            { text: "Public", onPress: async () => { await updatePostVisibility(post.id, userId, "public"); } },
-            { text: "Followers Only", onPress: async () => { await updatePostVisibility(post.id, userId, "followers"); } },
-            { text: "Private", onPress: async () => { await updatePostVisibility(post.id, userId, "private"); } },
-            { text: "Cancel", style: "cancel" },
-          ]);
-        }
-      },
-      {
-        text: "Delete", style: "destructive",
-        onPress: () => {
-          Alert.alert("Delete Post?", "This cannot be undone.", [
-            { text: "Cancel", style: "cancel" },
-            { text: "Delete", style: "destructive", onPress: async () => {
-              await deletePost(post.id, userId);
-              onDeleted?.(post.id);
-            }},
-          ]);
-        }
-      },
-      { text: "Cancel", style: "cancel" },
-    ]);
-  };
+  const isText =
+    !post.media_type && (!post.media_urls || post.media_urls.length === 0);
 
   return (
     <Pressable
-      style={[GS.item, { width: GRID_SIZE, height: GRID_SIZE }]}
+      style={[
+        GS.item,
+        {
+          width: gridSize,
+          height: gridSize,
+          backgroundColor: colors.bgElevated,
+        },
+      ]}
       onPress={() => router.push(`/post/${post.id}` as any)}
-      onLongPress={handleLongPress}
+      onLongPress={() => {
+        if (isOwn) {
+          haptics.medium();
+          onOpenOptions(post);
+        }
+      }}
     >
       {isText ? (
-        <LinearGradient colors={["#1e1b4b", "#2d1b69"]} style={StyleSheet.absoluteFill}>
-          <View style={{ flex: 1, padding: 8, justifyContent: "center" }}>
-            <Text style={{ color: "#fff", fontSize: 11, lineHeight: 16 }} numberOfLines={4}>{post.content}</Text>
-          </View>
-        </LinearGradient>
+        <View
+          style={[
+            StyleSheet.absoluteFill,
+            {
+              backgroundColor: colors.bgElevated,
+              padding: 10,
+              justifyContent: "center",
+            },
+          ]}
+        >
+          <Text
+            style={{ color: colors.textPrimary, fontSize: 12, lineHeight: 16 }}
+            numberOfLines={4}
+          >
+            {post.content}
+          </Text>
+        </View>
       ) : media ? (
-        <Image source={{ uri: media }} style={StyleSheet.absoluteFill} resizeMode="cover" />
+        <Image
+          source={{ uri: media }}
+          style={StyleSheet.absoluteFill}
+          resizeMode="cover"
+        />
       ) : (
-        <View style={[StyleSheet.absoluteFill, { backgroundColor: colors.secondary, alignItems: "center", justifyContent: "center" }]}>
-          <Feather name="file-text" size={20} color={colors.mutedForeground} />
+        <View
+          style={[
+            StyleSheet.absoluteFill,
+            {
+              backgroundColor: colors.bgElevated,
+              alignItems: "center",
+              justifyContent: "center",
+            },
+          ]}
+        >
+          <Feather name="file-text" size={20} color={colors.textTertiary} />
         </View>
       )}
 
       {isVideo && (
         <View style={GS.videoBadge}>
-          <Feather name="play" size={11} color="#fff" />
+          <Feather name="play" size={11} color="#FFFFFF" />
         </View>
       )}
 
       {post.media_urls && post.media_urls.length > 1 && (
         <View style={GS.multiImgBadge}>
-          <Feather name="copy" size={10} color="#fff" />
+          <Feather name="copy" size={10} color="#FFFFFF" />
         </View>
       )}
 
-      <LinearGradient colors={["transparent", "rgba(0,0,0,0.55)"]} style={GS.overlay}>
-        <AntDesign name="heart" size={10} color="#fff" />
-        <Text style={{ color: "#fff", fontSize: 10, fontWeight: "700" }}>{formatCount(post.likes_count)}</Text>
+      <LinearGradient
+        colors={["transparent", "rgba(0,0,0,0.58)"]}
+        style={GS.overlay}
+      >
+        <AntDesign name="heart" size={10} color="#FFFFFF" />
+        <Text
+          style={{
+            color: "#FFFFFF",
+            fontSize: 10.5,
+            fontWeight: "700",
+            fontVariant: ["tabular-nums"],
+          }}
+        >
+          {formatCount(post.likes_count)}
+        </Text>
       </LinearGradient>
     </Pressable>
   );
 }
 
 const GS = StyleSheet.create({
-  item: { position: "relative", overflow: "hidden", backgroundColor: "#111" },
+  item: { position: "relative", overflow: "hidden" },
   videoBadge: {
-    position: "absolute", top: 5, right: 5,
-    backgroundColor: "rgba(0,0,0,0.6)", borderRadius: 8, padding: 3,
+    position: "absolute",
+    top: 6,
+    right: 6,
+    backgroundColor: "rgba(0,0,0,0.6)",
+    borderRadius: 6,
+    padding: 4,
   },
   multiImgBadge: {
-    position: "absolute", top: 5, left: 5,
-    backgroundColor: "rgba(0,0,0,0.6)", borderRadius: 6, padding: 3,
+    position: "absolute",
+    top: 6,
+    left: 6,
+    backgroundColor: "rgba(0,0,0,0.6)",
+    borderRadius: 6,
+    padding: 4,
   },
   overlay: {
-    position: "absolute", bottom: 0, left: 0, right: 0, height: 30,
-    flexDirection: "row", alignItems: "flex-end",
-    paddingHorizontal: 5, paddingBottom: 4, gap: 3,
+    position: "absolute",
+    bottom: 0,
+    left: 0,
+    right: 0,
+    height: 32,
+    flexDirection: "row",
+    alignItems: "flex-end",
+    paddingHorizontal: 6,
+    paddingBottom: 5,
+    gap: 4,
   },
 });
-
-// ─── Main Screen ──────────────────────────────────────────────────────────────
 
 export default function UserProfileScreen() {
   const { userId } = useLocalSearchParams<{ userId: string }>();
   const { user } = useAuth();
   const colors = useColors();
+  const { showToast } = useToast();
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const qc = useQueryClient();
+  const { width } = useWindowDimensions();
+
   const [postTab, setPostTab] = useState<"posts" | "reels">("posts");
   const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
   const [followLoading, setFollowLoading] = useState(false);
   const [deletedIds, setDeletedIds] = useState<Set<string>>(new Set());
+
+  const [profileMenuOpen, setProfileMenuOpen] = useState(false);
+  const [blockConfirmOpen, setBlockConfirmOpen] = useState(false);
+  const [reportSheetOpen, setReportSheetOpen] = useState(false);
+  const [postOptionsTarget, setPostOptionsTarget] = useState<Post | null>(null);
+  const [visibilityTarget, setVisibilityTarget] = useState<Post | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<Post | null>(null);
+
+  const isTablet = width >= 768;
+  const cols = isTablet ? 4 : 3;
+  const colWidth = Math.min(width, 720);
+  const gridGap = 2;
+  const gridSize = Math.floor((colWidth - gridGap * (cols + 1)) / cols);
 
   const { data: profile, isLoading: profileLoading } = useQuery({
     queryKey: ["profile", userId],
@@ -388,11 +445,12 @@ export default function UserProfileScreen() {
 
   const { data: posts = [] } = useQuery({
     queryKey: ["user-posts", userId, postTab],
-    queryFn: () => fetchUserPosts(userId as string, user?.id, postTab === "reels"),
+    queryFn: () =>
+      fetchUserPosts(userId as string, user?.id, postTab === "reels"),
     enabled: !!userId,
   });
 
-  const postList = (posts as Post[]).filter(p => !deletedIds.has(p.id));
+  const postList = (posts as Post[]).filter((p) => !deletedIds.has(p.id));
 
   const { data: following = false, refetch: refetchFollow } = useQuery({
     queryKey: ["is-following", user?.id, userId],
@@ -401,12 +459,32 @@ export default function UserProfileScreen() {
   });
 
   if (profileLoading) {
-    return <View style={{ flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: colors.background }}><ActivityIndicator color="#7c3aed" /></View>;
+    return (
+      <View
+        style={{
+          flex: 1,
+          alignItems: "center",
+          justifyContent: "center",
+          backgroundColor: colors.bgCanvas,
+        }}
+      >
+        <ActivityIndicator color={colors.accentPrimary} />
+      </View>
+    );
   }
   if (!profile) {
-    return <View style={{ flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: colors.background }}>
-      <Text style={{ color: colors.mutedForeground }}>User not found</Text>
-    </View>;
+    return (
+      <View
+        style={{
+          flex: 1,
+          alignItems: "center",
+          justifyContent: "center",
+          backgroundColor: colors.bgCanvas,
+        }}
+      >
+        <Text style={{ color: colors.textSecondary }}>User not found</Text>
+      </View>
+    );
   }
 
   const isOwnProfile = user?.id === userId;
@@ -417,150 +495,328 @@ export default function UserProfileScreen() {
     try {
       if (following) await unfollowUser(user.id, userId as string);
       else await followUser(user.id, userId as string);
+      haptics.selection();
       refetchFollow();
       qc.invalidateQueries({ queryKey: ["profile", userId] });
-    } finally { setFollowLoading(false); }
+    } finally {
+      setFollowLoading(false);
+    }
   };
 
   const handleMessage = async () => {
     if (!user?.id) return;
     try {
       const convoId = await getOrCreateDM(user.id, userId as string);
-      router.push({ pathname: `/chat/${convoId}`, params: { peerName: profile.display_name, peerId: userId } } as any);
-    } catch { Alert.alert("Error", "Could not start conversation"); }
+      router.push({
+        pathname: `/chat/${convoId}`,
+        params: {
+          peerName: profile.display_name,
+          peerAvatar: profile.avatar_url ?? "",
+          peerId: userId,
+        },
+      } as any);
+    } catch {
+      showToast("Could not start conversation", "error");
+    }
   };
 
-  const handleBlock = () => {
-    Alert.alert("Block User", `Block @${profile.username}? They won't be able to message you.`, [
-      { text: "Cancel", style: "cancel" },
-      { text: "Block", style: "destructive", onPress: async () => {
-        if (!user?.id) return;
-        await blockUser(user.id, userId as string);
-        router.back();
-      }},
-    ]);
-  };
-
-  const handleReport = () => {
-    Alert.alert("Report User", `Why are you reporting @${profile.username}?`, [
-      { text: "Spam", onPress: () => submitReport("spam") },
-      { text: "Harassment", onPress: () => submitReport("harassment") },
-      { text: "Inappropriate content", onPress: () => submitReport("inappropriate") },
-      { text: "Cancel", style: "cancel" },
-    ]);
-  };
-
-  const submitReport = async (reason: string) => {
+  const submitReport = async (
+    reason: "spam" | "harassment" | "inappropriate" | "other",
+  ) => {
     if (!user?.id) return;
     try {
-      await supabase.from("notifications").insert({
-        user_id: userId, actor_id: user.id, type: "report",
-        post_id: null, comment_id: null, is_read: false,
-      } as any);
-    } catch {}
-    Alert.alert("Reported", "Thank you. Our team will review this report.");
+      await createReport(
+        user.id,
+        null,
+        reason,
+        `Reported user @${profile.username} (${userId})`,
+      );
+      showToast("Report submitted. Thank you.", "success");
+    } catch {
+      showToast("Could not submit report right now", "error");
+    }
   };
 
-  const handleDeleted = (id: string) => {
-    setDeletedIds(prev => new Set([...prev, id]));
+  const handleChangeVisibility = async (
+    post: Post,
+    vis: "public" | "followers" | "private",
+  ) => {
+    if (!user?.id) return;
+    try {
+      await updatePostVisibility(post.id, user.id, vis);
+      qc.invalidateQueries({ queryKey: ["user-posts"] });
+      showToast(`Visibility set to ${vis}`, "success");
+    } catch {
+      showToast("Could not update visibility", "error");
+    }
+  };
+
+  const handleDeletePost = async (post: Post) => {
+    if (!user?.id) return;
+    try {
+      await deletePost(post.id, user.id);
+      setDeletedIds((prev) => new Set([...prev, post.id]));
+      qc.invalidateQueries({ queryKey: ["user-posts"] });
+      showToast("Post deleted", "success");
+    } catch {
+      showToast("Could not delete post", "error");
+    }
   };
 
   const ListHeader = () => (
     <>
-      {/* Cover */}
-      <LinearGradient colors={["#1e1b4b", "#2d1b69", "#1e1b4b"]} style={[styles.cover, { backgroundColor: colors.secondary }]}>
-        {profile.cover_url && <Image source={{ uri: resolveMediaUrl(profile.cover_url) }} style={StyleSheet.absoluteFill} resizeMode="cover" />}
+      <LinearGradient
+        colors={
+          colors.isDark
+            ? ["#1A103D", "#2E1065", "#121216"]
+            : ["#EDE9FE", "#DDD6FE", "#C4B5FD"]
+        }
+        style={styles.cover}
+      >
+        {profile.cover_url && (
+          <Image
+            source={{ uri: resolveMediaUrl(profile.cover_url) }}
+            style={StyleSheet.absoluteFill}
+            resizeMode="cover"
+          />
+        )}
         {isOwnProfile && (
-          <Pressable onPress={() => router.push("/edit-profile" as any)} style={[styles.coverEditBtn, { backgroundColor: "rgba(0,0,0,0.35)" }]} hitSlop={8}>
-            <Feather name="camera" size={16} color="#fff" />
+          <Pressable
+            onPress={() => router.push("/edit-profile" as any)}
+            style={styles.coverEditBtn}
+            accessibilityRole="button"
+            accessibilityLabel="Edit cover"
+          >
+            <Feather name="camera" size={16} color="#FFFFFF" />
           </Pressable>
         )}
-        <View style={styles.avatarPosn}>
-          <Avatar name={profile.display_name} size={88} avatarUrl={profile.avatar_url} />
+        <View
+          style={[
+            styles.avatarPosn,
+            { borderColor: colors.bgCanvas, backgroundColor: colors.bgCanvas },
+          ]}
+        >
+          <Avatar
+            name={profile.display_name}
+            size={84}
+            avatarUrl={profile.avatar_url}
+            canvasColor={colors.bgCanvas}
+          />
         </View>
       </LinearGradient>
 
-      {/* Info */}
-      <View style={[styles.info, { borderBottomColor: colors.border }]}>
+      <View style={[styles.info, { borderBottomColor: colors.separator }]}>
         <View style={styles.nameRow}>
           <View style={{ flex: 1 }}>
             <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-              <Text style={[styles.displayName, { color: colors.foreground }]}>{profile.display_name}</Text>
-              {profile.is_admin && <Feather name="shield" size={16} color="#7c3aed" />}
+              <Text style={[styles.displayName, { color: colors.textPrimary }]}>
+                {profile.display_name}
+              </Text>
+              {profile.is_admin && (
+                <Feather name="shield" size={16} color={colors.accentPrimary} />
+              )}
             </View>
-            <Text style={[styles.username, { color: colors.mutedForeground }]}>@{profile.username}</Text>
+            <Text style={[styles.username, { color: colors.textSecondary }]}>
+              @{profile.username}
+            </Text>
           </View>
         </View>
 
-        {profile.bio && <Text style={[styles.bio, { color: colors.foreground }]}>{profile.bio}</Text>}
+        {profile.bio && (
+          <Text style={[styles.bio, { color: colors.textPrimary }]}>
+            {profile.bio}
+          </Text>
+        )}
 
-        <View style={[styles.statsRow, { backgroundColor: colors.secondary, borderColor: colors.border }]}>
+        <View
+          style={[
+            styles.statsRow,
+            {
+              backgroundColor: colors.bgElevated,
+              borderColor: colors.separator,
+            },
+          ]}
+        >
           <View style={styles.statBlock}>
-            <Text style={[styles.statValue, { color: colors.foreground }]}>{formatCount(profile.posts_count)}</Text>
-            <Text style={[styles.statLabel, { color: colors.mutedForeground }]}>Posts</Text>
+            <Text style={[styles.statValue, { color: colors.textPrimary }]}>
+              {formatCount(profile.posts_count)}
+            </Text>
+            <Text style={[styles.statLabel, { color: colors.textSecondary }]}>
+              Posts
+            </Text>
           </View>
-          <View style={[styles.statDivider, { backgroundColor: colors.border }]} />
+          <View
+            style={[styles.statDivider, { backgroundColor: colors.separator }]}
+          />
           <View style={styles.statBlock}>
-            <Text style={[styles.statValue, { color: colors.foreground }]}>{formatCount(profile.followers_count)}</Text>
-            <Text style={[styles.statLabel, { color: colors.mutedForeground }]}>Followers</Text>
+            <Text style={[styles.statValue, { color: colors.textPrimary }]}>
+              {formatCount(profile.followers_count)}
+            </Text>
+            <Text style={[styles.statLabel, { color: colors.textSecondary }]}>
+              Followers
+            </Text>
           </View>
-          <View style={[styles.statDivider, { backgroundColor: colors.border }]} />
+          <View
+            style={[styles.statDivider, { backgroundColor: colors.separator }]}
+          />
           <View style={styles.statBlock}>
-            <Text style={[styles.statValue, { color: colors.foreground }]}>{formatCount(profile.following_count)}</Text>
-            <Text style={[styles.statLabel, { color: colors.mutedForeground }]}>Following</Text>
+            <Text style={[styles.statValue, { color: colors.textPrimary }]}>
+              {formatCount(profile.following_count)}
+            </Text>
+            <Text style={[styles.statLabel, { color: colors.textSecondary }]}>
+              Following
+            </Text>
           </View>
         </View>
 
         {!isOwnProfile && (
           <View style={styles.actionBtns}>
-            <Pressable onPress={handleFollow} disabled={followLoading}
-              style={[styles.actionBtn, { backgroundColor: following ? colors.secondary : colors.primary, borderColor: colors.border, borderWidth: following ? 1.5 : 0, flex: 2 }]}>
-              {followLoading ? <ActivityIndicator color={following ? colors.primary : "#fff"} size="small" /> : (
+            <Pressable
+              onPress={handleFollow}
+              disabled={followLoading}
+              style={[
+                styles.actionBtn,
+                {
+                  backgroundColor: following
+                    ? colors.bgElevated
+                    : colors.accentPrimary,
+                  borderColor: colors.separator,
+                  borderWidth: following ? StyleSheet.hairlineWidth : 0,
+                  flex: 2,
+                },
+              ]}
+              accessibilityRole="button"
+              accessibilityLabel={following ? "Unfollow" : "Follow"}
+            >
+              {followLoading ? (
+                <ActivityIndicator
+                  color={following ? colors.accentPrimary : "#FFFFFF"}
+                  size="small"
+                />
+              ) : (
                 <>
-                  <Feather name={following ? "user-check" : "user-plus"} size={15} color={following ? colors.primary : "#fff"} />
-                  <Text style={[styles.actionBtnText, { color: following ? colors.primary : "#fff" }]}>
+                  <Feather
+                    name={following ? "user-check" : "user-plus"}
+                    size={15}
+                    color={following ? colors.accentPrimary : "#FFFFFF"}
+                  />
+                  <Text
+                    style={[
+                      styles.actionBtnText,
+                      { color: following ? colors.accentPrimary : "#FFFFFF" },
+                    ]}
+                  >
                     {following ? "Following" : "Follow"}
                   </Text>
                 </>
               )}
             </Pressable>
-            <Pressable onPress={handleMessage}
-              style={[styles.actionBtn, { backgroundColor: colors.secondary, borderColor: colors.border, borderWidth: 1.5, flex: 1 }]}>
-              <Feather name="message-circle" size={15} color={colors.foreground} />
-              <Text style={[styles.actionBtnText, { color: colors.foreground }]}>Message</Text>
+            <Pressable
+              onPress={handleMessage}
+              style={[
+                styles.actionBtn,
+                {
+                  backgroundColor: colors.bgElevated,
+                  borderColor: colors.separator,
+                  borderWidth: StyleSheet.hairlineWidth,
+                  flex: 1,
+                },
+              ]}
+              accessibilityRole="button"
+              accessibilityLabel="Message user"
+            >
+              <Feather name="message-circle" size={15} color={colors.textPrimary} />
+              <Text style={[styles.actionBtnText, { color: colors.textPrimary }]}>
+                Message
+              </Text>
             </Pressable>
           </View>
         )}
       </View>
 
-      {/* Tabs + View Mode Toggle */}
-      <View style={[styles.tabRow, { borderBottomColor: colors.border }]}>
+      <View style={[styles.tabRow, { borderBottomColor: colors.separator }]}>
         <View style={{ flexDirection: "row", flex: 1 }}>
-          {(["posts", "reels"] as const).map(tab => (
-            <Pressable key={tab} onPress={() => setPostTab(tab)} style={styles.tab}>
-              <Feather name={tab === "posts" ? "grid" : "film"} size={17}
-                color={postTab === tab ? colors.primary : colors.mutedForeground} />
-              <Text style={[styles.tabText, { color: postTab === tab ? colors.primary : colors.mutedForeground },
-                postTab === tab && { fontWeight: "700" }]}>
-                {tab === "posts" ? "Posts" : "Reels"}
-              </Text>
-              {postTab === tab && <View style={[styles.tabLine, { backgroundColor: colors.primary }]} />}
-            </Pressable>
-          ))}
+          {(["posts", "reels"] as const).map((tab) => {
+            const active = postTab === tab;
+            return (
+              <Pressable
+                key={tab}
+                onPress={() => setPostTab(tab)}
+                style={styles.tab}
+                accessibilityRole="tab"
+                accessibilityState={{ selected: active }}
+              >
+                <Feather
+                  name={tab === "posts" ? "grid" : "film"}
+                  size={16}
+                  color={active ? colors.accentPrimary : colors.textSecondary}
+                />
+                <Text
+                  style={[
+                    styles.tabText,
+                    {
+                      color: active
+                        ? colors.accentPrimary
+                        : colors.textSecondary,
+                      fontWeight: active ? "700" : "500",
+                    },
+                  ]}
+                >
+                  {tab === "posts" ? "Posts" : "Reels"}
+                </Text>
+                {active && (
+                  <View
+                    style={[
+                      styles.tabLine,
+                      { backgroundColor: colors.accentPrimary },
+                    ]}
+                  />
+                )}
+              </Pressable>
+            );
+          })}
         </View>
-        {/* View Mode toggle */}
-        <View style={{ flexDirection: "row", gap: 2, paddingRight: 12, alignItems: "center" }}>
+        <View
+          style={{
+            flexDirection: "row",
+            gap: 4,
+            paddingRight: 12,
+            alignItems: "center",
+          }}
+        >
           <Pressable
             onPress={() => setViewMode("grid")}
-            style={[styles.viewModeBtn, viewMode === "grid" && { backgroundColor: colors.primary + "22" }]}
+            style={[
+              styles.viewModeBtn,
+              viewMode === "grid" && { backgroundColor: colors.accentTint },
+            ]}
+            accessibilityRole="button"
+            accessibilityLabel="Grid view"
           >
-            <Feather name="grid" size={16} color={viewMode === "grid" ? colors.primary : colors.mutedForeground} />
+            <Feather
+              name="grid"
+              size={16}
+              color={
+                viewMode === "grid" ? colors.accentPrimary : colors.textSecondary
+              }
+            />
           </Pressable>
           <Pressable
             onPress={() => setViewMode("list")}
-            style={[styles.viewModeBtn, viewMode === "list" && { backgroundColor: colors.primary + "22" }]}
+            style={[
+              styles.viewModeBtn,
+              viewMode === "list" && { backgroundColor: colors.accentTint },
+            ]}
+            accessibilityRole="button"
+            accessibilityLabel="List view"
           >
-            <Feather name="list" size={16} color={viewMode === "list" ? colors.primary : colors.mutedForeground} />
+            <Feather
+              name="list"
+              size={16}
+              color={
+                viewMode === "list" ? colors.accentPrimary : colors.textSecondary
+              }
+            />
           </Pressable>
         </View>
       </View>
@@ -568,147 +824,409 @@ export default function UserProfileScreen() {
   );
 
   const EmptyPosts = () => (
-    <View style={{ alignItems: "center", paddingVertical: 56, gap: 12 }}>
-      <LinearGradient colors={["#1e1b4b", "#2d1b69"]}
-        style={{ width: 72, height: 72, borderRadius: 36, alignItems: "center", justifyContent: "center" }}>
-        <Feather name={postTab === "posts" ? "grid" : "film"} size={32} color="rgba(255,255,255,0.4)" />
-      </LinearGradient>
-      <Text style={{ color: colors.foreground, fontSize: 17, fontWeight: "700" }}>No {postTab} yet</Text>
-      <Text style={{ color: colors.mutedForeground, fontSize: 14 }}>
+    <View style={{ alignItems: "center", paddingVertical: 56, gap: 10 }}>
+      <View
+        style={{
+          width: 72,
+          height: 72,
+          borderRadius: 36,
+          backgroundColor: colors.accentTint,
+          alignItems: "center",
+          justifyContent: "center",
+        }}
+      >
+        <Feather
+          name={postTab === "posts" ? "grid" : "film"}
+          size={30}
+          color={colors.accentPrimary}
+        />
+      </View>
+      <Text style={{ color: colors.textPrimary, fontSize: 17, fontWeight: "700" }}>
+        No {postTab} yet
+      </Text>
+      <Text style={{ color: colors.textSecondary, fontSize: 14 }}>
         {isOwnProfile ? "Share your first post!" : "Nothing posted yet."}
       </Text>
     </View>
   );
 
+  const topBar = (
+    <GlassSurface
+      style={[
+        styles.topBarWrap,
+        {
+          paddingTop: Platform.OS === "web" ? 10 : insets.top + 4,
+          borderBottomColor: colors.separator,
+        },
+      ]}
+    >
+      <View style={[styles.topBar, { maxWidth: 720 }]}>
+        <Pressable
+          onPress={() => router.back()}
+          style={styles.topBtn}
+          accessibilityRole="button"
+          accessibilityLabel="Back"
+        >
+          <Feather name="chevron-left" size={24} color={colors.textPrimary} />
+        </Pressable>
+        <Text style={[styles.topTitle, { color: colors.textPrimary }]}>
+          @{profile.username}
+        </Text>
+        {!isOwnProfile ? (
+          <View style={{ flexDirection: "row" }}>
+            <Pressable
+              style={styles.topBtn}
+              onPress={() =>
+                Share.share({
+                  message: `Check out ${profile.display_name} on Vibe! https://vibe.app/user/${profile.id}`,
+                  title: profile.display_name,
+                })
+              }
+              accessibilityRole="button"
+              accessibilityLabel="Share profile"
+            >
+              <Feather name="share" size={18} color={colors.textPrimary} />
+            </Pressable>
+            <Pressable
+              style={styles.topBtn}
+              onPress={() => setProfileMenuOpen(true)}
+              accessibilityRole="button"
+              accessibilityLabel="User options"
+            >
+              <Feather
+                name="more-horizontal"
+                size={20}
+                color={colors.textPrimary}
+              />
+            </Pressable>
+          </View>
+        ) : (
+          <View style={styles.topBtn} />
+        )}
+      </View>
+    </GlassSurface>
+  );
+
+  const sheets = (
+    <>
+      <ActionSheet
+        visible={profileMenuOpen}
+        title={`@${profile.username}`}
+        onClose={() => setProfileMenuOpen(false)}
+        items={[
+          {
+            id: "report",
+            label: "Report User",
+            icon: "flag",
+            onPress: () => setReportSheetOpen(true),
+          },
+          {
+            id: "block",
+            label: `Block @${profile.username}`,
+            icon: "slash",
+            destructive: true,
+            onPress: () => setBlockConfirmOpen(true),
+          },
+        ]}
+      />
+
+      <ActionSheet
+        visible={blockConfirmOpen}
+        title={`Block @${profile.username}?`}
+        message="They won't be able to view your profile or message you."
+        onClose={() => setBlockConfirmOpen(false)}
+        items={[
+          {
+            id: "confirm-block",
+            label: "Block User",
+            icon: "slash",
+            destructive: true,
+            onPress: async () => {
+              if (!user?.id) return;
+              await blockUser(user.id, userId as string);
+              showToast(`@${profile.username} blocked`, "success");
+              router.back();
+            },
+          },
+        ]}
+      />
+
+      <ActionSheet
+        visible={reportSheetOpen}
+        title={`Report @${profile.username}`}
+        message="Choose the reason for this report."
+        onClose={() => setReportSheetOpen(false)}
+        items={[
+          {
+            id: "spam",
+            label: "Spam",
+            icon: "alert-circle",
+            onPress: () => submitReport("spam"),
+          },
+          {
+            id: "harassment",
+            label: "Harassment",
+            icon: "shield",
+            onPress: () => submitReport("harassment"),
+          },
+          {
+            id: "inappropriate",
+            label: "Inappropriate Content",
+            icon: "eye-off",
+            onPress: () => submitReport("inappropriate"),
+          },
+        ]}
+      />
+
+      <ActionSheet
+        visible={!!postOptionsTarget}
+        title="Post Options"
+        onClose={() => setPostOptionsTarget(null)}
+        items={
+          postOptionsTarget
+            ? [
+                {
+                  id: "visibility",
+                  label: "Change Visibility",
+                  icon: "globe",
+                  onPress: () => setVisibilityTarget(postOptionsTarget),
+                },
+                {
+                  id: "delete",
+                  label: "Delete Post",
+                  icon: "trash-2",
+                  destructive: true,
+                  onPress: () => setDeleteTarget(postOptionsTarget),
+                },
+              ]
+            : []
+        }
+      />
+
+      <ActionSheet
+        visible={!!visibilityTarget}
+        title="Set Visibility"
+        onClose={() => setVisibilityTarget(null)}
+        items={
+          visibilityTarget
+            ? (
+                [
+                  { id: "public", label: "Public", icon: "globe" as const },
+                  {
+                    id: "followers",
+                    label: "Followers Only",
+                    icon: "users" as const,
+                  },
+                  { id: "private", label: "Private", icon: "lock" as const },
+                ] as const
+              ).map(
+                (v): ActionSheetItem => ({
+                  id: v.id,
+                  label: v.label,
+                  icon: v.icon,
+                  selected: visibilityTarget.visibility === v.id,
+                  onPress: () =>
+                    handleChangeVisibility(visibilityTarget, v.id),
+                }),
+              )
+            : []
+        }
+      />
+
+      <ActionSheet
+        visible={!!deleteTarget}
+        title="Delete Post"
+        message="This cannot be undone."
+        onClose={() => setDeleteTarget(null)}
+        items={
+          deleteTarget
+            ? [
+                {
+                  id: "confirm-delete-post",
+                  label: "Delete Post",
+                  icon: "trash-2",
+                  destructive: true,
+                  onPress: () => handleDeletePost(deleteTarget),
+                },
+              ]
+            : []
+        }
+      />
+    </>
+  );
+
   if (viewMode === "list") {
     return (
-      <View style={{ flex: 1, backgroundColor: colors.background }}>
-        <View style={[styles.topBar, { paddingTop: insets.top + 4 }]}>
-          <Pressable onPress={() => router.back()} hitSlop={8} style={styles.topBtn}>
-            <Feather name="arrow-left" size={22} color={colors.foreground} />
-          </Pressable>
-          <Text style={[styles.topTitle, { color: colors.foreground }]}>{profile.username}</Text>
-          {!isOwnProfile ? (
-            <View style={{ flexDirection: "row", gap: 4 }}>
-              <Pressable hitSlop={8} style={styles.topBtn}
-                onPress={() => Share.share({ message: `Check out ${profile.display_name} on Vibe! https://vibe.app/user/${profile.id}`, title: profile.display_name })}>
-                <Feather name="share" size={18} color={colors.foreground} />
-              </Pressable>
-              <Pressable hitSlop={8} style={styles.topBtn}
-                onPress={() => Alert.alert("Options", undefined, [
-                  { text: "Block", style: "destructive", onPress: handleBlock },
-                  { text: "Report", onPress: handleReport },
-                  { text: "Cancel", style: "cancel" },
-                ])}>
-                <Feather name="more-horizontal" size={22} color={colors.foreground} />
-              </Pressable>
-            </View>
-          ) : <View style={styles.topBtn} />}
-        </View>
-
+      <View style={{ flex: 1, backgroundColor: colors.bgCanvas }}>
+        {topBar}
         <FlatList
           data={postList}
-          keyExtractor={p => p.id}
+          keyExtractor={(p) => p.id}
           ListHeaderComponent={<ListHeader />}
           renderItem={({ item: p }) => (
-            <View style={{ marginBottom: 10 }}>
-              <ProfilePostCard
-                post={p}
-                isOwn={isOwnProfile}
-                userId={user?.id ?? ""}
-                colors={colors}
-                onDeleted={handleDeleted}
-              />
-            </View>
+            <ProfilePostCard
+              post={p}
+              isOwn={isOwnProfile}
+              onOpenOptions={(post) => setPostOptionsTarget(post)}
+            />
           )}
           ListEmptyComponent={<EmptyPosts />}
-          contentContainerStyle={{ paddingBottom: insets.bottom + 90 }}
+          contentContainerStyle={{
+            paddingBottom: insets.bottom + 90,
+            width: "100%",
+            maxWidth: 720,
+            alignSelf: "center",
+          }}
           showsVerticalScrollIndicator={false}
         />
+        {sheets}
       </View>
     );
   }
 
-  // Grid view
   return (
-    <View style={{ flex: 1, backgroundColor: colors.background }}>
-      <View style={[styles.topBar, { paddingTop: insets.top + 4 }]}>
-        <Pressable onPress={() => router.back()} hitSlop={8} style={styles.topBtn}>
-          <Feather name="arrow-left" size={22} color={colors.foreground} />
-        </Pressable>
-        <Text style={[styles.topTitle, { color: colors.foreground }]}>{profile.username}</Text>
-        {!isOwnProfile ? (
-          <View style={{ flexDirection: "row", gap: 4 }}>
-            <Pressable hitSlop={8} style={styles.topBtn}
-              onPress={() => Share.share({ message: `Check out ${profile.display_name} on Vibe! https://vibe.app/user/${profile.id}`, title: profile.display_name })}>
-              <Feather name="share" size={18} color={colors.foreground} />
-            </Pressable>
-            <Pressable hitSlop={8} style={styles.topBtn}
-              onPress={() => Alert.alert("Options", undefined, [
-                { text: "Block", style: "destructive", onPress: handleBlock },
-                { text: "Report", onPress: handleReport },
-                { text: "Cancel", style: "cancel" },
-              ])}>
-              <Feather name="more-horizontal" size={22} color={colors.foreground} />
-            </Pressable>
-          </View>
-        ) : <View style={styles.topBtn} />}
-      </View>
-
+    <View style={{ flex: 1, backgroundColor: colors.bgCanvas }}>
+      {topBar}
       <ScrollView
-        style={{ backgroundColor: colors.background }}
-        contentContainerStyle={{ paddingBottom: insets.bottom + 90 }}
+        style={{ backgroundColor: colors.bgCanvas }}
+        contentContainerStyle={{
+          paddingBottom: insets.bottom + 90,
+          width: "100%",
+          maxWidth: 720,
+          alignSelf: "center",
+        }}
         showsVerticalScrollIndicator={false}
       >
         <ListHeader />
-        {postList.length === 0 ? <EmptyPosts /> : (
-          <View style={styles.grid}>
-            {postList.map(p => (
+        {postList.length === 0 ? (
+          <EmptyPosts />
+        ) : (
+          <View style={[styles.grid, { gap: gridGap, padding: gridGap }]}>
+            {postList.map((p) => (
               <GridItem
                 key={p.id}
                 post={p}
+                gridSize={gridSize}
                 router={router}
-                colors={colors}
                 isOwn={isOwnProfile}
-                userId={user?.id ?? ""}
-                onDeleted={handleDeleted}
+                onOpenOptions={(post) => setPostOptionsTarget(post)}
               />
             ))}
           </View>
         )}
       </ScrollView>
+      {sheets}
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  topBar: { flexDirection: "row", alignItems: "center", paddingHorizontal: 12, paddingBottom: 8, gap: 8 },
-  topBtn: { width: 40, height: 40, alignItems: "center", justifyContent: "center" },
+  topBarWrap: {
+    borderBottomWidth: StyleSheet.hairlineWidth,
+  },
+  topBar: {
+    width: "100%",
+    alignSelf: "center",
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 8,
+    paddingBottom: 6,
+  },
+  topBtn: {
+    width: 44,
+    height: 44,
+    alignItems: "center",
+    justifyContent: "center",
+  },
   topTitle: { flex: 1, fontSize: 16, fontWeight: "700", textAlign: "center" },
   cover: { height: 150, position: "relative" },
-  coverEditBtn: { position: "absolute", top: 10, right: 10, width: 34, height: 34, borderRadius: 17, alignItems: "center", justifyContent: "center" },
-  avatarPosn: { position: "absolute", bottom: -46, left: 18 },
-  info: { paddingHorizontal: 18, paddingTop: 56, paddingBottom: 14, borderBottomWidth: StyleSheet.hairlineWidth },
+  coverEditBtn: {
+    position: "absolute",
+    top: 10,
+    right: 10,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: "rgba(0,0,0,0.45)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  avatarPosn: {
+    position: "absolute",
+    bottom: -42,
+    left: 16,
+    borderRadius: 46,
+    borderWidth: 4,
+  },
+  info: {
+    paddingHorizontal: 16,
+    paddingTop: 52,
+    paddingBottom: 14,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+  },
   nameRow: { flexDirection: "row", alignItems: "flex-start", marginBottom: 6 },
-  displayName: { fontSize: 22, fontWeight: "800" },
+  displayName: { fontSize: 22, fontWeight: "700", letterSpacing: -0.4 },
   username: { fontSize: 14, marginTop: 2 },
-  bio: { fontSize: 14, lineHeight: 20, marginBottom: 10 },
-  statsRow: { flexDirection: "row", alignItems: "center", marginVertical: 12, borderRadius: 14, borderWidth: 1, overflow: "hidden" },
+  bio: { fontSize: 14.5, lineHeight: 20, marginBottom: 10 },
+  statsRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginVertical: 12,
+    borderRadius: RADIUS.md,
+    borderWidth: StyleSheet.hairlineWidth,
+    overflow: "hidden",
+  },
   statBlock: { flex: 1, alignItems: "center", paddingVertical: 12 },
-  statValue: { fontSize: 20, fontWeight: "800" },
-  statLabel: { fontSize: 11, marginTop: 2, fontWeight: "500", textTransform: "uppercase", letterSpacing: 0.3 },
-  statDivider: { width: StyleSheet.hairlineWidth, height: 36 },
+  statValue: {
+    fontSize: 19,
+    fontWeight: "700",
+    fontVariant: ["tabular-nums"],
+  },
+  statLabel: {
+    fontSize: 11.5,
+    marginTop: 2,
+    fontWeight: "500",
+  },
+  statDivider: { width: StyleSheet.hairlineWidth, height: 34 },
   actionBtns: { flexDirection: "row", gap: 10, marginTop: 4 },
-  actionBtn: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, paddingVertical: 10, borderRadius: 12 },
-  actionBtnText: { fontSize: 14, fontWeight: "700" },
-  tabRow: { flexDirection: "row", alignItems: "center", borderBottomWidth: StyleSheet.hairlineWidth, paddingLeft: 18 },
-  tabs: { flexDirection: "row", paddingHorizontal: 18, borderBottomWidth: StyleSheet.hairlineWidth },
-  tab: { flexDirection: "row", alignItems: "center", gap: 6, paddingVertical: 12, paddingRight: 20, position: "relative" },
-  tabText: { fontSize: 14, fontWeight: "500" },
-  tabLine: { position: "absolute", bottom: 0, left: 0, right: 0, height: 2, borderRadius: 2 },
-  viewModeBtn: { width: 32, height: 32, borderRadius: 8, alignItems: "center", justifyContent: "center" },
-  grid: { flexDirection: "row", flexWrap: "wrap", gap: GRID_GAP, padding: GRID_GAP },
-  gridItem: { position: "relative", overflow: "hidden" },
-  gridImg: { width: "100%", height: "100%" },
-  gridOverlay: { position: "absolute", bottom: 0, left: 0, right: 0, height: 35, flexDirection: "row", alignItems: "flex-end", paddingHorizontal: 6, paddingBottom: 5, gap: 3 },
+  actionBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    height: 44,
+    borderRadius: RADIUS.md,
+  },
+  actionBtnText: { fontSize: 14, fontWeight: "600" },
+  tabRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    paddingLeft: 16,
+  },
+  tab: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    height: 46,
+    paddingRight: 20,
+    position: "relative",
+  },
+  tabText: { fontSize: 14 },
+  tabLine: {
+    position: "absolute",
+    bottom: 0,
+    left: 0,
+    right: 16,
+    height: 2,
+    borderRadius: 2,
+  },
+  viewModeBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: RADIUS.sm,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  grid: { flexDirection: "row", flexWrap: "wrap" },
 });

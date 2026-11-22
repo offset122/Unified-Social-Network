@@ -1,85 +1,226 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
-  View, Text, StyleSheet, FlatList, TextInput, ActivityIndicator,
-  Pressable, Alert, Platform, Image, Modal, ScrollView, Animated,
+  ActivityIndicator,
+  FlatList,
+  Modal,
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+  useWindowDimensions,
 } from "react-native";
 import { KeyboardAvoidingView } from "react-native-keyboard-controller";
-import { useLocalSearchParams, Stack, useRouter } from "expo-router";
+import { Stack, useLocalSearchParams, useRouter } from "expo-router";
 import { Feather } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
-import { useColors } from "@/hooks/useColors";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/lib/auth";
 import { supabase } from "@/lib/supabase";
 import {
-  fetchMessages, sendMessage, deleteMessage, markConversationRead,
-  fetchConversationMembers, resolveMediaUrl, timeAgo,
-  type Message, type Profile,
+  deleteMessage,
+  fetchConversationMembers,
+  fetchMessages,
+  markConversationRead,
+  sendMessage,
+  timeAgo,
+  type Message,
+  type Profile,
 } from "@/lib/db";
+import { useColors } from "@/hooks/useColors";
+import { Avatar } from "@/components/Avatar";
+import { ActionSheet, PromptSheet } from "@/components/ActionSheet";
+import { GlassSurface } from "@/components/GlassSurface";
+import { useToast } from "@/components/Toast";
+import { RADIUS } from "@/constants/colors";
 
-const C = {
-  bg: "#0F1117", surface: "#1A1D27", surfaceHigh: "#1E2232", border: "#252836",
-  primary: "#6366F1", primaryLight: "#818CF8", text: "#E2E8F0",
-  textMuted: "#6B7280", textDim: "#4B5168",
-  myBubble1: "#6366F1", myBubble2: "#818CF8", theirBubble: "#1E2232",
-  theirBubbleBorder: "#2D3150", red: "#EF4444", green: "#22C55E",
-};
-
-function Avatar({ name, avatarUrl, size }: { name: string; avatarUrl?: string | null; size: number }) {
-  const [err, setErr] = useState(false);
-  const initials = name.split(" ").map(w => w[0]).join("").slice(0, 2).toUpperCase();
-  const hue = name.split("").reduce((a, c) => a + c.charCodeAt(0), 0) % 360;
-  if (avatarUrl && !err) {
-    return <Image source={{ uri: resolveMediaUrl(avatarUrl) }}
-      style={{ width: size, height: size, borderRadius: size / 2 }} onError={() => setErr(true)} />;
-  }
-  return (
-    <LinearGradient colors={[`hsl(${hue},60%,52%)`, `hsl(${(hue + 40) % 360},70%,38%)`]}
-      style={{ width: size, height: size, borderRadius: size / 2, alignItems: "center", justifyContent: "center" }}>
-      <Text style={{ color: "#fff", fontSize: size * 0.36, fontWeight: "700" }}>{initials}</Text>
-    </LinearGradient>
-  );
-}
-
-function MembersSheet({ visible, onClose, members, groupName, isAdmin, onLeave, onRename }:
-  { visible: boolean; onClose: () => void; members: Profile[]; groupName: string; isAdmin: boolean; onLeave: () => void; onRename: () => void }) {
+function MembersSheet({
+  visible,
+  onClose,
+  members,
+  groupName,
+  isAdmin,
+  onLeave,
+  onRename,
+}: {
+  visible: boolean;
+  onClose: () => void;
+  members: Profile[];
+  groupName: string;
+  isAdmin: boolean;
+  onLeave: () => void;
+  onRename: () => void;
+}) {
+  const colors = useColors();
   const insets = useSafeAreaInsets();
   return (
-    <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}>
-      <View style={{ flex: 1, backgroundColor: C.bg }}>
-        <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", padding: 20, paddingTop: insets.top + 16, borderBottomWidth: 1, borderBottomColor: C.border }}>
-          <Text style={{ color: C.text, fontSize: 18, fontWeight: "800" }}>Group Info</Text>
-          <Pressable onPress={onClose} hitSlop={8}><Feather name="x" size={20} color={C.text} /></Pressable>
+    <Modal
+      visible={visible}
+      animationType="slide"
+      presentationStyle="pageSheet"
+      onRequestClose={onClose}
+    >
+      <View style={{ flex: 1, backgroundColor: colors.bgCanvas }}>
+        <View
+          style={{
+            flexDirection: "row",
+            alignItems: "center",
+            justifyContent: "space-between",
+            padding: 16,
+            paddingTop: Platform.OS === "web" ? 16 : insets.top + 12,
+            borderBottomWidth: StyleSheet.hairlineWidth,
+            borderBottomColor: colors.separator,
+          }}
+        >
+          <Text
+            style={{
+              color: colors.textPrimary,
+              fontSize: 18,
+              fontWeight: "700",
+            }}
+          >
+            Group Info
+          </Text>
+          <Pressable
+            onPress={onClose}
+            style={{
+              width: 44,
+              height: 44,
+              alignItems: "center",
+              justifyContent: "center",
+            }}
+            accessibilityRole="button"
+            accessibilityLabel="Close group info"
+          >
+            <Feather name="x" size={20} color={colors.textPrimary} />
+          </Pressable>
         </View>
-        <ScrollView contentContainerStyle={{ paddingBottom: insets.bottom + 40 }}>
+        <ScrollView
+          contentContainerStyle={{
+            paddingBottom: insets.bottom + 40,
+            maxWidth: 640,
+            width: "100%",
+            alignSelf: "center",
+          }}
+        >
           <View style={{ alignItems: "center", paddingVertical: 24 }}>
-            <LinearGradient colors={[C.primary, C.primaryLight]} style={{ width: 72, height: 72, borderRadius: 36, alignItems: "center", justifyContent: "center", marginBottom: 12 }}>
-              <Feather name="users" size={32} color="#fff" />
+            <LinearGradient
+              colors={[colors.accentPrimary, "#8B5CF6"]}
+              style={{
+                width: 72,
+                height: 72,
+                borderRadius: 36,
+                alignItems: "center",
+                justifyContent: "center",
+                marginBottom: 12,
+              }}
+            >
+              <Feather name="users" size={30} color="#FFFFFF" />
             </LinearGradient>
-            <Text style={{ color: C.text, fontSize: 20, fontWeight: "800" }}>{groupName}</Text>
-            <Text style={{ color: C.textMuted, fontSize: 13, marginTop: 4 }}>{members.length} members</Text>
+            <Text
+              style={{
+                color: colors.textPrimary,
+                fontSize: 20,
+                fontWeight: "700",
+              }}
+            >
+              {groupName}
+            </Text>
+            <Text
+              style={{
+                color: colors.textSecondary,
+                fontSize: 13,
+                marginTop: 4,
+                fontVariant: ["tabular-nums"],
+              }}
+            >
+              {members.length} member{members.length === 1 ? "" : "s"}
+            </Text>
           </View>
-          <Text style={{ color: C.textMuted, fontSize: 11, fontWeight: "700", letterSpacing: 0.8, paddingHorizontal: 20, marginBottom: 8 }}>MEMBERS</Text>
-          {members.map(m => (
-            <View key={m.id} style={{ flexDirection: "row", alignItems: "center", gap: 12, paddingHorizontal: 20, paddingVertical: 10 }}>
-              <Avatar name={m.display_name} avatarUrl={m.avatar_url} size={40} />
+          <Text
+            style={{
+              color: colors.textSecondary,
+              fontSize: 11.5,
+              fontWeight: "700",
+              letterSpacing: 0.8,
+              paddingHorizontal: 20,
+              marginBottom: 8,
+            }}
+          >
+            MEMBERS
+          </Text>
+          {members.map((m) => (
+            <View
+              key={m.id}
+              style={{
+                flexDirection: "row",
+                alignItems: "center",
+                gap: 12,
+                paddingHorizontal: 20,
+                paddingVertical: 10,
+              }}
+            >
+              <Avatar
+                name={m.display_name}
+                avatarUrl={m.avatar_url}
+                size={40}
+                canvasColor={colors.bgCanvas}
+              />
               <View style={{ flex: 1 }}>
-                <Text style={{ color: C.text, fontWeight: "600" }}>{m.display_name}</Text>
-                <Text style={{ color: C.textMuted, fontSize: 12 }}>@{m.username}</Text>
+                <Text style={{ color: colors.textPrimary, fontWeight: "600" }}>
+                  {m.display_name}
+                </Text>
+                <Text style={{ color: colors.textSecondary, fontSize: 12 }}>
+                  @{m.username}
+                </Text>
               </View>
             </View>
           ))}
           <View style={{ marginTop: 24, paddingHorizontal: 20, gap: 10 }}>
             {isAdmin && (
-              <Pressable onPress={onRename} style={{ flexDirection: "row", alignItems: "center", gap: 12, padding: 14, borderRadius: 14, backgroundColor: C.surface, borderWidth: 1, borderColor: C.border }}>
-                <Feather name="edit-2" size={16} color={C.primary} />
-                <Text style={{ color: C.text, fontWeight: "600" }}>Rename Group</Text>
+              <Pressable
+                onPress={onRename}
+                style={{
+                  flexDirection: "row",
+                  alignItems: "center",
+                  gap: 12,
+                  paddingHorizontal: 14,
+                  height: 48,
+                  borderRadius: RADIUS.md,
+                  backgroundColor: colors.bgElevated,
+                  borderWidth: StyleSheet.hairlineWidth,
+                  borderColor: colors.separator,
+                }}
+              >
+                <Feather name="edit-2" size={16} color={colors.accentPrimary} />
+                <Text style={{ color: colors.textPrimary, fontWeight: "600" }}>
+                  Rename Group
+                </Text>
               </Pressable>
             )}
-            <Pressable onPress={onLeave} style={{ flexDirection: "row", alignItems: "center", gap: 12, padding: 14, borderRadius: 14, backgroundColor: "#ef444415", borderWidth: 1, borderColor: "#ef444430" }}>
-              <Feather name="log-out" size={16} color={C.red} />
-              <Text style={{ color: C.red, fontWeight: "600" }}>Leave Group</Text>
+            <Pressable
+              onPress={onLeave}
+              style={{
+                flexDirection: "row",
+                alignItems: "center",
+                gap: 12,
+                paddingHorizontal: 14,
+                height: 48,
+                borderRadius: RADIUS.md,
+                backgroundColor: "rgba(225,29,72,0.10)",
+                borderWidth: StyleSheet.hairlineWidth,
+                borderColor: "rgba(225,29,72,0.28)",
+              }}
+            >
+              <Feather name="log-out" size={16} color={colors.semanticDanger} />
+              <Text
+                style={{ color: colors.semanticDanger, fontWeight: "600" }}
+              >
+                Leave Group
+              </Text>
             </Pressable>
           </View>
         </ScrollView>
@@ -88,53 +229,146 @@ function MembersSheet({ visible, onClose, members, groupName, isAdmin, onLeave, 
   );
 }
 
-function MessageBubble({ msg, isMine, showAvatar, isGrouped, onLongPress }:
-  { msg: Message; isMine: boolean; showAvatar: boolean; isGrouped: boolean; onLongPress: (m: Message) => void }) {
+function MessageBubble({
+  msg,
+  isMine,
+  showAvatar,
+  isGrouped,
+  onLongPress,
+}: {
+  msg: Message;
+  isMine: boolean;
+  showAvatar: boolean;
+  isGrouped: boolean;
+  onLongPress: (m: Message) => void;
+}) {
+  const colors = useColors();
   const profile = msg.profiles as Profile | undefined;
-  const scaleAnim = useRef(new Animated.Value(1)).current;
-  const onPressIn = () => Animated.spring(scaleAnim, { toValue: 0.97, useNativeDriver: true, speed: 40 }).start();
-  const onPressOut = () => Animated.spring(scaleAnim, { toValue: 1, useNativeDriver: true, speed: 40 }).start();
 
   if (msg.is_deleted) {
     return (
-      <View style={[styles.msgRow, isMine ? styles.msgRowMine : styles.msgRowOther, isGrouped && styles.msgGrouped]}>
+      <View
+        style={[
+          styles.msgRow,
+          isMine ? styles.msgRowMine : styles.msgRowOther,
+          isGrouped && styles.msgGrouped,
+        ]}
+      >
         {!isMine && <View style={{ width: 28 }} />}
-        <View style={styles.deletedBubble}>
-          <Feather name="slash" size={11} color={C.textDim} />
-          <Text style={{ fontSize: 13, color: C.textDim, fontStyle: "italic" }}>Message removed</Text>
+        <View
+          style={[
+            styles.deletedBubble,
+            {
+              backgroundColor: colors.bgElevated,
+              borderColor: colors.separator,
+            },
+          ]}
+        >
+          <Feather name="slash" size={11} color={colors.textTertiary} />
+          <Text
+            style={{
+              fontSize: 13,
+              color: colors.textTertiary,
+              fontStyle: "italic",
+            }}
+          >
+            Message removed
+          </Text>
         </View>
       </View>
     );
   }
 
   return (
-    <View style={[styles.msgRow, isMine ? styles.msgRowMine : styles.msgRowOther, isGrouped && styles.msgGrouped]}>
-      {!isMine ? (showAvatar ? <Avatar name={profile?.display_name ?? "U"} avatarUrl={profile?.avatar_url} size={28} /> : <View style={{ width: 28 }} />) : null}
-      <Animated.View style={{ transform: [{ scale: scaleAnim }], maxWidth: "75%" }}>
-        <Pressable onLongPress={() => onLongPress(msg)} onPressIn={onPressIn} onPressOut={onPressOut} delayLongPress={300}>
+    <View
+      style={[
+        styles.msgRow,
+        isMine ? styles.msgRowMine : styles.msgRowOther,
+        isGrouped && styles.msgGrouped,
+      ]}
+    >
+      {!isMine ? (
+        showAvatar ? (
+          <Avatar
+            name={profile?.display_name ?? "U"}
+            avatarUrl={profile?.avatar_url}
+            size={28}
+            canvasColor={colors.bgCanvas}
+          />
+        ) : (
+          <View style={{ width: 28 }} />
+        )
+      ) : null}
+      <View style={{ maxWidth: "76%" }}>
+        <Pressable onLongPress={() => onLongPress(msg)} delayLongPress={280}>
           {!isMine && showAvatar && (
-            <Text style={{ color: C.primaryLight, fontSize: 11, fontWeight: "700", marginBottom: 3, marginLeft: 4 }}>
+            <Text
+              style={{
+                color: colors.accentPrimary,
+                fontSize: 11.5,
+                fontWeight: "700",
+                marginBottom: 3,
+                marginLeft: 4,
+              }}
+            >
               {profile?.display_name ?? "User"}
             </Text>
           )}
           {isMine ? (
-            <LinearGradient colors={[C.myBubble1, C.myBubble2]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}
-              style={[styles.bubble, styles.bubbleMine]}>
-              <Text style={{ fontSize: 15, lineHeight: 22, color: "#fff" }}>{msg.content}</Text>
-              <Text style={{ fontSize: 10, alignSelf: "flex-end", color: "rgba(255,255,255,0.45)", marginTop: 1 }}>
+            <LinearGradient
+              colors={[colors.accentPrimary, "#8B5CF6"]}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 1 }}
+              style={[styles.bubble, styles.bubbleMine]}
+            >
+              <Text style={{ fontSize: 15, lineHeight: 22, color: "#FFFFFF" }}>
+                {msg.content}
+              </Text>
+              <Text
+                style={{
+                  fontSize: 10.5,
+                  alignSelf: "flex-end",
+                  color: "rgba(255,255,255,0.72)",
+                  marginTop: 1,
+                }}
+              >
                 {timeAgo(msg.created_at)} ✓✓
               </Text>
             </LinearGradient>
           ) : (
-            <View style={[styles.bubble, styles.bubbleOther]}>
-              <Text style={{ fontSize: 15, lineHeight: 22, color: C.text }}>{msg.content}</Text>
-              <Text style={{ fontSize: 10, alignSelf: "flex-end", color: C.textDim, marginTop: 1 }}>
+            <View
+              style={[
+                styles.bubble,
+                styles.bubbleOther,
+                {
+                  backgroundColor: colors.bgElevated,
+                  borderColor: colors.separator,
+                },
+              ]}
+            >
+              <Text
+                style={{
+                  fontSize: 15,
+                  lineHeight: 22,
+                  color: colors.textPrimary,
+                }}
+              >
+                {msg.content}
+              </Text>
+              <Text
+                style={{
+                  fontSize: 10.5,
+                  alignSelf: "flex-end",
+                  color: colors.textTertiary,
+                  marginTop: 1,
+                }}
+              >
                 {timeAgo(msg.created_at)}
               </Text>
             </View>
           )}
         </Pressable>
-      </Animated.View>
+      </View>
     </View>
   );
 }
@@ -143,21 +377,48 @@ export default function GroupScreen() {
   const { groupId } = useLocalSearchParams<{ groupId: string }>();
   const insets = useSafeAreaInsets();
   const { user } = useAuth();
+  const colors = useColors();
+  const { showToast } = useToast();
   const qc = useQueryClient();
   const router = useRouter();
+  const { width } = useWindowDimensions();
   const flatRef = useRef<FlatList>(null);
+  const isDesktopWeb = Platform.OS === "web" && width >= 768;
 
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
   const [membersOpen, setMembersOpen] = useState(false);
   const [groupName, setGroupName] = useState("Group");
+  const [isGroupAdmin, setIsGroupAdmin] = useState(false);
+  const [renameOpen, setRenameOpen] = useState(false);
+  const [leaveConfirmOpen, setLeaveConfirmOpen] = useState(false);
+  const [deleteMsgTarget, setDeleteMsgTarget] = useState<Message | null>(null);
 
-  // Fetch conversation info
   useEffect(() => {
     if (!groupId) return;
-    supabase.from("conversations").select("name").eq("id", groupId).single()
-      .then(({ data }) => { if (data?.name) setGroupName(data.name); });
-  }, [groupId]);
+    supabase
+      .from("conversations")
+      .select("name, created_by")
+      .eq("id", groupId)
+      .single()
+      .then(({ data }) => {
+        if (data?.name) setGroupName(data.name);
+        if (data?.created_by && data.created_by === user?.id) {
+          setIsGroupAdmin(true);
+        }
+      });
+    if (user?.id) {
+      supabase
+        .from("conversation_members")
+        .select("is_admin")
+        .eq("conversation_id", groupId)
+        .eq("user_id", user.id)
+        .maybeSingle()
+        .then(({ data }) => {
+          if (data?.is_admin) setIsGroupAdmin(true);
+        });
+    }
+  }, [groupId, user?.id]);
 
   const { data: messages = [], isLoading } = useQuery({
     queryKey: ["group-messages", groupId],
@@ -177,15 +438,30 @@ export default function GroupScreen() {
 
   useEffect(() => {
     if (!groupId) return;
-    const ch = supabase.channel(`group-${groupId}`)
-      .on("postgres_changes", { event: "*", schema: "public", table: "messages", filter: `conversation_id=eq.${groupId}` }, () => {
-        qc.invalidateQueries({ queryKey: ["group-messages", groupId] });
-      }).subscribe();
-    return () => { supabase.removeChannel(ch); };
-  }, [groupId]);
+    const ch = supabase
+      .channel(`group-${groupId}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "messages",
+          filter: `conversation_id=eq.${groupId}`,
+        },
+        () => {
+          qc.invalidateQueries({ queryKey: ["group-messages", groupId] });
+        },
+      )
+      .subscribe();
+    return () => {
+      supabase.removeChannel(ch);
+    };
+  }, [groupId, qc]);
 
   useEffect(() => {
-    if (messages.length > 0) setTimeout(() => flatRef.current?.scrollToEnd({ animated: true }), 100);
+    if (messages.length > 0) {
+      setTimeout(() => flatRef.current?.scrollToEnd({ animated: true }), 100);
+    }
   }, [messages.length]);
 
   const handleSend = useCallback(async () => {
@@ -198,104 +474,195 @@ export default function GroupScreen() {
       qc.invalidateQueries({ queryKey: ["group-messages", groupId] });
     } catch {
       setText(content);
-      Alert.alert("Error", "Failed to send message");
-    } finally { setSending(false); }
-  }, [text, groupId, user?.id]);
+      showToast("Failed to send message", "error");
+    } finally {
+      setSending(false);
+    }
+  }, [text, groupId, user?.id, qc, showToast]);
 
   const handleLongPress = (msg: Message) => {
-    const isMine = msg.sender_id === user?.id;
-    if (!isMine) return;
-    Alert.alert("Message", undefined, [
-      { text: "Delete", style: "destructive", onPress: async () => {
-        try { await deleteMessage(msg.id, user!.id); qc.invalidateQueries({ queryKey: ["group-messages", groupId] }); }
-        catch { Alert.alert("Error", "Could not delete"); }
-      }},
-      { text: "Cancel", style: "cancel" },
-    ]);
+    if (msg.sender_id !== user?.id) return;
+    setDeleteMsgTarget(msg);
   };
 
-  const handleLeave = () => {
-    Alert.alert("Leave Group", "Are you sure you want to leave this group?", [
-      { text: "Cancel", style: "cancel" },
-      { text: "Leave", style: "destructive", onPress: async () => {
-        if (!user?.id) return;
-        await supabase.from("conversation_members").delete().eq("conversation_id", groupId).eq("user_id", user.id);
-        router.back();
-      }},
-    ]);
+  const handleRenameSubmit = async (newName: string) => {
+    const trimmed = newName.trim();
+    if (!trimmed) return;
+    const { error } = await supabase
+      .from("conversations")
+      .update({ name: trimmed })
+      .eq("id", groupId);
+    if (error) {
+      showToast("Could not rename group", "error");
+      return;
+    }
+    setGroupName(trimmed);
+    showToast("Group renamed", "success");
   };
-
-  const handleRename = () => {
-    Alert.prompt?.("Rename Group", "Enter a new group name:", async (newName) => {
-      if (!newName?.trim()) return;
-      await supabase.from("conversations").update({ name: newName.trim() }).eq("id", groupId);
-      setGroupName(newName.trim());
-    }, "plain-text", groupName);
-  };
-
-  const isAdmin = (members as Profile[]).some(m => m.id === user?.id);
 
   return (
-    <KeyboardAvoidingView style={styles.screen} behavior={Platform.OS === "ios" ? "padding" : "height"} keyboardVerticalOffset={0}>
+    <KeyboardAvoidingView
+      style={[styles.screen, { backgroundColor: colors.bgCanvas }]}
+      behavior={Platform.OS === "ios" ? "padding" : "height"}
+      keyboardVerticalOffset={0}
+    >
       <Stack.Screen options={{ headerShown: false }} />
 
-      <View style={[styles.header, { paddingTop: insets.top + 6 }]}>
-        <Pressable onPress={() => router.back()} hitSlop={10} style={styles.backBtn}>
-          <Feather name="chevron-left" size={26} color={C.text} />
-        </Pressable>
-        <Pressable onPress={() => setMembersOpen(true)} style={styles.headerInfo}>
-          <LinearGradient colors={[C.primary, C.primaryLight]} style={styles.groupAvatar}>
-            <Feather name="users" size={18} color="#fff" />
-          </LinearGradient>
-          <View>
-            <Text style={styles.headerName}>{groupName}</Text>
-            <Text style={styles.headerSub}>{(members as Profile[]).length} members · tap for info</Text>
-          </View>
-        </Pressable>
-      </View>
-
-      {isLoading ? (
-        <View style={styles.loadingCenter}><ActivityIndicator color={C.primary} size="large" /></View>
-      ) : (
-        <FlatList
-          ref={flatRef}
-          data={messages as Message[]}
-          keyExtractor={m => m.id}
-          contentContainerStyle={styles.messagesList}
-          showsVerticalScrollIndicator={false}
-          renderItem={({ item: msg, index }) => {
-            const isMine = msg.sender_id === user?.id;
-            const prevMsg = index > 0 ? (messages as Message[])[index - 1] : null;
-            const showAvatar = !isMine && (!prevMsg || prevMsg.sender_id !== msg.sender_id);
-            const isGrouped = !!prevMsg && prevMsg.sender_id === msg.sender_id;
-            return <MessageBubble msg={msg} isMine={isMine} showAvatar={showAvatar} isGrouped={isGrouped} onLongPress={handleLongPress} />;
-          }}
-          ListEmptyComponent={
-            <View style={styles.emptyChat}>
-              <LinearGradient colors={["rgba(99,102,241,0.2)", "rgba(99,102,241,0.04)"]} style={styles.emptyChatIcon}>
-                <Feather name="users" size={34} color={C.primary} />
-              </LinearGradient>
-              <Text style={styles.emptyChatTitle}>Group created!</Text>
-              <Text style={styles.emptyChatSub}>Say hello to the group 👋</Text>
+      <GlassSurface
+        style={[
+          styles.headerWrap,
+          {
+            paddingTop: Platform.OS === "web" ? 10 : insets.top + 6,
+            borderBottomColor: colors.separator,
+          },
+        ]}
+      >
+        <View
+          style={[
+            styles.headerInner,
+            { maxWidth: isDesktopWeb ? 720 : undefined },
+          ]}
+        >
+          <Pressable
+            onPress={() => router.back()}
+            style={styles.backBtn}
+            accessibilityRole="button"
+            accessibilityLabel="Back"
+          >
+            <Feather name="chevron-left" size={24} color={colors.textPrimary} />
+          </Pressable>
+          <Pressable
+            onPress={() => setMembersOpen(true)}
+            style={styles.headerInfo}
+            accessibilityRole="button"
+            accessibilityLabel="Open group details"
+          >
+            <LinearGradient
+              colors={[colors.accentPrimary, "#8B5CF6"]}
+              style={styles.groupAvatar}
+            >
+              <Feather name="users" size={18} color="#FFFFFF" />
+            </LinearGradient>
+            <View style={{ flex: 1 }}>
+              <Text
+                style={[styles.headerName, { color: colors.textPrimary }]}
+                numberOfLines={1}
+              >
+                {groupName}
+              </Text>
+              <Text style={[styles.headerSub, { color: colors.textSecondary }]}>
+                {(members as Profile[]).length} members · tap for info
+              </Text>
             </View>
-          }
-        />
-      )}
+          </Pressable>
+        </View>
+      </GlassSurface>
 
-      <View style={[styles.inputBar, { paddingBottom: insets.bottom > 0 ? insets.bottom : 12 }]}>
-        <TextInput
-          style={styles.inputField}
-          placeholder="Message group…"
-          placeholderTextColor={C.textDim}
-          value={text}
-          onChangeText={setText}
-          multiline
-        />
-        <Pressable onPress={handleSend} disabled={sending || !text.trim()} style={styles.sendBtn}>
-          <LinearGradient colors={[C.myBubble1, C.myBubble2]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.sendBtnGrad}>
-            {sending ? <ActivityIndicator color="#fff" size="small" /> : <Feather name="send" size={15} color="#fff" />}
-          </LinearGradient>
-        </Pressable>
+      <View
+        style={[
+          styles.columnWrap,
+          { maxWidth: isDesktopWeb ? 720 : undefined },
+        ]}
+      >
+        {isLoading ? (
+          <View style={styles.loadingCenter}>
+            <ActivityIndicator color={colors.accentPrimary} size="large" />
+          </View>
+        ) : (
+          <FlatList
+            ref={flatRef}
+            data={messages as Message[]}
+            keyExtractor={(m) => m.id}
+            contentContainerStyle={styles.messagesList}
+            showsVerticalScrollIndicator={false}
+            renderItem={({ item: msg, index }) => {
+              const isMine = msg.sender_id === user?.id;
+              const prevMsg =
+                index > 0 ? (messages as Message[])[index - 1] : null;
+              const showAvatar =
+                !isMine && (!prevMsg || prevMsg.sender_id !== msg.sender_id);
+              const isGrouped =
+                !!prevMsg && prevMsg.sender_id === msg.sender_id;
+              return (
+                <MessageBubble
+                  msg={msg}
+                  isMine={isMine}
+                  showAvatar={showAvatar}
+                  isGrouped={isGrouped}
+                  onLongPress={handleLongPress}
+                />
+              );
+            }}
+            ListEmptyComponent={
+              <View style={styles.emptyChat}>
+                <View
+                  style={[
+                    styles.emptyChatIcon,
+                    { backgroundColor: colors.accentTint },
+                  ]}
+                >
+                  <Feather name="users" size={32} color={colors.accentPrimary} />
+                </View>
+                <Text
+                  style={[styles.emptyChatTitle, { color: colors.textPrimary }]}
+                >
+                  Group ready
+                </Text>
+                <Text
+                  style={[styles.emptyChatSub, { color: colors.textSecondary }]}
+                >
+                  Say hello to the group
+                </Text>
+              </View>
+            }
+          />
+        )}
+
+        <GlassSurface
+          style={[
+            styles.inputBar,
+            {
+              borderTopColor: colors.separator,
+              paddingBottom: insets.bottom > 0 ? insets.bottom : 12,
+            },
+          ]}
+        >
+          <TextInput
+            style={[
+              styles.inputField,
+              {
+                color: colors.textPrimary,
+                backgroundColor: colors.bgElevated,
+                borderColor: colors.separator,
+              },
+            ]}
+            placeholder="Message group…"
+            placeholderTextColor={colors.textTertiary}
+            value={text}
+            onChangeText={setText}
+            multiline
+          />
+          <Pressable
+            onPress={handleSend}
+            disabled={sending || !text.trim()}
+            style={[
+              styles.sendBtn,
+              {
+                backgroundColor: text.trim()
+                  ? colors.accentPrimary
+                  : colors.muted,
+              },
+            ]}
+            accessibilityRole="button"
+            accessibilityLabel="Send message"
+          >
+            {sending ? (
+              <ActivityIndicator color="#FFFFFF" size="small" />
+            ) : (
+              <Feather name="send" size={16} color="#FFFFFF" />
+            )}
+          </Pressable>
+        </GlassSurface>
       </View>
 
       <MembersSheet
@@ -303,38 +670,194 @@ export default function GroupScreen() {
         onClose={() => setMembersOpen(false)}
         members={members as Profile[]}
         groupName={groupName}
-        isAdmin={isAdmin}
-        onLeave={handleLeave}
-        onRename={handleRename}
+        isAdmin={isGroupAdmin}
+        onLeave={() => {
+          setMembersOpen(false);
+          setLeaveConfirmOpen(true);
+        }}
+        onRename={() => {
+          setMembersOpen(false);
+          setRenameOpen(true);
+        }}
+      />
+
+      <PromptSheet
+        visible={renameOpen}
+        title="Rename Group"
+        placeholder="Enter group name"
+        initialValue={groupName}
+        submitLabel="Rename"
+        onClose={() => setRenameOpen(false)}
+        onSubmit={handleRenameSubmit}
+      />
+
+      <ActionSheet
+        visible={leaveConfirmOpen}
+        title="Leave Group"
+        message="You will stop receiving messages from this group."
+        onClose={() => setLeaveConfirmOpen(false)}
+        items={[
+          {
+            id: "confirm-leave",
+            label: "Leave Group",
+            icon: "log-out",
+            destructive: true,
+            onPress: async () => {
+              if (!user?.id) return;
+              await supabase
+                .from("conversation_members")
+                .delete()
+                .eq("conversation_id", groupId)
+                .eq("user_id", user.id);
+              showToast("Left group", "info");
+              router.back();
+            },
+          },
+        ]}
+      />
+
+      <ActionSheet
+        visible={!!deleteMsgTarget}
+        title="Message Options"
+        onClose={() => setDeleteMsgTarget(null)}
+        items={
+          deleteMsgTarget
+            ? [
+                {
+                  id: "delete-msg",
+                  label: "Delete Message",
+                  icon: "trash-2",
+                  destructive: true,
+                  onPress: async () => {
+                    try {
+                      await deleteMessage(deleteMsgTarget.id, user!.id);
+                      qc.invalidateQueries({
+                        queryKey: ["group-messages", groupId],
+                      });
+                      showToast("Message deleted", "success");
+                    } catch {
+                      showToast("Could not delete message", "error");
+                    }
+                  },
+                },
+              ]
+            : []
+        }
       />
     </KeyboardAvoidingView>
   );
 }
 
 const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: C.bg },
-  header: { flexDirection: "row", alignItems: "center", paddingHorizontal: 12, paddingBottom: 12, backgroundColor: C.surface, borderBottomWidth: 1, borderBottomColor: C.border, gap: 8 },
-  backBtn: { width: 38, height: 38, alignItems: "center", justifyContent: "center" },
-  headerInfo: { flex: 1, flexDirection: "row", alignItems: "center", gap: 10 },
-  groupAvatar: { width: 40, height: 40, borderRadius: 20, alignItems: "center", justifyContent: "center" },
-  headerName: { color: C.text, fontSize: 16, fontWeight: "700", letterSpacing: -0.2 },
-  headerSub: { color: C.textMuted, fontSize: 11, marginTop: 1 },
+  screen: { flex: 1 },
+  headerWrap: { borderBottomWidth: StyleSheet.hairlineWidth },
+  headerInner: {
+    width: "100%",
+    alignSelf: "center",
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 10,
+    paddingBottom: 10,
+    gap: 8,
+  },
+  columnWrap: {
+    flex: 1,
+    width: "100%",
+    alignSelf: "center",
+  },
+  backBtn: {
+    width: 44,
+    height: 44,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  headerInfo: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    minWidth: 0,
+  },
+  groupAvatar: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  headerName: { fontSize: 16, fontWeight: "700", letterSpacing: -0.2 },
+  headerSub: { fontSize: 12, marginTop: 1, fontVariant: ["tabular-nums"] },
   loadingCenter: { flex: 1, alignItems: "center", justifyContent: "center" },
   messagesList: { padding: 14, paddingBottom: 10, gap: 2 },
-  msgRow: { flexDirection: "row", alignItems: "flex-end", gap: 7, marginBottom: 4 },
+  msgRow: {
+    flexDirection: "row",
+    alignItems: "flex-end",
+    gap: 8,
+    marginBottom: 4,
+  },
   msgRowMine: { justifyContent: "flex-end" },
   msgRowOther: { justifyContent: "flex-start" },
-  msgGrouped: { marginBottom: 1 },
-  bubble: { borderRadius: 18, paddingHorizontal: 13, paddingVertical: 9, gap: 4 },
+  msgGrouped: { marginBottom: 2 },
+  bubble: {
+    borderRadius: 18,
+    paddingHorizontal: 13,
+    paddingVertical: 9,
+    gap: 4,
+  },
   bubbleMine: { borderBottomRightRadius: 5 },
-  bubbleOther: { backgroundColor: C.theirBubble, borderWidth: 1, borderColor: C.theirBubbleBorder, borderBottomLeftRadius: 5 },
-  deletedBubble: { flexDirection: "row", alignItems: "center", gap: 7, paddingHorizontal: 13, paddingVertical: 9, borderRadius: 14, backgroundColor: C.surfaceHigh, borderWidth: 1, borderColor: C.border },
-  emptyChat: { flex: 1, alignItems: "center", justifyContent: "center", paddingVertical: 80, gap: 8 },
-  emptyChatIcon: { width: 80, height: 80, borderRadius: 40, alignItems: "center", justifyContent: "center", marginBottom: 8 },
-  emptyChatTitle: { fontSize: 18, fontWeight: "700", color: C.text },
-  emptyChatSub: { fontSize: 14, color: C.textDim },
-  inputBar: { flexDirection: "row", alignItems: "flex-end", paddingHorizontal: 10, paddingTop: 10, gap: 4, backgroundColor: C.surface, borderTopWidth: 1, borderTopColor: C.border },
-  inputField: { flex: 1, borderWidth: 1, borderColor: C.border, borderRadius: 22, paddingHorizontal: 15, paddingVertical: 10, fontSize: 15, color: C.text, backgroundColor: C.surfaceHigh, maxHeight: 120 },
-  sendBtn: { width: 40, height: 40, borderRadius: 20, overflow: "hidden" },
-  sendBtnGrad: { flex: 1, alignItems: "center", justifyContent: "center" },
+  bubbleOther: {
+    borderWidth: StyleSheet.hairlineWidth,
+    borderBottomLeftRadius: 5,
+  },
+  deletedBubble: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 7,
+    paddingHorizontal: 13,
+    paddingVertical: 9,
+    borderRadius: 14,
+    borderWidth: StyleSheet.hairlineWidth,
+  },
+  emptyChat: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingVertical: 80,
+    gap: 8,
+  },
+  emptyChatIcon: {
+    width: 76,
+    height: 76,
+    borderRadius: 38,
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 6,
+  },
+  emptyChatTitle: { fontSize: 18, fontWeight: "700" },
+  emptyChatSub: { fontSize: 14 },
+  inputBar: {
+    flexDirection: "row",
+    alignItems: "flex-end",
+    paddingHorizontal: 10,
+    paddingTop: 10,
+    gap: 8,
+    borderTopWidth: StyleSheet.hairlineWidth,
+  },
+  inputField: {
+    flex: 1,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderRadius: 22,
+    paddingHorizontal: 15,
+    paddingVertical: 11,
+    fontSize: 15,
+    minHeight: 44,
+    maxHeight: 120,
+  },
+  sendBtn: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    alignItems: "center",
+    justifyContent: "center",
+  },
 });

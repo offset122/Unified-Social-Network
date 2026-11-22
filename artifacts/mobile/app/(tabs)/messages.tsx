@@ -1,150 +1,35 @@
 import React, { useEffect, useRef, useState } from "react";
 import {
-  View,
-  Text,
-  StyleSheet,
-  FlatList,
-  Pressable,
   ActivityIndicator,
+  FlatList,
   Platform,
+  Pressable,
+  StyleSheet,
+  Text,
   TextInput,
-  Animated,
+  View,
+  useWindowDimensions,
 } from "react-native";
 import { Redirect, useRouter } from "expo-router";
 import { Feather } from "@expo/vector-icons";
-import { LinearGradient } from "expo-linear-gradient";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/lib/auth";
 import GuestScreen from "@/components/GuestScreen";
 import { useColors } from "@/hooks/useColors";
+import { Avatar } from "@/components/Avatar";
+import { GlassSurface } from "@/components/GlassSurface";
+import { haptics } from "@/lib/motion";
+import { RADIUS } from "@/constants/colors";
 import {
   fetchConversations,
   timeAgo,
-  resolveMediaUrl,
   type Conversation,
   type Profile,
 } from "@/lib/db";
 import { supabase } from "@/lib/supabase";
-import { Image } from "react-native";
 
-// ─── Avatar ────────────────────────────────────────────────────────────────────
-
-function Avatar({
-  name,
-  avatarUrl,
-  size,
-  online,
-  hasUnread,
-}: {
-  name: string;
-  avatarUrl?: string | null;
-  size: number;
-  online?: boolean;
-  hasUnread?: boolean;
-}) {
-  const [err, setErr] = useState(false);
-  const pulseAnim = useRef(new Animated.Value(1)).current;
-
-  const initials = name
-    .split(" ")
-    .map((w) => w[0])
-    .join("")
-    .slice(0, 2)
-    .toUpperCase();
-
-  // Generate a deterministic hue from the name for the fallback gradient
-  const hue = name.split("").reduce((a, c) => a + c.charCodeAt(0), 0) % 360;
-  const avatarColors: [string, string] = [
-    `hsl(${hue}, 60%, 50%)`,
-    `hsl(${(hue + 40) % 360}, 70%, 38%)`,
-  ];
-
-  // Subtle pulse ring when there are unread messages
-  useEffect(() => {
-    if (!hasUnread) return;
-    const loop = Animated.loop(
-      Animated.sequence([
-        Animated.timing(pulseAnim, { toValue: 1.15, duration: 900, useNativeDriver: true }),
-        Animated.timing(pulseAnim, { toValue: 1, duration: 900, useNativeDriver: true }),
-      ])
-    );
-    loop.start();
-    return () => loop.stop();
-  }, [hasUnread]);
-
-  return (
-    <View style={{ position: "relative" }}>
-      {/* Unread pulse ring */}
-      {hasUnread && (
-        <Animated.View
-          style={{
-            position: "absolute",
-            width: size + 8,
-            height: size + 8,
-            borderRadius: (size + 8) / 2,
-            backgroundColor: "rgba(99,102,241,0.25)",
-            top: -4,
-            left: -4,
-            transform: [{ scale: pulseAnim }],
-          }}
-        />
-      )}
-
-      {avatarUrl && !err ? (
-        <Image
-          source={{ uri: resolveMediaUrl(avatarUrl) }}
-          style={{
-            width: size,
-            height: size,
-            borderRadius: size / 2,
-            borderWidth: hasUnread ? 2 : 0,
-            borderColor: "#6366F1",
-          }}
-          onError={() => setErr(true)}
-        />
-      ) : (
-        <LinearGradient
-          colors={avatarColors}
-          style={{
-            width: size,
-            height: size,
-            borderRadius: size / 2,
-            alignItems: "center",
-            justifyContent: "center",
-            borderWidth: hasUnread ? 2 : 0,
-            borderColor: "#6366F1",
-          }}
-        >
-          <Text
-            style={{ color: "#fff", fontSize: size * 0.36, fontWeight: "700", letterSpacing: 0.5 }}
-          >
-            {initials}
-          </Text>
-        </LinearGradient>
-      )}
-
-      {/* Online dot */}
-      {online && (
-        <View
-          style={{
-            position: "absolute",
-            bottom: 1,
-            right: 1,
-            width: 12,
-            height: 12,
-            borderRadius: 6,
-            backgroundColor: "#22c55e",
-            borderWidth: 2,
-            borderColor: "#0F1117",
-          }}
-        />
-      )}
-    </View>
-  );
-}
-
-// ─── ConversationRow ────────────────────────────────────────────────────────────
+type FilterTab = "all" | "unread" | "groups";
 
 function ConversationRow({
   convo,
@@ -153,7 +38,7 @@ function ConversationRow({
   convo: Conversation;
   onPress: () => void;
 }) {
-  const scaleAnim = useRef(new Animated.Value(1)).current;
+  const colors = useColors();
   const other = convo.other_user as Profile | undefined;
   const isGroup = convo.type === "group";
   const name = isGroup
@@ -162,86 +47,105 @@ function ConversationRow({
   const avatar = isGroup ? convo.avatar_url : other?.avatar_url;
   const hasUnread = (convo.unread_count ?? 0) > 0;
 
-  const onPressIn = () =>
-    Animated.spring(scaleAnim, { toValue: 0.97, useNativeDriver: true, speed: 30 }).start();
-  const onPressOut = () =>
-    Animated.spring(scaleAnim, { toValue: 1, useNativeDriver: true, speed: 30 }).start();
-
   return (
-    <Pressable onPress={onPress} onPressIn={onPressIn} onPressOut={onPressOut}>
-      <Animated.View style={[styles.rowOuter, { transform: [{ scale: scaleAnim }] }]}>
-        {/* Left accent line for unread */}
-        <View style={[styles.accentLine, { backgroundColor: hasUnread ? "#6366F1" : "transparent" }]} />
-
-        <View style={styles.rowInner}>
-          {/* Avatar */}
-          <View style={{ position: "relative" }}>
-            <Avatar
-              name={name}
-              avatarUrl={avatar}
-              size={52}
-              hasUnread={hasUnread}
-            />
-            {isGroup && (
-              <View style={styles.groupBadge}>
-                <Feather name="users" size={8} color="#fff" />
-              </View>
-            )}
+    <Pressable
+      onPress={() => {
+        haptics.selection();
+        onPress();
+      }}
+      style={({ pressed }) => [
+        styles.rowInner,
+        pressed && { backgroundColor: colors.accentTint },
+      ]}
+      accessibilityRole="button"
+      accessibilityLabel={`Conversation with ${name}${hasUnread ? `, ${convo.unread_count} unread` : ""}`}
+    >
+      <View style={{ position: "relative" }}>
+        <Avatar
+          name={name}
+          avatarUrl={avatar}
+          size={50}
+          canvasColor={colors.bgCanvas}
+        />
+        {isGroup && (
+          <View
+            style={[
+              styles.groupBadge,
+              {
+                backgroundColor: colors.accentPrimary,
+                borderColor: colors.bgCanvas,
+              },
+            ]}
+          >
+            <Feather name="users" size={9} color="#FFFFFF" />
           </View>
+        )}
+      </View>
 
-          {/* Content */}
-          <View style={styles.rowContent}>
-            <View style={styles.rowTop}>
-              <Text
-                style={[styles.rowName, hasUnread && styles.rowNameBold]}
-                numberOfLines={1}
-              >
-                {name}
-              </Text>
-              <Text style={[styles.rowTime, hasUnread && styles.rowTimeActive]}>
-                {convo.last_message_at ? timeAgo(convo.last_message_at) : ""}
-              </Text>
-            </View>
-
-            <View style={styles.rowBottom}>
-              <Text
-                style={[styles.rowPreview, hasUnread && styles.rowPreviewBold]}
-                numberOfLines={1}
-              >
-                {convo.last_message ?? "Tap to start chatting"}
-              </Text>
-              {hasUnread && (
-                <View style={styles.badge}>
-                  <Text style={styles.badgeText}>
-                    {convo.unread_count! > 99 ? "99+" : convo.unread_count}
-                  </Text>
-                </View>
-              )}
-            </View>
-          </View>
+      <View style={styles.rowContent}>
+        <View style={styles.rowTop}>
+          <Text
+            style={[
+              styles.rowName,
+              { color: colors.textPrimary },
+              hasUnread && styles.rowNameBold,
+            ]}
+            numberOfLines={1}
+          >
+            {name}
+          </Text>
+          <Text
+            style={[
+              styles.rowTime,
+              {
+                color: hasUnread ? colors.accentPrimary : colors.textTertiary,
+                fontWeight: hasUnread ? "600" : "500",
+              },
+            ]}
+          >
+            {convo.last_message_at ? timeAgo(convo.last_message_at) : ""}
+          </Text>
         </View>
-      </Animated.View>
+
+        <View style={styles.rowBottom}>
+          <Text
+            style={[
+              styles.rowPreview,
+              {
+                color: hasUnread ? colors.textPrimary : colors.textSecondary,
+                fontWeight: hasUnread ? "500" : "400",
+              },
+            ]}
+            numberOfLines={1}
+          >
+            {convo.last_message ?? "Tap to start chatting"}
+          </Text>
+          {hasUnread && (
+            <View style={[styles.badge, { backgroundColor: colors.accentPrimary }]}>
+              <Text style={styles.badgeText}>
+                {convo.unread_count! > 99 ? "99+" : convo.unread_count}
+              </Text>
+            </View>
+          )}
+        </View>
+      </View>
     </Pressable>
   );
 }
-
-// ─── MessagesScreen ────────────────────────────────────────────────────────────
 
 export default function MessagesScreen() {
   const { isAuthenticated, isLoading: authLoading, user, isGuest } = useAuth();
   const colors = useColors();
   const insets = useSafeAreaInsets();
   const router = useRouter();
-  const isWeb = Platform.OS === "web";
   const qc = useQueryClient();
-  const [search, setSearch] = useState("");
-  const searchRef = useRef<TextInput>(null);
-  const headerOpacity = useRef(new Animated.Value(0)).current;
+  const { width } = useWindowDimensions();
+  const isWeb = Platform.OS === "web";
+  const isDesktopWeb = isWeb && width >= 768;
 
-  // Fade in on mount
-  useEffect(() => {
-    Animated.timing(headerOpacity, { toValue: 1, duration: 380, useNativeDriver: true }).start();
-  }, []);
+  const [search, setSearch] = useState("");
+  const [filterTab, setFilterTab] = useState<FilterTab>("all");
+  const searchRef = useRef<TextInput>(null);
 
   const { data: conversations = [], isLoading } = useQuery({
     queryKey: ["conversations", user?.id],
@@ -250,7 +154,6 @@ export default function MessagesScreen() {
     refetchInterval: 15000,
   });
 
-  // Realtime: subscribe to new messages
   useEffect(() => {
     if (!user?.id) return;
     const ch = supabase
@@ -258,16 +161,16 @@ export default function MessagesScreen() {
       .on(
         "postgres_changes",
         { event: "INSERT", schema: "public", table: "messages" },
-        () => qc.invalidateQueries({ queryKey: ["conversations", user.id] })
+        () => qc.invalidateQueries({ queryKey: ["conversations", user.id] }),
       )
       .subscribe();
     return () => {
       supabase.removeChannel(ch);
     };
-  }, [user?.id]);
+  }, [user?.id, qc]);
 
   if (authLoading) return null;
-  if (isGuest)
+  if (isGuest) {
     return (
       <GuestScreen
         icon="message-square"
@@ -281,127 +184,229 @@ export default function MessagesScreen() {
         ]}
       />
     );
+  }
   if (!isAuthenticated) return <Redirect href="/login" />;
 
-  const totalUnread = (conversations as Conversation[]).reduce(
-    (s, c) => s + (c.unread_count ?? 0),
-    0
-  );
+  const list = conversations as Conversation[];
+  const totalUnread = list.reduce((s, c) => s + (c.unread_count ?? 0), 0);
+
+  const tabFiltered = list.filter((c) => {
+    if (filterTab === "unread") return (c.unread_count ?? 0) > 0;
+    if (filterTab === "groups") return c.type === "group";
+    return true;
+  });
 
   const filtered = search.trim()
-    ? (conversations as Conversation[]).filter((c) => {
+    ? tabFiltered.filter((c) => {
         const term = search.toLowerCase();
         const displayName = (c.other_user?.display_name ?? c.name ?? "").toLowerCase();
         const username = (c.other_user?.username ?? "").toLowerCase();
         return displayName.includes(term) || username.includes(term);
       })
-    : (conversations as Conversation[]);
+    : tabFiltered;
 
-  const paddingTop = isWeb ? 67 : insets.top;
+  const topPad = isWeb ? 14 : insets.top + 8;
 
   return (
-    <View style={[styles.screen, { paddingTop }]}>
-      {/* Background gradient */}
-      <LinearGradient
-        colors={["#0F1117", "#13151F", "#0F1117"]}
-        style={StyleSheet.absoluteFill}
-        start={{ x: 0, y: 0 }}
-        end={{ x: 1, y: 1 }}
-      />
-
-      <Animated.View style={{ flex: 1, opacity: headerOpacity }}>
-        {/* ── Header ── */}
-        <View style={styles.header}>
-          <View>
-            <Text style={styles.headerTitle}>Messages</Text>
-            <Text style={styles.headerSub}>
-              {totalUnread > 0
-                ? `${totalUnread} unread conversation${totalUnread > 1 ? "s" : ""}`
-                : `${(conversations as Conversation[]).length} conversation${(conversations as Conversation[]).length !== 1 ? "s" : ""}`}
-            </Text>
+    <View style={[styles.screen, { backgroundColor: colors.bgCanvas }]}>
+      <GlassSurface
+        style={[
+          styles.headerWrap,
+          { paddingTop: topPad, borderBottomColor: colors.separator },
+        ]}
+      >
+        <View style={[styles.columnWrap, { maxWidth: isDesktopWeb ? 680 : undefined }]}>
+          <View style={styles.header}>
+            <View>
+              <Text style={[styles.headerTitle, { color: colors.textPrimary }]}>
+                Messages
+              </Text>
+              <Text style={[styles.headerSub, { color: colors.textSecondary }]}>
+                {totalUnread > 0
+                  ? `${totalUnread} unread`
+                  : `${list.length} conversation${list.length !== 1 ? "s" : ""}`}
+              </Text>
+            </View>
+            <View style={styles.headerActions}>
+              <Pressable
+                onPress={() => {
+                  haptics.light();
+                  router.push("/create-group" as any);
+                }}
+                style={({ pressed }) => [
+                  styles.iconBtn,
+                  {
+                    backgroundColor: colors.bgElevated,
+                    borderColor: colors.separator,
+                    opacity: pressed ? 0.75 : 1,
+                  },
+                ]}
+                accessibilityRole="button"
+                accessibilityLabel="Create group conversation"
+              >
+                <Feather name="users" size={18} color={colors.textPrimary} />
+              </Pressable>
+              <Pressable
+                onPress={() => {
+                  haptics.light();
+                  router.push("/new-message" as any);
+                }}
+                style={({ pressed }) => [
+                  styles.iconBtn,
+                  {
+                    backgroundColor: colors.accentPrimary,
+                    borderColor: colors.accentPrimary,
+                    opacity: pressed ? 0.85 : 1,
+                  },
+                ]}
+                accessibilityRole="button"
+                accessibilityLabel="New message"
+              >
+                <Feather name="edit-2" size={17} color="#FFFFFF" />
+              </Pressable>
+            </View>
           </View>
-          <View style={styles.headerActions}>
-            <Pressable
-              onPress={() => router.push("/create-group" as any)}
-              style={({ pressed }) => [styles.iconBtn, pressed && styles.iconBtnPressed]}
-            >
-              <Feather name="users" size={18} color="#A5B4FC" />
-            </Pressable>
-            <Pressable
-              onPress={() => router.push("/new-message" as any)}
-              style={({ pressed }) => [styles.iconBtn, styles.iconBtnPrimary, pressed && { opacity: 0.75 }]}
-            >
-              <Feather name="edit-2" size={17} color="#fff" />
-            </Pressable>
-          </View>
-        </View>
 
-        {/* ── Search Bar ── */}
-        <Pressable onPress={() => searchRef.current?.focus()}>
-          <View style={styles.searchBar}>
-            <Feather name="search" size={16} color="#6366F1" />
+          {/* Search bar */}
+          <Pressable
+            onPress={() => searchRef.current?.focus()}
+            style={[
+              styles.searchBar,
+              {
+                backgroundColor: colors.bgElevated,
+                borderColor: colors.separator,
+              },
+            ]}
+          >
+            <Feather name="search" size={16} color={colors.textTertiary} />
             <TextInput
               ref={searchRef}
-              style={styles.searchInput}
+              style={[styles.searchInput, { color: colors.textPrimary }]}
               placeholder="Search conversations…"
-              placeholderTextColor="#4B5168"
+              placeholderTextColor={colors.textTertiary}
               value={search}
               onChangeText={setSearch}
               returnKeyType="search"
-              clearButtonMode="never"
+              accessibilityLabel="Search conversations"
             />
             {search.length > 0 && (
-              <Pressable onPress={() => setSearch("")} hitSlop={10} style={styles.clearBtn}>
-                <Feather name="x" size={13} color="#6B7280" />
+              <Pressable
+                onPress={() => setSearch("")}
+                hitSlop={10}
+                style={[styles.clearBtn, { backgroundColor: colors.muted }]}
+                accessibilityRole="button"
+                accessibilityLabel="Clear search"
+              >
+                <Feather name="x" size={13} color={colors.textPrimary} />
               </Pressable>
             )}
-          </View>
-        </Pressable>
+          </Pressable>
 
-        {/* ── Section Label ── */}
-        {!search && filtered.length > 0 && (
-          <View style={styles.sectionHeader}>
-            <Text style={styles.sectionLabel}>RECENT</Text>
-            <View style={styles.sectionLine} />
+          {/* Segmented inbox filter */}
+          <View
+            style={[
+              styles.segmentBar,
+              { backgroundColor: colors.bgElevated, borderColor: colors.separator },
+            ]}
+          >
+            {(
+              [
+                { key: "all", label: "All" },
+                { key: "unread", label: "Unread" },
+                { key: "groups", label: "Groups" },
+              ] as { key: FilterTab; label: string }[]
+            ).map((t) => {
+              const active = filterTab === t.key;
+              return (
+                <Pressable
+                  key={t.key}
+                  onPress={() => {
+                    haptics.selection();
+                    setFilterTab(t.key);
+                  }}
+                  style={[
+                    styles.segmentBtn,
+                    active && {
+                      backgroundColor: colors.bgCanvas,
+                      borderColor: colors.separator,
+                    },
+                  ]}
+                  accessibilityRole="tab"
+                  accessibilityState={{ selected: active }}
+                  accessibilityLabel={t.label}
+                >
+                  <Text
+                    style={[
+                      styles.segmentText,
+                      {
+                        color: active ? colors.textPrimary : colors.textSecondary,
+                        fontWeight: active ? "600" : "500",
+                      },
+                    ]}
+                  >
+                    {t.label}
+                  </Text>
+                </Pressable>
+              );
+            })}
           </View>
-        )}
+        </View>
+      </GlassSurface>
 
-        {/* ── Content ── */}
+      {/* Content */}
+      <View style={[styles.bodyWrap, { maxWidth: isDesktopWeb ? 680 : undefined }]}>
         {isLoading ? (
           <View style={styles.center}>
-            <ActivityIndicator color="#6366F1" size="large" />
-            <Text style={styles.loadingText}>Loading conversations…</Text>
+            <ActivityIndicator color={colors.accentPrimary} size="large" />
+            <Text style={[styles.loadingText, { color: colors.textSecondary }]}>
+              Loading conversations…
+            </Text>
           </View>
         ) : filtered.length === 0 ? (
           <View style={styles.emptyState}>
-            <LinearGradient
-              colors={["rgba(99,102,241,0.18)", "rgba(99,102,241,0.04)"]}
-              style={styles.emptyIconWrap}
+            <View
+              style={[styles.emptyIconWrap, { backgroundColor: colors.accentTint }]}
             >
-              <Feather name="message-square" size={38} color="#6366F1" />
-            </LinearGradient>
-            <Text style={styles.emptyTitle}>
-              {search ? "No results" : "Nothing here yet"}
-            </Text>
-            <Text style={styles.emptyDesc}>
+              <Feather
+                name="message-square"
+                size={34}
+                color={colors.accentPrimary}
+              />
+            </View>
+            <Text style={[styles.emptyTitle, { color: colors.textPrimary }]}>
               {search
-                ? `No conversations matching "${search}"`
-                : "Find friends and start your first conversation"}
+                ? "No matches"
+                : filterTab === "unread"
+                ? "All caught up"
+                : filterTab === "groups"
+                ? "No group chats yet"
+                : "No conversations yet"}
             </Text>
-            {!search && (
+            <Text style={[styles.emptyDesc, { color: colors.textSecondary }]}>
+              {search
+                ? `No conversations matching "${search}".`
+                : filterTab === "unread"
+                ? "You have read every message in your inbox."
+                : "Find friends or create a group to start messaging."}
+            </Text>
+            {!search && filterTab === "all" && (
               <Pressable
-                onPress={() => router.push("/new-message" as any)}
-                style={({ pressed }) => [styles.emptyBtn, pressed && { opacity: 0.8 }]}
+                onPress={() => {
+                  haptics.light();
+                  router.push("/new-message" as any);
+                }}
+                style={({ pressed }) => [
+                  styles.emptyBtn,
+                  {
+                    backgroundColor: colors.accentPrimary,
+                    opacity: pressed ? 0.88 : 1,
+                  },
+                ]}
+                accessibilityRole="button"
+                accessibilityLabel="Find friends"
               >
-                <LinearGradient
-                  colors={["#6366F1", "#818CF8"]}
-                  start={{ x: 0, y: 0 }}
-                  end={{ x: 1, y: 0 }}
-                  style={styles.emptyBtnGrad}
-                >
-                  <Feather name="user-plus" size={16} color="#fff" />
-                  <Text style={styles.emptyBtnText}>Find Friends</Text>
-                </LinearGradient>
+                <Feather name="user-plus" size={16} color="#FFFFFF" />
+                <Text style={styles.emptyBtnText}>Start a Chat</Text>
               </Pressable>
             )}
           </View>
@@ -410,61 +415,77 @@ export default function MessagesScreen() {
             data={filtered}
             keyExtractor={(c) => c.id}
             showsVerticalScrollIndicator={false}
-            contentContainerStyle={{ paddingBottom: insets.bottom + 90 }}
-            ItemSeparatorComponent={() => <View style={styles.separator} />}
+            contentContainerStyle={{ paddingBottom: insets.bottom + 96, paddingTop: 4 }}
+            ItemSeparatorComponent={() => (
+              <View
+                style={[styles.separator, { backgroundColor: colors.separator }]}
+              />
+            )}
             renderItem={({ item: convo }) => (
               <ConversationRow
                 convo={convo}
-                onPress={() =>
+                onPress={() => {
+                  const targetPath =
+                    convo.type === "group"
+                      ? `/group/${convo.id}`
+                      : `/chat/${convo.id}`;
                   router.push({
-                    pathname: `/chat/${convo.id}`,
+                    pathname: targetPath,
                     params: {
-                      peerName: convo.type === "group"
-                        ? convo.name ?? "Group"
-                        : convo.other_user?.display_name?.trim() || convo.other_user?.username || "User",
+                      peerName:
+                        convo.type === "group"
+                          ? convo.name ?? "Group"
+                          : convo.other_user?.display_name?.trim() ||
+                            convo.other_user?.username ||
+                            "User",
                       peerAvatar: convo.other_user?.avatar_url ?? "",
                       peerId: convo.other_user?.id ?? "",
                     },
-                  } as any)
-                }
+                  } as any);
+                }}
               />
             )}
           />
         )}
-      </Animated.View>
+      </View>
     </View>
   );
 }
 
-// ─── Styles ────────────────────────────────────────────────────────────────────
-
 const styles = StyleSheet.create({
   screen: {
     flex: 1,
-    backgroundColor: "#0F1117",
   },
-
-  // Header
+  headerWrap: {
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    paddingBottom: 12,
+  },
+  columnWrap: {
+    width: "100%",
+    alignSelf: "center",
+    paddingHorizontal: 16,
+    gap: 10,
+  },
+  bodyWrap: {
+    flex: 1,
+    width: "100%",
+    alignSelf: "center",
+  },
   header: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    paddingHorizontal: 20,
-    paddingTop: 8,
-    paddingBottom: 14,
   },
   headerTitle: {
-    fontSize: 30,
-    fontWeight: "800",
-    color: "#E2E8F0",
-    letterSpacing: -0.8,
+    fontSize: 28,
+    fontWeight: "700",
+    letterSpacing: -0.6,
   },
   headerSub: {
-    fontSize: 12,
-    color: "#4B5168",
+    fontSize: 12.5,
     marginTop: 2,
     fontWeight: "500",
-    letterSpacing: 0.1,
+    fontVariant: ["tabular-nums"],
   },
   headerActions: {
     flexDirection: "row",
@@ -472,91 +493,60 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   iconBtn: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
-    backgroundColor: "#1A1D27",
+    width: 44,
+    height: 44,
+    borderRadius: 22,
     alignItems: "center",
     justifyContent: "center",
-    borderWidth: 1,
-    borderColor: "#252836",
+    borderWidth: StyleSheet.hairlineWidth,
   },
-  iconBtnPressed: {
-    backgroundColor: "#252836",
-  },
-  iconBtnPrimary: {
-    backgroundColor: "#6366F1",
-    borderColor: "#6366F1",
-  },
-
-  // Search
   searchBar: {
     flexDirection: "row",
     alignItems: "center",
     gap: 10,
-    marginHorizontal: 16,
-    marginBottom: 6,
     paddingHorizontal: 14,
-    paddingVertical: 11,
-    backgroundColor: "#1A1D27",
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: "#252836",
+    height: 44,
+    borderRadius: RADIUS.md,
+    borderWidth: StyleSheet.hairlineWidth,
   },
   searchInput: {
     flex: 1,
     fontSize: 15,
-    color: "#E2E8F0",
     paddingVertical: 0,
   },
   clearBtn: {
-    width: 20,
-    height: 20,
-    borderRadius: 10,
-    backgroundColor: "#252836",
+    width: 22,
+    height: 22,
+    borderRadius: 11,
     alignItems: "center",
     justifyContent: "center",
   },
-
-  // Section header
-  sectionHeader: {
+  segmentBar: {
     flexDirection: "row",
-    alignItems: "center",
-    paddingHorizontal: 20,
-    marginTop: 16,
-    marginBottom: 6,
-    gap: 10,
+    borderRadius: RADIUS.sm + 2,
+    padding: 3,
+    borderWidth: StyleSheet.hairlineWidth,
+    gap: 4,
   },
-  sectionLabel: {
-    fontSize: 10,
-    fontWeight: "700",
-    color: "#4B5168",
-    letterSpacing: 1.5,
-  },
-  sectionLine: {
+  segmentBtn: {
     flex: 1,
-    height: 1,
-    backgroundColor: "#1A1D27",
+    height: 34,
+    borderRadius: RADIUS.sm,
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: "transparent",
   },
-
-  // Conversation row
-  rowOuter: {
-    flexDirection: "row",
-    backgroundColor: "transparent",
-  },
-  accentLine: {
-    width: 3,
-    borderRadius: 2,
-    marginVertical: 8,
-    marginLeft: 4,
+  segmentText: {
+    fontSize: 13.5,
   },
   rowInner: {
-    flex: 1,
     flexDirection: "row",
     alignItems: "center",
     gap: 13,
-    paddingHorizontal: 14,
+    paddingHorizontal: 16,
     paddingVertical: 12,
+    minHeight: 74,
   },
   rowContent: {
     flex: 1,
@@ -569,24 +559,17 @@ const styles = StyleSheet.create({
     marginBottom: 4,
   },
   rowName: {
-    fontSize: 15,
-    fontWeight: "500",
-    color: "#C4C9D9",
+    fontSize: 15.5,
+    fontWeight: "600",
     flex: 1,
     marginRight: 8,
   },
   rowNameBold: {
     fontWeight: "700",
-    color: "#E2E8F0",
   },
   rowTime: {
-    fontSize: 11,
-    color: "#4B5168",
-    fontWeight: "500",
-  },
-  rowTimeActive: {
-    color: "#6366F1",
-    fontWeight: "600",
+    fontSize: 12,
+    fontVariant: ["tabular-nums"],
   },
   rowBottom: {
     flexDirection: "row",
@@ -594,50 +577,39 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
   },
   rowPreview: {
-    fontSize: 13,
-    color: "#4B5168",
+    fontSize: 13.5,
     flex: 1,
     marginRight: 8,
   },
-  rowPreviewBold: {
-    color: "#8B93A8",
-    fontWeight: "500",
-  },
   badge: {
-    backgroundColor: "#6366F1",
-    borderRadius: 10,
-    minWidth: 20,
-    height: 20,
+    borderRadius: 11,
+    minWidth: 22,
+    height: 22,
     alignItems: "center",
     justifyContent: "center",
-    paddingHorizontal: 5,
+    paddingHorizontal: 6,
   },
   badgeText: {
-    color: "#fff",
+    color: "#FFFFFF",
     fontSize: 11,
-    fontWeight: "800",
-    letterSpacing: -0.2,
+    fontWeight: "700",
+    fontVariant: ["tabular-nums"],
   },
   groupBadge: {
     position: "absolute",
     bottom: -1,
     right: -1,
-    width: 18,
-    height: 18,
-    borderRadius: 9,
-    backgroundColor: "#6366F1",
+    width: 19,
+    height: 19,
+    borderRadius: 10,
     alignItems: "center",
     justifyContent: "center",
     borderWidth: 2,
-    borderColor: "#0F1117",
   },
   separator: {
-    height: 1,
-    backgroundColor: "#1A1D27",
-    marginLeft: 83,
+    height: StyleSheet.hairlineWidth,
+    marginLeft: 79,
   },
-
-  // States
   center: {
     flex: 1,
     alignItems: "center",
@@ -645,7 +617,6 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   loadingText: {
-    color: "#4B5168",
     fontSize: 14,
     fontWeight: "500",
   },
@@ -653,44 +624,39 @@ const styles = StyleSheet.create({
     flex: 1,
     alignItems: "center",
     justifyContent: "center",
-    paddingHorizontal: 40,
+    paddingHorizontal: 36,
     gap: 10,
   },
   emptyIconWrap: {
-    width: 88,
-    height: 88,
-    borderRadius: 44,
+    width: 78,
+    height: 78,
+    borderRadius: 39,
     alignItems: "center",
     justifyContent: "center",
     marginBottom: 6,
   },
   emptyTitle: {
-    fontSize: 20,
-    fontWeight: "800",
-    color: "#E2E8F0",
+    fontSize: 19,
+    fontWeight: "700",
     letterSpacing: -0.3,
   },
   emptyDesc: {
     fontSize: 14,
-    color: "#4B5168",
     textAlign: "center",
     lineHeight: 20,
   },
   emptyBtn: {
-    marginTop: 14,
-    borderRadius: 24,
-    overflow: "hidden",
-  },
-  emptyBtnGrad: {
+    marginTop: 12,
+    borderRadius: RADIUS.pill,
     flexDirection: "row",
     alignItems: "center",
     gap: 8,
-    paddingHorizontal: 28,
-    paddingVertical: 13,
+    paddingHorizontal: 24,
+    height: 46,
   },
   emptyBtnText: {
-    color: "#fff",
-    fontWeight: "700",
+    color: "#FFFFFF",
+    fontWeight: "600",
     fontSize: 15,
   },
 });
