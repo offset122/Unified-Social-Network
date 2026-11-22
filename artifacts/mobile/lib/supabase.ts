@@ -1,5 +1,6 @@
 import { createClient } from "@supabase/supabase-js";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { resolveSupabaseConfig } from "./bootReadiness";
 
 export function getEnvValue(...keys: string[]): string {
   for (const key of keys) {
@@ -9,35 +10,44 @@ export function getEnvValue(...keys: string[]): string {
   return "";
 }
 
-const supabaseUrl = getEnvValue("EXPO_PUBLIC_SUPABASE_URL", "SUPABASE_URL");
-const supabaseAnonKey = getEnvValue("EXPO_PUBLIC_SUPABASE_ANON_KEY", "SUPABASE_ANON_KEY");
+// Static property access is required for Expo/Metro to inline EXPO_PUBLIC_* at bundle time.
+const rawSupabaseUrl =
+  process.env.EXPO_PUBLIC_SUPABASE_URL ||
+  process.env.SUPABASE_URL ||
+  "";
+const rawSupabaseAnonKey =
+  process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY ||
+  process.env.SUPABASE_ANON_KEY ||
+  "";
 
-const isPlaceholderUrl =
-  !supabaseUrl ||
-  supabaseUrl.includes("your-project.supabase.co") ||
-  supabaseUrl.includes("placeholder.supabase.co");
+const {
+  url: supabaseUrl,
+  anonKey: supabaseAnonKey,
+  isConfigured: isSupabaseConfigured,
+  isPlaceholderUrl,
+} = resolveSupabaseConfig(rawSupabaseUrl, rawSupabaseAnonKey);
 
-if (isPlaceholderUrl || !supabaseAnonKey) {
+if (!isSupabaseConfigured) {
   console.warn("Supabase environment is missing required values:", {
     EXPO_PUBLIC_SUPABASE_URL: !isPlaceholderUrl,
-    EXPO_PUBLIC_SUPABASE_ANON_KEY: !!supabaseAnonKey,
+    EXPO_PUBLIC_SUPABASE_ANON_KEY: Boolean(rawSupabaseAnonKey.trim()),
   });
 }
 
 // Static rendering (expo export) executes route modules at build time, which imports this
 // file. Missing env vars must not throw here or the whole build fails (e.g. on Vercel).
-export const isSupabaseConfigured = Boolean(!isPlaceholderUrl && supabaseAnonKey);
+export { isSupabaseConfigured, supabaseUrl, supabaseAnonKey };
 
 export const supabase = createClient(
-  supabaseUrl || "https://placeholder.supabase.co",
-  supabaseAnonKey || "public-anon-key-placeholder",
+  supabaseUrl,
+  supabaseAnonKey,
   {
   db: {
     schema: "public", // force public schema — avoids PostgREST ambiguity with realtime.messages
   },
   auth: {
     storage: AsyncStorage as any,
-    autoRefreshToken: true,
+    autoRefreshToken: isSupabaseConfigured,
     persistSession: true,
     detectSessionInUrl: false,
   },

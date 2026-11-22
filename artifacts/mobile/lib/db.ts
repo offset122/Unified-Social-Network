@@ -1,10 +1,10 @@
-import { getEnvValue, isSupabaseConfigured, supabase } from "./supabase";
+import { isSupabaseConfigured, supabase, supabaseAnonKey, supabaseUrl } from "./supabase";
 import 'react-native-get-random-values';
 import { v4 as uuidv4 } from 'uuid';
 import { isUploadableUri, normalizeMimeType } from "./mediaUtils";
 
-const SUPABASE_URL = getEnvValue("EXPO_PUBLIC_SUPABASE_URL", "SUPABASE_URL");
-const SUPABASE_ANON_KEY = getEnvValue("EXPO_PUBLIC_SUPABASE_ANON_KEY", "SUPABASE_ANON_KEY");
+const SUPABASE_URL = isSupabaseConfigured ? supabaseUrl : "";
+const SUPABASE_ANON_KEY = isSupabaseConfigured ? supabaseAnonKey : "";
 
 export function resolveMediaUrl(path: string | null | undefined): string {
   if (!path) return "";

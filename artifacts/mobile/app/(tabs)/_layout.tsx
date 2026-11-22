@@ -245,7 +245,7 @@ function ClassicTabLayout() {
         tabBarLabelStyle: {
           fontSize: 10.5,
           fontWeight: "600",
-          marginBottom: Platform.OS === "web" ? 4 : 0,
+          marginBottom: Platform.OS === "web" ? 2 : 0,
         },
         tabBarStyle: isDesktopWeb
           ? { display: "none" }
@@ -258,9 +258,9 @@ function ClassicTabLayout() {
               borderTopWidth: StyleSheet.hairlineWidth,
               borderTopColor,
               elevation: 0,
-              height: Platform.OS === "web" ? 64 : 56 + insets.bottom,
+              height: Platform.OS === "web" ? 68 : 56 + insets.bottom,
               paddingTop: 4,
-              paddingBottom: Platform.OS === "web" ? 6 : Math.max(insets.bottom, 6),
+              paddingBottom: Platform.OS === "web" ? 10 : Math.max(insets.bottom, 6),
             },
         tabBarBackground: () => (
           <GlassSurface

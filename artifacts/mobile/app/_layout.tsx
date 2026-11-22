@@ -13,7 +13,7 @@ import React, { useEffect, useState, type ReactNode } from "react";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { KeyboardProvider } from "react-native-keyboard-controller";
 import { SafeAreaProvider } from "react-native-safe-area-context";
-import { View, ActivityIndicator } from "react-native";
+import { View, ActivityIndicator, Platform } from "react-native";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { AuthProvider, useAuth } from "@/lib/auth";
 import { ThemeProvider } from "@/lib/theme";
@@ -23,9 +23,12 @@ import WelcomeModal from "@/components/WelcomeModal";
 import NotificationBanner from "@/components/NotificationBanner";
 import { mapDbNotificationToApp, type AppNotification } from "@/lib/notifications";
 import { isSupabaseConfigured, supabase } from "@/lib/supabase";
+import { isFontsReady } from "@/lib/bootReadiness";
 import VibeLogo from "@/components/VibeLogo";
 
-SplashScreen.preventAutoHideAsync();
+SplashScreen.preventAutoHideAsync().catch(() => {});
+
+const FONT_LOAD_TIMEOUT_MS = Platform.OS === "web" ? 2500 : 4000;
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -161,18 +164,30 @@ export default function RootLayout() {
     Inter_600SemiBold,
     Inter_700Bold,
   });
+  const [fontTimedOut, setFontTimedOut] = useState(false);
+
+  const fontsReady = isFontsReady({ fontsLoaded, fontError, fontTimedOut });
 
   useEffect(() => {
-    bootLog.boot(`fonts: loaded=${fontsLoaded} error=${fontError ? fontError.message : "none"}`);
+    if (fontsLoaded || fontError) return;
+    const timer = setTimeout(() => {
+      bootLog.warn(`fonts: timed out after ${FONT_LOAD_TIMEOUT_MS}ms, continuing with fallback fonts`);
+      setFontTimedOut(true);
+    }, FONT_LOAD_TIMEOUT_MS);
+    return () => clearTimeout(timer);
   }, [fontsLoaded, fontError]);
 
   useEffect(() => {
-    if (fontsLoaded || fontError) {
-      SplashScreen.hideAsync();
+    bootLog.boot(`fonts: loaded=${fontsLoaded} timedOut=${fontTimedOut} error=${fontError ? fontError.message : "none"}`);
+  }, [fontsLoaded, fontError, fontTimedOut]);
+
+  useEffect(() => {
+    if (fontsReady) {
+      SplashScreen.hideAsync().catch(() => {});
     }
-  }, [fontsLoaded, fontError]);
+  }, [fontsReady]);
 
-  if (!fontsLoaded && !fontError) {
+  if (!fontsReady) {
     return (
       <View style={{ flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: "#6366f1" }}>
         <VibeLogo size={80} showText={true} />

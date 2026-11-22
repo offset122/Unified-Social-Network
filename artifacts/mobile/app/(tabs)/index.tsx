@@ -1022,7 +1022,13 @@ export default function HomeScreen() {
     [user?.id, columnWidth, mediaWidth, handleRequireAuth, handleDeleted],
   );
 
-  if (authLoading) return null;
+  if (authLoading) {
+    return (
+      <View style={[styles.container, { backgroundColor: colors.bgCanvas, alignItems: "center", justifyContent: "center" }]}>
+        <ActivityIndicator color={colors.accentPrimary} size="large" />
+      </View>
+    );
+  }
   if (!isAuthenticated && !isGuest) return <Redirect href="/login" />;
 
   return (

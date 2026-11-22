@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { loadPublicEnv } from "./load-env.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const rootDir = path.resolve(__dirname, "..");
@@ -25,7 +26,7 @@ function buildNodePath() {
 }
 
 const env = {
-  ...process.env,
+  ...loadPublicEnv(mobileDir, process.env),
   PORT: port,
   CI: "1",
   BROWSER: "none",
@@ -44,6 +45,7 @@ const child = spawn(
     "--localhost",
     "--port",
     port,
+    "--clear",
   ],
   {
     cwd: mobileDir,

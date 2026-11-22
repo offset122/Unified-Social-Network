@@ -114,7 +114,11 @@ test("HTTP server handles malformed hosts, XSS headers, and static traversal saf
   fs.writeFileSync(path.join(staticRoot, "index.js"), "console.log(1);");
   fs.writeFileSync(path.join(siblingSecret, "secret.txt"), "top-secret");
 
-  const server = createAppServer({ staticRoot, appName: "Vibe" });
+  const server = createAppServer({
+    staticRoot,
+    webRoot: path.join(tmpDir, "missing-dist"),
+    appName: "Vibe",
+  });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   const { port } = server.address();
 
@@ -142,6 +146,40 @@ test("HTTP server handles malformed hosts, XSS headers, and static traversal saf
     // 4. Malformed URI encoding returns 400 without crashing server
     const badRes = await request(port, "/%E0%A4%A");
     assert.equal(badRes.status, 400);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test("HTTP server serves exported web app from webRoot when dist/index.html exists", async () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "vibe-web-test-"));
+  const webRoot = path.join(tmpDir, "dist");
+  fs.mkdirSync(path.join(webRoot, "_expo"), { recursive: true });
+  fs.writeFileSync(path.join(webRoot, "index.html"), "<html><body>web-app</body></html>");
+  fs.writeFileSync(path.join(webRoot, "login.html"), "<html><body>login-page</body></html>");
+  fs.writeFileSync(path.join(webRoot, "_expo", "app.js"), "console.log('web');");
+
+  const server = createAppServer({ webRoot, appName: "Vibe" });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const { port } = server.address();
+
+  try {
+    const rootRes = await request(port, "/");
+    assert.equal(rootRes.status, 200);
+    assert.equal(rootRes.body, "<html><body>web-app</body></html>");
+
+    const loginRes = await request(port, "/login");
+    assert.equal(loginRes.status, 200);
+    assert.equal(loginRes.body, "<html><body>login-page</body></html>");
+
+    const spaFallback = await request(port, "/some-client-route");
+    assert.equal(spaFallback.status, 200);
+    assert.equal(spaFallback.body, "<html><body>web-app</body></html>");
+
+    const assetRes = await request(port, "/_expo/app.js");
+    assert.equal(assetRes.status, 200);
+    assert.equal(assetRes.body, "console.log('web');");
   } finally {
     await new Promise((resolve) => server.close(resolve));
     fs.rmSync(tmpDir, { recursive: true, force: true });

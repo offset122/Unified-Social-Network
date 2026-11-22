@@ -4,7 +4,8 @@ import React, {
 import { bootLog } from "./bootLog";
 import * as WebBrowser from "expo-web-browser";
 import * as AuthSession from "expo-auth-session";
-import { supabase } from "./supabase";
+import { isSupabaseConfigured, supabase } from "./supabase";
+import { withTimeout } from "./bootReadiness";
 import type { Session, User } from "@supabase/supabase-js";
 
 WebBrowser.maybeCompleteAuthSession();
@@ -71,20 +72,39 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const prevUserIdRef = useRef<string | null>(null);
 
   useEffect(() => {
+    let active = true;
     bootLog.boot("auth: init (getSession)");
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      bootLog.boot(`auth: getSession done, user=${session?.user?.id ? session.user.id.slice(0, 8) : "none"}`);
-      setSession(session);
-      if (session?.user) {
-        setUser(mapUser(session.user));
-        setIsGuest(false);
-        prevUserIdRef.current = session.user.id;
-      }
+
+    if (!isSupabaseConfigured) {
+      bootLog.warn("auth: Supabase not configured, skipping session fetch");
       setIsLoading(false);
-    }).catch((e) => {
-      bootLog.error(`auth: getSession FAILED: ${e?.message ?? e}`);
-      setIsLoading(false);
-    });
+    } else {
+      withTimeout(
+        supabase.auth.getSession(),
+        5000,
+        { data: { session: null }, error: null } as Awaited<ReturnType<typeof supabase.auth.getSession>>,
+      )
+        .then(({ value: { data: { session } }, timedOut }) => {
+          if (!active) return;
+          if (timedOut) {
+            bootLog.warn("auth: getSession timed out after 5000ms");
+          } else {
+            bootLog.boot(`auth: getSession done, user=${session?.user?.id ? session.user.id.slice(0, 8) : "none"}`);
+          }
+          setSession(session);
+          if (session?.user) {
+            setUser(mapUser(session.user));
+            setIsGuest(false);
+            prevUserIdRef.current = session.user.id;
+          }
+          setIsLoading(false);
+        })
+        .catch((e) => {
+          if (!active) return;
+          bootLog.error(`auth: getSession FAILED: ${e?.message ?? e}`);
+          setIsLoading(false);
+        });
+    }
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
       bootLog.boot(`auth: state change event=${event}`);
@@ -104,7 +124,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setIsLoading(false);
     });
 
-    return () => subscription.unsubscribe();
+    return () => {
+      active = false;
+      subscription.unsubscribe();
+    };
   }, []);
 
   const loginWithEmail = useCallback(async (email: string, password: string) => {

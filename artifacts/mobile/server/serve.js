@@ -14,6 +14,7 @@ const fs = require("fs");
 const path = require("path");
 
 const STATIC_ROOT = path.resolve(__dirname, "..", "static-build");
+const WEB_ROOT = path.resolve(__dirname, "..", "dist");
 const TEMPLATE_PATH = path.resolve(__dirname, "templates", "landing-page.html");
 const basePath = (process.env.BASE_PATH || "/").replace(/\/+$/, "");
 
@@ -148,6 +149,14 @@ function serveLandingPage(req, res, landingPageTemplate, appName) {
   res.end(html);
 }
 
+function sendFile(filePath, res) {
+  const ext = path.extname(filePath).toLowerCase();
+  const contentType = MIME_TYPES[ext] || "application/octet-stream";
+  const content = fs.readFileSync(filePath);
+  res.writeHead(200, { ...SECURITY_HEADERS, "content-type": contentType });
+  res.end(content);
+}
+
 function serveStaticFile(urlPath, res, staticRoot = STATIC_ROOT) {
   const resolved = resolveSafeStaticPath(urlPath, staticRoot);
   if (resolved.errorStatus) {
@@ -163,11 +172,36 @@ function serveStaticFile(urlPath, res, staticRoot = STATIC_ROOT) {
     return;
   }
 
-  const ext = path.extname(filePath).toLowerCase();
-  const contentType = MIME_TYPES[ext] || "application/octet-stream";
-  const content = fs.readFileSync(filePath);
-  res.writeHead(200, { ...SECURITY_HEADERS, "content-type": contentType });
-  res.end(content);
+  sendFile(filePath, res);
+}
+
+function serveWebExport(urlPath, res, webRoot) {
+  const resolved = resolveSafeStaticPath(urlPath === "/" ? "/index.html" : urlPath, webRoot);
+  if (resolved.errorStatus) {
+    res.writeHead(resolved.errorStatus, SECURITY_HEADERS);
+    res.end(resolved.errorStatus === 400 ? "Bad Request" : "Forbidden");
+    return;
+  }
+
+  const { filePath } = resolved;
+  if (fs.existsSync(filePath) && !fs.statSync(filePath).isDirectory()) {
+    return sendFile(filePath, res);
+  }
+
+  if (!path.extname(urlPath)) {
+    const htmlCandidate = resolveSafeStaticPath(`${urlPath.replace(/\/+$/, "")}.html`, webRoot);
+    if (
+      htmlCandidate.filePath &&
+      fs.existsSync(htmlCandidate.filePath) &&
+      !fs.statSync(htmlCandidate.filePath).isDirectory()
+    ) {
+      return sendFile(htmlCandidate.filePath, res);
+    }
+    return sendFile(path.join(webRoot, "index.html"), res);
+  }
+
+  res.writeHead(404, SECURITY_HEADERS);
+  res.end("Not Found");
 }
 
 function createAppServer(options = {}) {
@@ -175,6 +209,7 @@ function createAppServer(options = {}) {
     options.landingPageTemplate ?? fs.readFileSync(TEMPLATE_PATH, "utf-8");
   const appName = options.appName ?? getAppName();
   const staticRoot = options.staticRoot ?? STATIC_ROOT;
+  const webRoot = options.webRoot ?? WEB_ROOT;
 
   return http.createServer((req, res) => {
     let pathname;
@@ -191,15 +226,17 @@ function createAppServer(options = {}) {
       pathname = pathname.slice(basePath.length) || "/";
     }
 
-    if (pathname === "/" || pathname === "/manifest") {
-      const platform = req.headers["expo-platform"];
-      if (platform === "ios" || platform === "android") {
-        return serveManifest(platform, res);
-      }
+    const platform = req.headers["expo-platform"];
+    if ((pathname === "/" || pathname === "/manifest") && (platform === "ios" || platform === "android")) {
+      return serveManifest(platform, res);
+    }
 
-      if (pathname === "/") {
-        return serveLandingPage(req, res, landingPageTemplate, appName);
-      }
+    if (fs.existsSync(path.join(webRoot, "index.html"))) {
+      return serveWebExport(pathname, res, webRoot);
+    }
+
+    if (pathname === "/") {
+      return serveLandingPage(req, res, landingPageTemplate, appName);
     }
 
     serveStaticFile(pathname, res, staticRoot);

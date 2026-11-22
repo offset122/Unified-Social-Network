@@ -2,6 +2,7 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { loadPublicEnv } from "./load-env.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const rootDir = path.resolve(__dirname, "..");
@@ -32,11 +33,12 @@ const result = spawnSync(
     "export",
     "-p",
     "web",
+    "--clear",
   ],
   {
     cwd: mobileDir,
     env: {
-      ...process.env,
+      ...loadPublicEnv(mobileDir, process.env),
       CI: "1",
       EXPO_NO_TELEMETRY: "1",
       NODE_PATH: buildNodePath(),

@@ -7,8 +7,9 @@
     "dev": "node scripts/dev.js",
     "build": "node scripts/build-web.js",
     "start": "node artifacts/mobile/server/serve.js",
-    "typecheck": "tsc -p artifacts/mobile/tsconfig.json --noEmit",
-    "test": "node --test artifacts/mobile/server/serve.test.js"
+    "typecheck": "./artifacts/mobile/node_modules/.bin/tsc -p artifacts/mobile/tsconfig.json --noEmit",
+    "lint": "./artifacts/mobile/node_modules/.bin/tsc -p artifacts/mobile/tsconfig.json --noEmit && node --check scripts/dev.js && node --check scripts/build-web.js && node --check scripts/load-env.js && node --check artifacts/mobile/server/serve.js",
+    "test": "npx --yes tsx --test artifacts/mobile/lib/bootReadiness.test.ts artifacts/mobile/lib/mediaUtils.test.ts && node --test artifacts/mobile/server/serve.test.js"
   },
   "devDependencies": {
     "@babel/core": "^7.20.0",
